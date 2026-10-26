@@ -204,6 +204,7 @@ pub fn audio_inputs() -> Vec<String> {
 pub struct LtcService {
     stop: mpsc::Sender<()>,
     thread: Option<JoinHandle<()>>,
+    failed: Arc<AtomicBool>,
 }
 
 impl LtcService {
@@ -211,31 +212,34 @@ impl LtcService {
         core: ControlCore,
         device_name: Option<String>,
         rate: FrameRate,
+        channel: usize,
     ) -> Result<Self, String> {
+        let failed = Arc::new(AtomicBool::new(false));
         let (started_tx, started_rx) = mpsc::channel::<Result<(), String>>();
         let (stop, stopped) = mpsc::channel();
-        let thread =
-            thread::spawn(
-                move || match build_stream(&core, device_name.as_deref(), rate) {
-                    Ok(stream) => {
-                        if let Err(error) = stream.play() {
-                            let _ = started_tx.send(Err(format!("LTC stream: {error}")));
-                            return;
-                        }
-                        let _ = started_tx.send(Ok(()));
-                        let _ = stopped.recv();
-                        drop(stream);
+        let thread_failed = failed.clone();
+        let thread = thread::spawn(move || {
+            match build_stream(&core, device_name.as_deref(), rate, channel, thread_failed) {
+                Ok(stream) => {
+                    if let Err(error) = stream.play() {
+                        let _ = started_tx.send(Err(format!("LTC stream: {error}")));
+                        return;
                     }
-                    Err(error) => {
-                        let _ = started_tx.send(Err(error));
-                    }
-                },
-            );
+                    let _ = started_tx.send(Ok(()));
+                    let _ = stopped.recv();
+                    drop(stream);
+                }
+                Err(error) => {
+                    let _ = started_tx.send(Err(error));
+                }
+            }
+        });
 
         match started_rx.recv() {
             Ok(Ok(())) => Ok(Self {
                 stop,
                 thread: Some(thread),
+                failed,
             }),
             Ok(Err(error)) => {
                 let _ = stop.send(());
@@ -248,6 +252,14 @@ impl LtcService {
                 Err("LTC audio thread stopped before opening the device".into())
             }
         }
+    }
+
+    /// Reports whether the stream is still running. A stream error marks the
+    /// service as dead so the caller can open a fresh one without an explicit
+    /// stop first.
+    pub fn is_alive(&self) -> bool {
+        !self.failed.load(Ordering::Relaxed)
+            && self.thread.as_ref().is_some_and(|thread| !thread.is_finished())
     }
 }
 
