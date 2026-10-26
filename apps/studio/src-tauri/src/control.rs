@@ -109,12 +109,21 @@ pub fn start_ltc_input(
     state: State<'_, ControlState>,
     device: Option<String>,
     rate: FrameRate,
+    channel: Option<usize>,
 ) -> Result<(), String> {
     let mut slot = state.ltc.lock().map_err(|_| "control state poisoned")?;
-    if slot.is_some() {
+    if slot.as_ref().is_some_and(LtcService::is_alive) {
         return Err("an LTC input is already open".into());
     }
-    *slot = Some(LtcService::start(state.core.clone(), device, rate)?);
+    // A dead stream keeps the slot occupied until stopped. Drop it so the
+    // user can restart without an extra command.
+    *slot = None;
+    *slot = Some(LtcService::start(
+        state.core.clone(),
+        device,
+        rate,
+        channel.unwrap_or(0),
+    )?);
     Ok(())
 }
 

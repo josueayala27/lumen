@@ -276,6 +276,8 @@ fn build_stream(
     core: &ControlCore,
     device_name: Option<&str>,
     rate: FrameRate,
+    channel: usize,
+    failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String> {
     let host = cpal::default_host();
     let device = match device_name {
@@ -296,9 +298,36 @@ fn build_stream(
     let channels = usize::from(config.channels);
     let sample_rate = f64::from(config.sample_rate);
     match sample_format {
-        SampleFormat::F32 => build_typed::<f32>(&device, config, channels, sample_rate, rate, core),
-        SampleFormat::I16 => build_typed::<i16>(&device, config, channels, sample_rate, rate, core),
-        SampleFormat::I32 => build_typed::<i32>(&device, config, channels, sample_rate, rate, core),
+        SampleFormat::F32 => build_typed::<f32>(
+            &device,
+            config,
+            channels,
+            sample_rate,
+            rate,
+            channel,
+            core,
+            failed,
+        ),
+        SampleFormat::I16 => build_typed::<i16>(
+            &device,
+            config,
+            channels,
+            sample_rate,
+            rate,
+            channel,
+            core,
+            failed,
+        ),
+        SampleFormat::I32 => build_typed::<i32>(
+            &device,
+            config,
+            channels,
+            sample_rate,
+            rate,
+            channel,
+            core,
+            failed,
+        ),
         other => Err(format!("unsupported LTC input sample format {other}")),
     }
 }
@@ -309,7 +338,9 @@ fn build_typed<T>(
     channels: usize,
     sample_rate: f64,
     rate: FrameRate,
+    channel: usize,
     core: &ControlCore,
+    failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String>
 where
     T: SizedSample + 'static,
@@ -323,10 +354,10 @@ where
             config,
             move |data: &[T], _: &cpal::InputCallbackInfo| {
                 for frame in data.chunks(channels.max(1)) {
-                    let Some(sample) = frame.first() else {
+                    let Some(sample) = channel_sample(frame, channel) else {
                         continue;
                     };
-                    let sample: f32 = f32::from_sample(*sample);
+                    let sample: f32 = f32::from_sample(sample);
                     if let Some(timecode) = decoder.push_sample(sample) {
                         let now = events.now_ms();
                         events
@@ -341,8 +372,11 @@ where
                 }
             },
             move |error| {
+                failed.store(true, Ordering::Relaxed);
                 errors.emit(ControlEvent::Error {
-                    message: format!("LTC audio: {error}"),
+                    message: format!(
+                        "LTC audio stream stopped: {error}. Stop and restart LTC input."
+                    ),
                 })
             },
             None,

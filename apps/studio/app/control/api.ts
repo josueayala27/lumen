@@ -39,8 +39,12 @@ export function listAudioInputs(): Promise<string[]> {
   return invoke('list_audio_inputs')
 }
 
-export function startLtcInput(device: string | null, rate: FrameRate): Promise<void> {
-  return invoke('start_ltc_input', { device, rate })
+export function startLtcInput(
+  device: string | null,
+  rate: FrameRate,
+  channel = 0,
+): Promise<void> {
+  return invoke('start_ltc_input', { device, rate, channel })
 }
 
 export function stopLtcInput(): Promise<void> {
