@@ -4,7 +4,10 @@ import { css } from 'styled-system/css'
 import { Icon } from '#components'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Button, EmptyState, IconButton, Tabs } from '~/ui'
+import { Button, EmptyState, IconButton, Input, Select, Tabs, type SelectOption } from '~/ui'
+import ErrorNotice from './ErrorNotice.vue'
+import PageHeader from './PageHeader.vue'
+import SkeletonGrid from './SkeletonGrid.vue'
 import {
   createPresentation,
   listPresentations,
@@ -28,11 +31,38 @@ const filters: { value: Filter; label: string }[] = [
   { value: 'songs', label: 'Songs' },
 ]
 
-const visible = computed(() => {
+type Sort = 'recent' | 'title' | 'slides'
+const query = ref('')
+const sort = ref<Sort>('recent')
+const sortOptions: SelectOption<Sort>[] = [
+  { value: 'recent', label: 'Recently updated' },
+  { value: 'title', label: 'Title A–Z' },
+  { value: 'slides', label: 'Most slides' },
+]
+
+const inKind = computed(() => {
   if (filter.value === 'all') return items.value
   const kind = filter.value === 'songs' ? 'song' : 'presentation'
   return items.value.filter((item) => item.kind === kind)
 })
+const visible = computed(() => {
+  const needle = query.value.trim().toLowerCase()
+  const matched = needle
+    ? inKind.value.filter((item) => item.title.toLowerCase().includes(needle))
+    : [...inKind.value]
+  if (sort.value === 'title') matched.sort((a, b) => a.title.localeCompare(b.title))
+  else if (sort.value === 'slides') matched.sort((a, b) => b.slideCount - a.slideCount)
+  else matched.sort((a, b) => b.updatedAt - a.updatedAt)
+  return matched
+})
+const searching = computed(() => query.value.trim().length > 0)
+const resultLabel = computed(() => {
+  const total = inKind.value.length
+  const noun = filter.value === 'songs' ? 'song' : filter.value === 'presentations' ? 'presentation' : 'item'
+  const plural = (n: number): string => `${n} ${noun}${n === 1 ? '' : 's'}`
+  return searching.value ? `${visible.value.length} of ${plural(total)}` : plural(total)
+})
+const totalSlides = computed(() => items.value.reduce((sum, item) => sum + item.slideCount, 0))
 const presentationCount = computed(() => items.value.filter((item) => item.kind === 'presentation').length)
 const songCount = computed(() => items.value.filter((item) => item.kind === 'song').length)
 
@@ -86,16 +116,16 @@ onMounted(load)
 
 const root = css({ display: 'flex', h: 'full', minH: '0' })
 const content = css({ flex: '1', minW: '0', h: 'full', overflowY: 'auto', px: '6', py: '5' })
+const searchBox = css({ w: '[260px]' })
+const sortBox = css({ w: '[180px]' })
+const resultCount = css({ textStyle: 'ui.xs', color: 'fg.subtle', whiteSpace: 'nowrap' })
 const inspector = css({ w: 'inspector', flexShrink: '0', h: 'full', overflowY: 'auto', bg: 'bg.panel', borderLeftWidth: '1px', borderColor: 'border.default', px: '4', py: '4' })
-const header = css({ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '4', mb: '5' })
-const eyebrow = css({ textStyle: 'ui.label', color: 'accent.default', textTransform: 'uppercase', mb: '1' })
-const title = css({ textStyle: 'display.md', color: 'fg.default' })
-const subtitle = css({ mt: '1', textStyle: 'ui.sm', color: 'fg.muted' })
-const actions = css({ display: 'flex', alignItems: 'center', gap: '2' })
 const filtersRow = css({ display: 'flex', alignItems: 'center', gap: '2', mb: '4' })
 const grid = css({ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '3' })
 const card = css({
   position: 'relative',
+  _focusVisible: { borderColor: 'accent.default' },
+  _active: { transform: 'translateY(0)' },
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
@@ -144,33 +174,46 @@ const cardBox = css({ mt: '4', p: '3', borderRadius: 'md', bg: 'bg.canvas', bord
 const boxTitle = css({ display: 'flex', alignItems: 'center', gap: '2', textStyle: 'ui.sm', color: 'fg.default', mb: '2' })
 const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal' })
 const liveDot = css({ w: '1.5', h: '1.5', borderRadius: 'full', bg: 'success.default' })
-const empty = css({ gridColumn: '1 / -1', py: '16', textAlign: 'center', textStyle: 'ui.sm', color: 'fg.muted' })
 const emptyWrap = css({ gridColumn: '1 / -1', py: '12' })
+const hintList = css({ display: 'flex', flexDirection: 'column', gap: '2', mt: '3', textStyle: 'ui.sm', color: 'fg.muted', lineHeight: 'normal' })
 </script>
 
 <template>
   <div :class="root">
     <section :class="content">
-      <header :class="header">
-        <div>
-          <p :class="eyebrow">Riverside Church</p>
-          <h1 :class="title">Library</h1>
-          <p :class="subtitle">Create a song from lyrics or start a blank presentation.</p>
-        </div>
-        <div :class="actions">
+      <PageHeader
+        eyebrow="Riverside Church"
+        title="Library"
+        subtitle="Create a song from lyrics or start a blank presentation."
+      >
+        <template #actions>
           <Button variant="secondary" size="md" icon="lucide:music" @click="newSong">New song</Button>
           <Button variant="primary" size="md" icon="lucide:plus" @click="newPresentation">New presentation</Button>
-        </div>
-      </header>
+        </template>
+      </PageHeader>
 
       <div :class="filtersRow">
         <Tabs v-model="filter" :tabs="filters" size="sm" />
         <span :class="css({ flex: '1' })" />
+        <span v-if="!loading && items.length" :class="resultCount" aria-live="polite">{{ resultLabel }}</span>
+        <Input
+          v-if="items.length"
+          v-model="query"
+          live
+          type="search"
+          size="md"
+          placeholder="Search title"
+          aria-label="Search library"
+          :class="searchBox"
+        >
+          <template #prefix><Icon name="lucide:search" :size="14" aria-hidden="true" /></template>
+        </Input>
+        <Select v-if="items.length" v-model="sort" :options="sortOptions" aria-label="Sort library" :class="sortBox" />
         <IconButton icon="lucide:refresh-cw" label="Refresh" size="md" @click="load" />
       </div>
 
-      <p v-if="error" :class="css({ textStyle: 'ui.sm', color: 'danger.default', mb: '3' })">{{ error }}</p>
-      <p v-if="loading" :class="empty">Loading library…</p>
+      <ErrorNotice v-if="error" :message="error" title="Library action failed" @retry="load" @dismiss="error = ''" />
+      <SkeletonGrid v-if="loading" :count="8" min="240px" height="190px" label="Loading library" />
       <div v-else :class="grid">
         <button
           v-for="(item, index) in visible"
@@ -184,15 +227,26 @@ const emptyWrap = css({ gridColumn: '1 / -1', py: '12' })
               <Icon :name="item.kind === 'song' ? 'lucide:music' : 'lucide:presentation'" :size="11" />
               {{ item.kind === 'song' ? 'Song' : 'Slides' }}
             </span>
-            <span :class="slideCount">{{ item.slideCount }} slides</span>
+            <span :class="slideCount">{{ item.slideCount }} {{ item.slideCount === 1 ? 'slide' : 'slides' }}</span>
           </div>
           <div :class="cardBody">
             <h2 :class="cardTitle">{{ item.title }}</h2>
-            <p :class="cardMeta">Default theme · {{ updatedLabel(item.updatedAt) }}</p>
+            <p :class="cardMeta">Updated {{ updatedLabel(item.updatedAt) }}</p>
           </div>
         </button>
         <EmptyState
-          v-if="visible.length === 0"
+          v-if="visible.length === 0 && searching"
+          :class="emptyWrap"
+          icon="lucide:search-x"
+          :title="`No results for “${query.trim()}”`"
+          description="Check the spelling or try another filter."
+        >
+          <template #actions>
+            <Button variant="secondary" icon="lucide:x" @click="query = ''">Clear search</Button>
+          </template>
+        </EmptyState>
+        <EmptyState
+          v-else-if="visible.length === 0"
           :class="emptyWrap"
           :icon="filter === 'songs' ? 'lucide:music' : 'lucide:presentation'"
           :title="filter === 'songs' ? 'No songs yet' : filter === 'presentations' ? 'No presentations yet' : 'Your library is empty'"
@@ -207,10 +261,20 @@ const emptyWrap = css({ gridColumn: '1 / -1', py: '12' })
     </section>
 
     <aside :class="inspector" aria-label="Library inspector">
-      <h2 :class="inspectorTitle">Library status</h2>
-      <div :class="stat"><span :class="statLabel">Presentations</span><span :class="statValue">{{ presentationCount }}</span></div>
-      <div :class="stat"><span :class="statLabel">Songs</span><span :class="statValue">{{ songCount }}</span></div>
-      <div :class="stat"><span :class="statLabel">Slides</span><span :class="statValue">{{ items.reduce((sum, item) => sum + item.slideCount, 0) }}</span></div>
+      <template v-if="items.length">
+        <h2 :class="inspectorTitle">Library status</h2>
+        <div :class="stat"><span :class="statLabel">Presentations</span><span :class="statValue">{{ presentationCount }}</span></div>
+        <div :class="stat"><span :class="statLabel">Songs</span><span :class="statValue">{{ songCount }}</span></div>
+        <div :class="stat"><span :class="statLabel">Slides</span><span :class="statValue">{{ totalSlides }}</span></div>
+      </template>
+      <template v-else-if="!loading">
+        <h2 :class="inspectorTitle">Getting started</h2>
+        <ol :class="hintList">
+          <li>1. Create a song or presentation.</li>
+          <li>2. Add it to a playlist.</li>
+          <li>3. Open the playlist live.</li>
+        </ol>
+      </template>
       <div :class="cardBox">
         <p :class="boxTitle"><span :class="liveDot" />Local library</p>
         <p :class="boxText">Saved on this machine. Cloud sync and media upload arrive after the local editor is solid.</p>

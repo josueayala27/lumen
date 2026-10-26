@@ -22,6 +22,9 @@ import {
   type PlaylistRecord,
   type PlaylistSummary,
 } from '~/data/playlists'
+import ErrorNotice from '~/library/ErrorNotice.vue'
+import SkeletonBlock from '~/library/SkeletonBlock.vue'
+import PageHeader from '~/library/PageHeader.vue'
 
 const router = useRouter()
 const playlists = ref<PlaylistSummary[]>([])
@@ -34,6 +37,12 @@ const saving = ref(false)
 const error = ref('')
 const baseline = ref('')
 const savedAt = ref<number | null>(null)
+
+const railQuery = ref('')
+const filteredPlaylists = computed(() => {
+  const needle = railQuery.value.trim().toLowerCase()
+  return needle ? playlists.value.filter((entry) => entry.name.toLowerCase().includes(needle)) : playlists.value
+})
 
 const presentationOptions = computed(() =>
   library.value.map((item) => ({
@@ -195,15 +204,12 @@ const playlistButton = css({
   textAlign: 'left',
   cursor: 'pointer',
   _hover: { bg: 'bg.hover', color: 'fg.default' },
+  _focusVisible: { bg: 'bg.hover', color: 'fg.default' },
 })
 const playlistButtonActive = css({ bg: 'bg.subtle', color: 'fg.default', borderColor: 'accent.default' })
 const playlistName = css({ textStyle: 'ui.sm', color: 'inherit', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxW: 'full' })
 const playlistMeta = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
 const content = css({ flex: '1', minW: '0', h: 'full', overflowY: 'auto', px: '6', py: '5' })
-const header = css({ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '4', mb: '5' })
-const eyebrow = css({ textStyle: 'ui.label', color: 'accent.default', textTransform: 'uppercase', mb: '1' })
-const title = css({ textStyle: 'display.md', color: 'fg.default' })
-const subtitle = css({ mt: '1', textStyle: 'ui.sm', color: 'fg.muted' })
 const actions = css({ display: 'flex', alignItems: 'center', gap: '2' })
 const card = css({ borderRadius: 'md', bg: 'bg.panel', borderWidth: '1px', borderColor: 'border.default', p: '4' })
 const fieldLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', mb: '1.5' })
@@ -219,13 +225,18 @@ const itemRow = css({
   bg: 'bg.canvas',
   borderWidth: '1px',
   borderColor: 'border.default',
+  transitionProperty: 'border-color',
+  transitionDuration: 'fast',
+  _hover: { borderColor: 'border.strong' },
+  _focusWithin: { borderColor: 'accent.default' },
 })
 const itemIndex = css({ w: '5', textStyle: 'ui.mono', color: 'fg.subtle', flexShrink: '0' })
 const itemMeta = css({ flex: '1', minW: '0' })
 const itemTitle = css({ textStyle: 'ui.sm', color: 'fg.default', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
 const itemNote = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
 const notice = css({ py: '10', textAlign: 'center', textStyle: 'ui.sm', color: 'fg.muted' })
-const errorText = css({ textStyle: 'ui.sm', color: 'danger.default', mb: '3' })
+const skeletonStack = css({ display: 'flex', flexDirection: 'column', gap: '1' })
+const hintList = css({ display: 'flex', flexDirection: 'column', gap: '2', textStyle: 'ui.sm', color: 'fg.muted', lineHeight: 'normal' })
 const status = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
 const inspector = css({ w: 'inspector', flexShrink: '0', h: 'full', overflowY: 'auto', bg: 'bg.panel', borderLeftWidth: '1px', borderColor: 'border.default', px: '4', py: '4' })
 const inspectorTitle = css({ textStyle: 'ui.title', color: 'fg.default', mb: '3' })
@@ -244,10 +255,20 @@ const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal
         <p :class="railEyebrow">Service</p>
         <h1 :class="railTitle">Playlists</h1>
         <Button variant="secondary" size="sm" block icon="lucide:plus" @click="newPlaylist">New playlist</Button>
+        <Input
+          v-if="playlists.length > 5"
+          v-model="railQuery"
+          live
+          type="search"
+          size="sm"
+          placeholder="Filter playlists"
+          aria-label="Filter playlists"
+          :class="css({ mt: '2' })"
+        />
       </div>
       <div :class="railList">
         <button
-          v-for="entry in playlists"
+          v-for="entry in filteredPlaylists"
           :key="entry.id"
           type="button"
           :class="[playlistButton, entry.id === selectedId ? playlistButtonActive : '']"
@@ -256,26 +277,31 @@ const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal
           <span :class="playlistName">{{ entry.name }}</span>
           <span :class="playlistMeta">{{ entry.itemCount }} items · {{ updatedLabel(entry.updatedAt) }}</span>
         </button>
-        <p v-if="!loading && playlists.length === 0" :class="notice">Playlists you create appear here.</p>
+        <div v-if="loading" :class="skeletonStack" role="status" aria-label="Loading playlists">
+          <SkeletonBlock v-for="n in 4" :key="n" height="48px" />
+        </div>
+        <p v-else-if="playlists.length === 0" :class="notice">Playlists you create appear here.</p>
+        <p v-else-if="filteredPlaylists.length === 0" :class="notice">No playlists match “{{ railQuery.trim() }}”.</p>
       </div>
     </aside>
 
     <section :class="content">
-      <header :class="header">
-        <div>
-          <p :class="eyebrow">Order of service</p>
-          <h2 :class="title">{{ draft?.doc.name ?? 'Playlists' }}</h2>
-          <p :class="subtitle">Add presentations, reorder the service, then open it live.</p>
-        </div>
-        <div :class="actions">
-          <span v-if="savedAt" :class="status">{{ dirty ? 'Unsaved changes' : `Saved ${updatedLabel(savedAt)}` }}</span>
-          <Button variant="secondary" size="md" :disabled="!draft || saving" @click="save">{{ saveLabel }}</Button>
+      <PageHeader
+        eyebrow="Order of service"
+        :title="draft?.doc.name || 'Playlists'"
+        subtitle="Add presentations, reorder the service, then open it live."
+      >
+        <template #actions>
+          <span v-if="savedAt" :class="status" aria-live="polite">{{ dirty ? 'Unsaved changes' : `Saved ${updatedLabel(savedAt)}` }}</span>
+          <Button variant="secondary" size="md" :disabled="!draft || saving || !dirty" @click="save">{{ saveLabel }}</Button>
           <Button variant="primary" size="md" icon="lucide:radio" :disabled="!draft" @click="openLive">Open live</Button>
-        </div>
-      </header>
+        </template>
+      </PageHeader>
 
-      <p v-if="error" :class="errorText">{{ error }}</p>
-      <p v-if="loading" :class="notice">Loading playlists…</p>
+      <ErrorNotice v-if="error" :message="error" title="Playlist error" @retry="load" @dismiss="error = ''" />
+      <div v-if="loading" :class="skeletonStack" role="status" aria-label="Loading playlist">
+        <SkeletonBlock v-for="n in 5" :key="n" height="48px" />
+      </div>
       <EmptyState
         v-else-if="!draft"
         icon="lucide:list-music"
@@ -318,10 +344,20 @@ const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal
     </section>
 
     <aside :class="inspector" aria-label="Playlist inspector">
-      <h2 :class="inspectorTitle">Playlist status</h2>
-      <div :class="stat"><span :class="statLabel">Items</span><span :class="statValue">{{ itemCount }}</span></div>
-      <div :class="stat"><span :class="statLabel">Presentations</span><span :class="statValue">{{ presentationCount }}</span></div>
-      <div :class="stat"><span :class="statLabel">State</span><span :class="statValue">{{ dirty ? 'Draft' : 'Saved' }}</span></div>
+      <template v-if="draft && itemCount">
+        <h2 :class="inspectorTitle">Playlist status</h2>
+        <div :class="stat"><span :class="statLabel">Items</span><span :class="statValue">{{ itemCount }}</span></div>
+        <div :class="stat"><span :class="statLabel">Presentations</span><span :class="statValue">{{ presentationCount }}</span></div>
+        <div :class="stat"><span :class="statLabel">State</span><span :class="statValue">{{ dirty ? 'Draft' : 'Saved' }}</span></div>
+      </template>
+      <template v-else>
+        <h2 :class="inspectorTitle">Next steps</h2>
+        <ol :class="hintList">
+          <li>{{ draft ? '1. Name your playlist.' : '1. Create a playlist.' }}</li>
+          <li>2. Add presentations and songs.</li>
+          <li>3. Reorder, save, then open live.</li>
+        </ol>
+      </template>
       <div :class="cardBox">
         <p :class="boxTitle"><Icon name="lucide:database" :size="14" />Local playlist</p>
         <p :class="boxText">Stored in SQLite. Live resumes the last item and slide after a restart.</p>

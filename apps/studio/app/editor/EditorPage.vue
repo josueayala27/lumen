@@ -62,7 +62,7 @@ import {
   type MediaAsset,
 } from '~/data/media'
 import { assetsForDoc } from '~/live/liveScene'
-import { Button, ColorField, IconButton, Input, Select, Textarea } from '~/ui'
+import { Button, ColorField, EmptyState, IconButton, Input, Kbd, Select, Spinner, Textarea } from '~/ui'
 import {
   boundsForElement,
   hitTestBounds,
@@ -529,10 +529,17 @@ const baseline = ref('')
 const dirty = computed(() => signature.value !== baseline.value)
 const savedLabel = computed(() => {
   if (saving.value) return 'Saving…'
+  if (error.value && record.value) return 'Save failed'
   if (dirty.value) return 'Unsaved changes'
-  if (savedAt.value) return 'Saved'
-  return 'Local draft'
+  if (savedAt.value) return 'All changes saved'
+  return 'Saved locally'
 })
+const saveTone = computed(() => {
+  if (error.value && record.value) return 'error'
+  if (saving.value || dirty.value) return 'pending'
+  return 'ok'
+})
+const canDeleteSlide = computed(() => !isSong.value && presentationSlides.value.length > 1)
 
 const AUTOSAVE_DELAY_MS = 900
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null
@@ -1003,7 +1010,7 @@ function shapeLayerStyle(layer: ShapeElement): Record<string, string> {
 
 function slideLine(index: number): string {
   const slide = presentationSlides.value[index]
-  return slide ? slideText(slide) || 'Empty' : ''
+  return slide ? slideText(slide) || 'Empty slide' : ''
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -1012,8 +1019,13 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (isSong.value || !editor.value) return
   const mod = event.metaKey || event.ctrlKey
+  if (mod && event.key.toLowerCase() === 's') {
+    event.preventDefault()
+    if (dirty.value && !saving.value && record.value) void save()
+    return
+  }
+  if (isSong.value || !editor.value) return
   const typing = isTypingTarget(event.target)
   const key = event.key.toLowerCase()
 
@@ -1077,7 +1089,23 @@ const root = css({ display: 'flex', flexDirection: 'column', h: 'full', minH: '0
 const toolbar = css({ display: 'flex', alignItems: 'center', gap: '2', h: 'toolbar', px: '4', flexShrink: '0', borderBottomWidth: '1px', borderColor: 'border.default', bg: 'bg.panel' })
 const titleInput = css({ w: '[min(420px,40vw)]' })
 const spacer = css({ flex: '1' })
-const status = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
+const status = css({ display: 'inline-flex', alignItems: 'center', gap: '1.5', textStyle: 'ui.xs', color: 'fg.subtle', whiteSpace: 'nowrap' })
+const statusDot = css({
+  w: '[6px]',
+  h: '[6px]',
+  borderRadius: 'full',
+  bg: 'fg.subtle',
+  '&[data-tone=ok]': { bg: 'accent.default' },
+  '&[data-tone=pending]': { bg: 'fg.muted' },
+  '&[data-tone=error]': { bg: 'danger.default' },
+})
+const kindTag = css({ textStyle: 'ui.xs', color: 'fg.subtle', px: '2', py: '0.5', borderRadius: 'sm', bg: 'bg.subtle' })
+const loadingRow = css({ display: 'inline-flex', alignItems: 'center', gap: '2' })
+const errorBanner = css({ display: 'flex', alignItems: 'center', gap: '2', px: '4', py: '2', flexShrink: '0', textStyle: 'ui.xs', color: 'fg.default', bg: 'bg.subtle', borderBottomWidth: '1px', borderColor: 'danger.default' })
+const errorText = css({ flex: '1', minW: '0' })
+const errorHint = css({ textStyle: 'ui.xs', color: 'danger.default', lineHeight: 'normal', mb: '2' })
+const railHint = css({ textStyle: 'ui.xs', color: 'fg.subtle', lineHeight: 'normal', p: '2' })
+const previewBadgeStatic = css({ cursor: 'default', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '1.5' })
 const body = css({ display: 'flex', flex: '1', minH: '0' })
 const rail = css({ w: '[220px]', flexShrink: '0', bg: 'bg.panel', borderRightWidth: '1px', borderColor: 'border.default', display: 'flex', flexDirection: 'column', minH: '0' })
 const railHead = css({ p: '3', borderBottomWidth: '1px', borderColor: 'border.default', display: 'flex', alignItems: 'center', gap: '2' })
@@ -1093,13 +1121,15 @@ const slideButton = css({
   color: 'fg.muted',
   borderWidth: '1px',
   borderColor: 'transparent',
+  cursor: 'pointer',
   _hover: { bg: 'bg.hover', color: 'fg.default' },
+  _focusVisible: { outlineWidth: '2px', outlineStyle: 'solid', outlineColor: 'accent.default', outlineOffset: '[-2px]' },
 })
 const slideActive = css({ bg: 'bg.subtle', color: 'fg.default', borderColor: 'accent.default' })
 const slideIndex = css({ textStyle: 'ui.mono', fontSize: '[11px]', color: 'fg.subtle', flexShrink: '0' })
-const slidePreview = css({ minW: '0', flex: '1' })
+const slidePreview = css({ minW: '0', flex: '1', display: 'flex', flexDirection: 'column', gap: '0.5' })
 const slideLabel = css({ textStyle: 'ui.xs', color: 'fg.subtle', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
-const slideLineStyle = css({ textStyle: 'ui.xs', color: 'fg.muted', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
+const slideLineStyle = css({ textStyle: 'ui.xs', color: 'fg.muted', '&[data-empty=true]': { color: 'fg.subtle', fontStyle: 'italic' }, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
 const stage = css({ flex: '1', minW: '0', minH: '0', display: 'grid', placeItems: 'center', p: '8', overflow: 'auto' })
 const slide = css({
   position: 'relative',
@@ -1127,7 +1157,7 @@ const layerSelected = css({ boxShadow: '[0_0_0_2px_token(colors.accent.default)]
 const textLayerBox = css({ display: 'flex', flexDirection: 'column', w: 'full', h: 'full', overflow: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-word' })
 const shapeLayerBox = css({ w: 'full', h: 'full' })
 const mediaPlaceholder = css({ display: 'grid', placeItems: 'center', w: 'full', h: 'full', color: 'fg.subtle', textStyle: 'ui.xs', borderWidth: '1px', borderStyle: 'dashed', borderColor: 'border.default' })
-const emptyStage = css({ display: 'grid', placeItems: 'center', h: 'full', textStyle: 'ui.sm', color: 'fg.muted' })
+const emptyStage = css({ position: 'absolute', inset: '0', display: 'grid', placeItems: 'center', textStyle: 'ui.sm', color: 'fg.muted', zIndex: '[5]' })
 const inspector = css({ w: '[320px]', flexShrink: '0', bg: 'bg.panel', borderLeftWidth: '1px', borderColor: 'border.default', p: '4', overflowY: 'auto' })
 const sectionTitle = css({ textStyle: 'ui.label', color: 'fg.subtle', textTransform: 'uppercase', mb: '2', mt: '4', _first: { mt: '0' } })
 const field = css({ display: 'flex', flexDirection: 'column', gap: '1.5', mb: '3' })
@@ -1147,7 +1177,9 @@ const layerRow = css({
   color: 'fg.muted',
   borderWidth: '1px',
   borderColor: 'transparent',
+  cursor: 'pointer',
   _hover: { bg: 'bg.hover', color: 'fg.default' },
+  _focusVisible: { outlineWidth: '2px', outlineStyle: 'solid', outlineColor: 'accent.default', outlineOffset: '[-2px]' },
 })
 const layerRowActive = css({ bg: 'bg.subtle', color: 'fg.default', borderColor: 'accent.default' })
 const layerIconStyle = css({ flexShrink: '0', color: 'fg.subtle' })
@@ -1160,31 +1192,60 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
   <div :class="root">
     <div :class="toolbar">
       <IconButton icon="lucide:arrow-left" label="Back to library" @click="back" />
-      <Input v-model="titleDraft" :class="titleInput" size="sm" live aria-label="Presentation title" />
-      <span :class="status">{{ savedLabel }}</span>
+      <Input v-model="titleDraft" :class="titleInput" size="sm" live aria-label="Presentation title" placeholder="Untitled presentation" />
+      <span :class="status" role="status" aria-live="polite" :title="error || undefined">
+        <Spinner v-if="saving" :size="12" />
+        <span v-else :class="statusDot" :data-tone="saveTone" aria-hidden="true" />
+        {{ savedLabel }}
+      </span>
       <span :class="spacer" />
-      <IconButton icon="lucide:undo-2" label="Undo" :disabled="!canUndoNow" @click="undoEdit" />
-      <IconButton icon="lucide:redo-2" label="Redo" :disabled="!canRedoNow" @click="redoEdit" />
-      <span :class="status">{{ isSong ? 'Song' : 'Presentation' }}</span>
-      <Button variant="secondary" size="sm" icon="lucide:play" :disabled="saving" @click="present">Present</Button>
-      <Button variant="primary" size="sm" icon="lucide:save" :disabled="!dirty || saving" @click="save">Save</Button>
+      <template v-if="!isSong">
+        <IconButton icon="lucide:undo-2" label="Undo" shortcut="Mod+Z" :disabled="!canUndoNow" @click="undoEdit" />
+        <IconButton icon="lucide:redo-2" label="Redo" shortcut="Mod+Shift+Z" :disabled="!canRedoNow" @click="redoEdit" />
+      </template>
+      <span :class="kindTag">{{ isSong ? 'Song' : 'Presentation' }}</span>
+      <Button variant="secondary" size="sm" icon="lucide:play" :disabled="saving || !record" @click="present">Present</Button>
+      <Button variant="primary" size="sm" icon="lucide:save" title="Save (Cmd/Ctrl+S)" :disabled="!dirty || saving" :loading="saving" @click="save">
+        Save
+      </Button>
     </div>
 
-    <div v-if="loading" :class="empty">Loading…</div>
-    <div v-else-if="error" :class="empty">{{ error }}</div>
+    <div v-if="error && record" :class="errorBanner" role="alert">
+      <Icon name="lucide:triangle-alert" :size="14" aria-hidden="true" />
+      <span :class="errorText">Save failed: {{ error }} Your edits are still open here; retry, or check disk space and permissions.</span>
+      <Button variant="secondary" size="sm" icon="lucide:refresh-cw" :disabled="saving" @click="save">Retry save</Button>
+    </div>
+
+    <div v-if="loading" :class="empty" role="status"><span :class="loadingRow"><Spinner :size="16" /> Loading presentation…</span></div>
+    <div v-else-if="error && !record" :class="empty">
+      <EmptyState
+        icon="lucide:triangle-alert"
+        title="Could not open this presentation"
+        :description="`${error} Go back to the library and open it again, or retry.`"
+      >
+        <template #actions>
+          <Button variant="secondary" size="sm" icon="lucide:arrow-left" @click="back">Back to library</Button>
+          <Button variant="primary" size="sm" icon="lucide:refresh-cw" @click="load">Retry</Button>
+        </template>
+      </EmptyState>
+    </div>
 
     <div v-else-if="record" :class="body">
       <aside :class="rail" aria-label="Slides">
         <div :class="railHead">
-          <span :class="railTitle">{{ slideCount }} slides</span>
+          <span :class="railTitle">{{ slideCount }} {{ slideCount === 1 ? 'slide' : 'slides' }}</span>
           <IconButton v-if="!isSong" icon="lucide:plus" label="Add slide" size="sm" @click="addSlide" />
         </div>
         <div :class="railList">
+          <p v-if="isSong && songSlides.length === 0" :class="railHint">
+            No slides yet. Type lyrics under a [Section] marker in the inspector and slides appear here.
+          </p>
           <button
             v-for="index in slideCount"
             :key="index"
             type="button"
             :class="[slideButton, index - 1 === activeSlideIndex ? slideActive : '']"
+            :aria-current="index - 1 === activeSlideIndex ? 'true' : undefined"
             @click="selectSlide(index - 1)"
           >
             <span :class="slideIndex">{{ String(index).padStart(2, '0') }}</span>
@@ -1192,8 +1253,8 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
               <span :class="slideLabel">{{
                 isSong ? (songSlides[index - 1]?.sectionLabel ?? 'Slide') : `Slide ${index}`
               }}</span>
-              <span :class="slideLineStyle">{{
-                isSong ? (songSlides[index - 1]?.lines[0] ?? 'Empty') : slideLine(index - 1)
+              <span :class="slideLineStyle" :data-empty="(isSong ? songSlides[index - 1]?.lines[0] : slideLine(index - 1)) ? undefined : 'true'">{{
+                isSong ? (songSlides[index - 1]?.lines[0] ?? 'Empty slide') : slideLine(index - 1)
               }}</span>
             </span>
           </button>
@@ -1248,7 +1309,14 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
               />
             </div>
             <template v-if="!nativePreview">
-              <div v-if="previewLayers.length === 0" :class="emptyStage">No layers on this slide</div>
+              <div v-if="previewLayers.length === 0" :class="emptyStage">
+                <EmptyState icon="lucide:layers" title="This slide is empty" description="Add a text or shape layer to start building the slide.">
+                  <template #actions>
+                    <Button variant="secondary" size="sm" icon="lucide:type" @click="addTextLayer">Add text</Button>
+                    <Button variant="ghost" size="sm" icon="lucide:square" @click="addShapeLayer">Add shape</Button>
+                  </template>
+                </EmptyState>
+              </div>
               <div
                 v-for="layer in previewLayers"
                 :key="layer.id"
@@ -1269,8 +1337,13 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
               :title="previewError"
               @click="retryPreview"
             >
-              Native preview unavailable · Retry
+              <Icon name="lucide:triangle-alert" :size="12" aria-hidden="true" />
+              Native preview failed: {{ previewError }} · Click to retry
             </button>
+            <span v-else-if="!tauriRuntime" :class="[previewBadge, previewBadgeStatic]">
+              <Icon name="lucide:info" :size="12" aria-hidden="true" />
+              Approximate preview. Desktop app has the real renderer.
+            </span>
           </template>
         </div>
       </section>
@@ -1324,10 +1397,17 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
               @update:model-value="updateSlideText"
             />
             <div :class="row">
-              <Button variant="ghost" size="sm" icon="lucide:chevron-up" @click="stepSlide(activeSlideIndex, -1)">Up</Button>
-              <Button variant="ghost" size="sm" icon="lucide:chevron-down" @click="stepSlide(activeSlideIndex, 1)">Down</Button>
+              <Button variant="ghost" size="sm" icon="lucide:chevron-up" :disabled="activeSlideIndex === 0" @click="stepSlide(activeSlideIndex, -1)">Up</Button>
+              <Button variant="ghost" size="sm" icon="lucide:chevron-down" :disabled="activeSlideIndex >= slideCount - 1" @click="stepSlide(activeSlideIndex, 1)">Down</Button>
               <span :class="spacer" />
-              <Button variant="ghost" size="sm" icon="lucide:trash-2" @click="removeSlide(activeSlideIndex)">Delete</Button>
+              <Button
+              variant="ghost"
+              size="sm"
+              icon="lucide:trash-2"
+              :disabled="!canDeleteSlide"
+              :title="canDeleteSlide ? undefined : 'A presentation needs at least one slide'"
+              @click="removeSlide(activeSlideIndex)"
+            >Delete</Button>
             </div>
           </div>
 
@@ -1375,7 +1455,7 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
               </Button>
             </div>
           </template>
-          <p v-if="mediaError" :class="hint">{{ mediaError }}</p>
+          <p v-if="mediaError" :class="errorHint" role="alert">{{ mediaError }} Check the Media page, then reopen the editor.</p>
 
           <h2 :class="sectionTitle">Layers</h2>
           <div :class="row">
@@ -1396,16 +1476,16 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
               <span :class="layerName">{{ layerLabel(layer) }}</span>
               <span :class="layerKind">{{ layer.kind }}</span>
             </button>
-            <p v-if="orderedLayers.length === 0" :class="hint">No layers on this slide.</p>
+            <p v-if="orderedLayers.length === 0" :class="hint">No layers yet. Use Text or Shape above, or add media.</p>
           </div>
           <div :class="row">
             <IconButton icon="lucide:chevron-up" label="Bring forward" size="sm" :disabled="!hasSelection" @click="moveSelection(1)" />
             <IconButton icon="lucide:chevron-down" label="Send backward" size="sm" :disabled="!hasSelection" @click="moveSelection(-1)" />
-            <IconButton icon="lucide:copy" label="Duplicate" size="sm" :disabled="!hasSelection" @click="duplicateSelection" />
-            <IconButton icon="lucide:clipboard" label="Copy" size="sm" :disabled="!hasSelection" @click="copySelection" />
-            <IconButton icon="lucide:clipboard-paste" label="Paste" size="sm" :disabled="!canPaste" @click="pasteClipboard" />
+            <IconButton icon="lucide:copy" label="Duplicate" shortcut="Mod+D" size="sm" :disabled="!hasSelection" @click="duplicateSelection" />
+            <IconButton icon="lucide:clipboard" label="Copy" shortcut="Mod+C" size="sm" :disabled="!hasSelection" @click="copySelection" />
+            <IconButton icon="lucide:clipboard-paste" label="Paste" shortcut="Mod+V" size="sm" :disabled="!canPaste" @click="pasteClipboard" />
             <span :class="spacer" />
-            <IconButton icon="lucide:trash-2" label="Delete layer" size="sm" :disabled="!hasSelection" @click="deleteSelection" />
+            <IconButton icon="lucide:trash-2" label="Delete layer" shortcut="Delete" size="sm" :disabled="!hasSelection" @click="deleteSelection" />
           </div>
 
           <template v-if="singleTextLayer">
@@ -1464,7 +1544,10 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
             </div>
           </template>
           <p v-else-if="selectedLayers.length > 1" :class="hint">
-            {{ selectedLayers.length }} layers selected
+            {{ selectedLayers.length }} layers selected. Select one layer to edit its properties.
+          </p>
+          <p v-else-if="orderedLayers.length > 0" :class="hint">
+            Select a layer to edit it. <Kbd shortcut="Escape" tone="subtle" /> clears the selection.
           </p>
 
           <template v-if="singleLayer">

@@ -13,12 +13,21 @@ import {
 } from '~/data/timelines'
 import TimelineEditor from '~/timeline/TimelineEditor.vue'
 import { timecodeLabel } from '~/timeline/lib'
-import { Badge, Button, EmptyState, IconButton } from '~/ui'
+import { Badge, Button, EmptyState, IconButton, Input } from '~/ui'
+import ErrorNotice from '~/library/ErrorNotice.vue'
+import PageHeader from '~/library/PageHeader.vue'
+import SkeletonGrid from '~/library/SkeletonGrid.vue'
+import { computed } from 'vue'
 
 const items = ref<TimelineSummary[]>([])
 const active = ref<TimelineRecord | null>(null)
 const loading = ref(true)
 const busy = ref(false)
+const query = ref('')
+const visibleItems = computed(() => {
+  const needle = query.value.trim().toLowerCase()
+  return needle ? items.value.filter((item) => item.name.toLowerCase().includes(needle)) : items.value
+})
 const error = ref('')
 
 async function load(): Promise<void> {
@@ -91,13 +100,10 @@ function metaLine(item: TimelineSummary): string {
 onMounted(() => void load())
 
 const page = css({ display: 'flex', flexDirection: 'column', h: 'full', minH: '0', px: '6', py: '5' })
-const header = css({ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '4', mb: '4' })
-const eyebrow = css({ textStyle: 'ui.label', color: 'accent.default', textTransform: 'uppercase', mb: '1' })
-const titleRow = css({ display: 'flex', alignItems: 'center', gap: '2' })
-const title = css({ textStyle: 'display.md', color: 'fg.default' })
-const subtitle = css({ mt: '1', textStyle: 'ui.sm', color: 'fg.muted' })
-const errorText = css({ mb: '3', textStyle: 'ui.sm', color: 'danger.default' })
-const loadingText = css({ p: '4', textStyle: 'ui.sm', color: 'fg.muted' })
+const toolbar = css({ display: 'flex', alignItems: 'center', gap: '2', mb: '4' })
+const searchBox = css({ w: '[260px]' })
+const count = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
+const noMatch = css({ flex: '1' })
 const body = css({ flex: '1', minH: '0', overflowY: 'auto' })
 const grid = css({
   display: 'grid',
@@ -138,32 +144,50 @@ const updated = css({ flex: '1', textStyle: 'ui.xs', color: 'fg.subtle' })
   />
 
   <div v-else :class="page">
-    <header :class="header">
-      <div>
-        <p :class="eyebrow">Library</p>
-        <div :class="titleRow">
-          <h1 :class="title">Timelines</h1>
-          <Badge tone="neutral">{{ items.length }}</Badge>
-        </div>
-        <p :class="subtitle">
-          Build a show timeline from slide, media, audio and macro clips. Frames, clip edges and markers snap.
-        </p>
-      </div>
-      <Button variant="primary" icon="lucide:plus" :loading="busy" @click="create">
-        New timeline
-      </Button>
-    </header>
+    <PageHeader
+      eyebrow="Library"
+      title="Timelines"
+      subtitle="Build a show timeline from slide, media, audio and macro clips. Frames, clip edges and markers snap."
+    >
+      <template #badges><Badge tone="neutral">{{ items.length }}</Badge></template>
+      <template #actions>
+        <Button variant="primary" icon="lucide:plus" :loading="busy" @click="create">New timeline</Button>
+      </template>
+    </PageHeader>
 
-    <p v-if="error" :class="errorText">{{ error }}</p>
-    <p v-if="loading" :class="loadingText">Loading timelines…</p>
+    <div v-if="items.length" :class="toolbar">
+      <Input v-model="query" live type="search" size="md" placeholder="Search timelines" aria-label="Search timelines" :class="searchBox">
+        <template #prefix><Icon name="lucide:search" :size="14" aria-hidden="true" /></template>
+      </Input>
+      <span :class="count" aria-live="polite">{{ query.trim() ? `${visibleItems.length} of ${items.length}` : `${items.length} ${items.length === 1 ? 'timeline' : 'timelines'}` }}</span>
+    </div>
+
+    <ErrorNotice v-if="error" :message="error" title="Timeline error" @retry="load" @dismiss="error = ''" />
+    <SkeletonGrid v-if="loading" :count="6" min="280px" height="118px" label="Loading timelines" />
+
+    <EmptyState
+      v-else-if="items.length && !visibleItems.length"
+      :class="noMatch"
+      icon="lucide:search-x"
+      title="No timelines match"
+      :description="`Nothing matches “${query.trim()}”.`"
+    >
+      <template #actions>
+        <Button variant="secondary" icon="lucide:x" @click="query = ''">Clear search</Button>
+      </template>
+    </EmptyState>
 
     <div v-else-if="items.length" :class="body">
       <div :class="grid">
         <div
-          v-for="item in items"
+          v-for="item in visibleItems"
           :key="item.id"
           :class="card"
+          tabindex="0"
+          role="button"
+          :aria-label="`Open timeline ${item.name}`"
           @click="open(item.id)"
+          @keydown.enter.self="open(item.id)"
         >
           <div :class="cardTop">
             <span :class="mark"><Icon name="lucide:film" :size="15" aria-hidden="true" /></span>

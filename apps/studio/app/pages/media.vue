@@ -18,10 +18,16 @@ import {
   Button,
   EmptyState,
   IconButton,
+  Input,
   SegmentedControl,
+  Select,
   formatBytes,
   type SegmentOption,
+  type SelectOption,
 } from '~/ui'
+import ErrorNotice from '~/library/ErrorNotice.vue'
+import PageHeader from '~/library/PageHeader.vue'
+import SkeletonGrid from '~/library/SkeletonGrid.vue'
 
 type View = 'grid' | 'list'
 
@@ -37,6 +43,29 @@ const viewOptions: SegmentOption<View>[] = [
   { value: 'grid', label: 'Grid', icon: 'lucide:layout-grid' },
   { value: 'list', label: 'List', icon: 'lucide:list' },
 ]
+
+type KindFilter = 'all' | 'image' | 'video' | 'audio'
+const query = ref('')
+const kindFilter = ref<KindFilter>('all')
+const kindOptions: SelectOption<KindFilter>[] = [
+  { value: 'all', label: 'All types' },
+  { value: 'image', label: 'Images' },
+  { value: 'video', label: 'Video' },
+  { value: 'audio', label: 'Audio' },
+]
+const visibleItems = computed(() => {
+  const needle = query.value.trim().toLowerCase()
+  return items.value.filter(
+    (asset) =>
+      (kindFilter.value === 'all' || asset.kind === kindFilter.value) &&
+      (!needle || asset.name.toLowerCase().includes(needle)),
+  )
+})
+const filtering = computed(() => query.value.trim().length > 0 || kindFilter.value !== 'all')
+function clearFilters(): void {
+  query.value = ''
+  kindFilter.value = 'all'
+}
 
 const missingCount = computed(() => items.value.filter((asset) => asset.missing).length)
 
@@ -152,14 +181,11 @@ async function remove(asset: MediaAsset): Promise<void> {
 onMounted(() => void load())
 
 const page = css({ display: 'flex', flexDirection: 'column', h: 'full', minH: '0', px: '6', py: '5' })
-const header = css({ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '4', mb: '4' })
-const eyebrow = css({ textStyle: 'ui.label', color: 'accent.default', textTransform: 'uppercase', mb: '1' })
-const titleRow = css({ display: 'flex', alignItems: 'center', gap: '2' })
-const title = css({ textStyle: 'display.md', color: 'fg.default' })
-const subtitle = css({ mt: '1', textStyle: 'ui.sm', color: 'fg.muted' })
-const actions = css({ display: 'flex', alignItems: 'center', gap: '2', flexShrink: '0' })
-const errorText = css({ mb: '3', textStyle: 'ui.sm', color: 'danger.default' })
-const loadingText = css({ p: '4', textStyle: 'ui.sm', color: 'fg.muted' })
+const noMatch = css({ flex: '1' })
+const toolbar = css({ display: 'flex', alignItems: 'center', gap: '2', mb: '4' })
+const searchBox = css({ w: '[260px]' })
+const typeBox = css({ w: '[140px]' })
+const count = css({ flex: '1', textStyle: 'ui.xs', color: 'fg.subtle' })
 const body = css({ flex: '1', minH: '0', overflowY: 'auto' })
 const grid = css({
   display: 'grid',
@@ -178,7 +204,8 @@ const card = css({
   borderColor: 'border.default',
   transitionProperty: 'border-color',
   transitionDuration: 'fast',
-  _hover: { borderColor: 'accent.default' },
+  _hover: { borderColor: 'accent.default', bg: 'bg.subtle' },
+  _focusWithin: { borderColor: 'accent.default' },
 })
 const row = css({
   display: 'flex',
@@ -192,7 +219,8 @@ const row = css({
   borderColor: 'border.default',
   transitionProperty: 'border-color',
   transitionDuration: 'fast',
-  _hover: { borderColor: 'accent.default' },
+  _hover: { borderColor: 'accent.default', bg: 'bg.subtle' },
+  _focusWithin: { borderColor: 'accent.default' },
 })
 const missingItem = css({ borderColor: 'danger.default' })
 const thumb = css({
@@ -228,31 +256,52 @@ const itemMeta = css({ mt: '0.5', textStyle: 'ui.xs', color: 'fg.subtle', overfl
 
 <template>
   <div :class="page">
-    <header :class="header">
-      <div>
-        <p :class="eyebrow">Library</p>
-        <div :class="titleRow">
-          <h1 :class="title">Media</h1>
-          <Badge tone="neutral">{{ items.length }}</Badge>
-          <Badge v-if="missingCount" tone="danger" dot>{{ missingCount }} missing</Badge>
-        </div>
-        <p :class="subtitle">Images and video copied into the app-managed media folder.</p>
-      </div>
-      <div :class="actions">
-        <SegmentedControl v-model="view" :options="viewOptions" aria-label="Media view" :fill="false" />
+    <PageHeader
+      eyebrow="Library"
+      title="Media"
+      subtitle="Images and video copied into the app-managed media folder."
+    >
+      <template #badges>
+        <Badge tone="neutral">{{ items.length }}</Badge>
+        <Badge v-if="missingCount" tone="danger" dot>{{ missingCount }} missing</Badge>
+      </template>
+      <template #actions>
         <Button variant="primary" icon="lucide:plus" :loading="importing" @click="importSelected">
           Import media
         </Button>
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
-    <p v-if="error" :class="errorText">{{ error }}</p>
-    <p v-if="loading" :class="loadingText">Loading media…</p>
+    <div v-if="items.length" :class="toolbar">
+      <Input v-model="query" live type="search" size="md" placeholder="Search media" aria-label="Search media" :class="searchBox">
+        <template #prefix><Icon name="lucide:search" :size="14" aria-hidden="true" /></template>
+      </Input>
+      <Select v-model="kindFilter" :options="kindOptions" aria-label="Filter by type" :class="typeBox" />
+      <span :class="count" aria-live="polite">
+        {{ filtering ? `${visibleItems.length} of ${items.length}` : `${items.length} ${items.length === 1 ? 'file' : 'files'}` }}
+      </span>
+      <SegmentedControl v-model="view" :options="viewOptions" aria-label="Media view" :fill="false" />
+    </div>
+
+    <ErrorNotice v-if="error" :message="error" title="Media error" @retry="load" @dismiss="error = ''" />
+    <SkeletonGrid v-if="loading" :count="8" min="220px" height="170px" label="Loading media" />
+
+    <EmptyState
+      v-else-if="items.length && !visibleItems.length"
+      :class="noMatch"
+      icon="lucide:search-x"
+      title="No media matches"
+      description="Try a different search or file type."
+    >
+      <template #actions>
+        <Button variant="secondary" icon="lucide:x" @click="clearFilters">Clear filters</Button>
+      </template>
+    </EmptyState>
 
     <div v-else-if="items.length" :class="body">
       <div :class="view === 'grid' ? grid : list">
         <div
-          v-for="asset in items"
+          v-for="asset in visibleItems"
           :key="asset.id"
           :class="[view === 'grid' ? card : row, asset.missing ? missingItem : '']"
         >

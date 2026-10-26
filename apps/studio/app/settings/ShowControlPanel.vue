@@ -150,7 +150,7 @@ function describe(binding: MidiBinding): string {
   return `${binding.kind} ${binding.number} · ${channel}`
 }
 
-const page = css({ h: 'full', p: '6', overflowY: 'auto' })
+const page = css({ h: 'auto', p: '0' })
 const panel = css({ maxW: '[720px]', h: 'auto' })
 const field = css({ display: 'flex', flexDirection: 'column', gap: '1.5', mb: '4' })
 const label = css({ textStyle: 'ui.sm', color: 'fg.muted' })

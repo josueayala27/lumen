@@ -8,6 +8,7 @@ import type {
   TimelineCue,
 } from '@lumen/schema'
 import { css } from 'styled-system/css'
+import { Icon } from '#components'
 import { Badge, Button, IconButton, Input, Select, Switch } from '~/ui'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useTimeline } from '~/control/useTimeline'
@@ -43,6 +44,8 @@ const rateOptions: { value: FrameRate; label: string }[] = [
   { value: '30', label: '30' },
 ]
 
+// Body is hidden with v-show, never unmounted, so armed cues keep firing while collapsed.
+const open = ref(false)
 const cueTime = ref('')
 const cueLabel = ref('')
 const cueAction = ref<ActionKey>('next')
@@ -136,9 +139,10 @@ onBeforeUnmount(() => {
   if (saveTimer) clearTimeout(saveTimer)
 })
 
-const root = css({ mt: '4', pt: '4', borderTopWidth: '1px', borderColor: 'border.default' })
-const head = css({ display: 'flex', alignItems: 'center', gap: '2', mb: '2' })
-const title = css({ flex: '1', textStyle: 'ui.label', color: 'fg.subtle', textTransform: 'uppercase' })
+const root = css({ py: '2', borderBottomWidth: '1px', borderColor: 'border.default' })
+const head = css({ display: 'flex', alignItems: 'center', gap: '2', h: 'control.md', pl: '3', pr: '3' })
+const title = css({ flex: '1', display: 'flex', alignItems: 'center', gap: '1', h: 'full', textStyle: 'ui.label', color: 'fg.default', textAlign: 'left', cursor: 'pointer', borderRadius: 'xs' })
+const body = css({ px: '3', pt: '1.5', pb: '1' })
 const field = css({ display: 'flex', flexDirection: 'column', gap: '1.5', mb: '2' })
 const label = css({ textStyle: 'ui.xs', color: 'fg.muted' })
 const row = css({ display: 'flex', alignItems: 'center', gap: '2', mb: '2' })
@@ -163,11 +167,17 @@ const cueNote = css({ textStyle: 'ui.xs', color: 'fg.subtle', overflow: 'hidden'
 <template>
   <section :class="root" aria-label="LTC timeline">
     <div :class="head">
-      <h2 :class="title">Timeline</h2>
+      <button type="button" :class="title" :aria-expanded="open" aria-controls="timeline-body" @click="open = !open">
+        <span>Timeline</span>
+        <Icon name="lucide:chevron-down" :size="12" :class="css({ color: 'fg.subtle', transition: 'transform', ...(open ? {} : { transform: 'rotate(-90deg)' }) })" aria-hidden="true" />
+        <span v-if="!open && timeline" :class="hint">{{ sortedCues.length }} cues</span>
+      </button>
       <Badge :tone="statusTone" dot :label="statusLabel" />
       <Switch :model-value="armed" size="sm" aria-label="Arm timeline" @update:model-value="setArmed" />
     </div>
 
+    <div v-show="open" id="timeline-body" :class="body">
+    <p v-if="!timeline" :class="hint">Loading timeline…</p>
     <template v-if="timeline">
       <div :class="field">
         <span :class="label">Name</span>
@@ -215,5 +225,6 @@ const cueNote = css({ textStyle: 'ui.xs', color: 'fg.subtle', overflow: 'hidden'
 
       <p v-if="firedLabel" :class="hint">Fired: {{ firedLabel }}</p>
     </template>
+    </div>
   </section>
 </template>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
-import { Button, Dialog, EmptyState, IconButton, Input } from '~/ui'
+import { Badge, Button, Dialog, EmptyState, IconButton, Input, Kbd, PanelSection } from '~/ui'
 import { useShowControl } from '~/control/useShowControl'
 import { useOutputScreens } from '~/output/useOutputScreens'
 import OutputPanel from '~/output/OutputPanel.vue'
@@ -269,6 +269,7 @@ const cueLabel = css({ flex: '1', textStyle: 'ui.sm', overflow: 'hidden', textOv
 const center = css({ flex: '1', minW: '0', display: 'flex', flexDirection: 'column', minH: '0', bg: 'bg.canvas' })
 const centerHead = css({ display: 'flex', alignItems: 'center', gap: '2', h: 'toolbar', px: '4', flexShrink: '0', borderBottomWidth: '1px', borderColor: 'border.default' })
 const livePill = css({ display: 'inline-flex', alignItems: 'center', gap: '1.5', h: 'control.sm', px: '2', borderRadius: 'full', bg: 'live.muted', color: 'live.default', textStyle: 'ui.xs', fontWeight: 'semibold' })
+const offPill = css({ bg: 'bg.subtle', color: 'fg.muted' })
 const stage = css({ display: 'flex', gap: '3', p: '4', flex: '1', minH: '0' })
 const pane = css({ flex: '1', minW: '0', display: 'flex', flexDirection: 'column', gap: '2' })
 const paneLabel = css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', textStyle: 'ui.label', color: 'fg.muted', textTransform: 'uppercase' })
@@ -279,16 +280,15 @@ const slideLine = css({ lineHeight: '[1.15]' })
 const nextStrip = css({ display: 'flex', gap: '2', p: '4', pt: '0' })
 const nextCard = css({ flex: '1', aspectRatio: 'video', maxW: '[180px]', borderRadius: 'sm', borderWidth: '1px', borderColor: 'border.default', display: 'grid', placeItems: 'center', p: '2', textStyle: 'ui.xs', color: 'fg.muted', bg: 'bg.panel', textAlign: 'center' })
 const controls = css({ display: 'flex', alignItems: 'center', gap: '2', p: '3', borderTopWidth: '1px', borderColor: 'border.default', bg: 'bg.panel', flexShrink: '0' })
-const inspector = css({ w: 'inspector', flexShrink: '0', bg: 'bg.panel', borderLeftWidth: '1px', borderColor: 'border.default', p: '4', overflowY: 'auto' })
-const sectionTitle = css({ textStyle: 'ui.label', color: 'fg.subtle', textTransform: 'uppercase', mb: '2', mt: '4', _first: { mt: '0' } })
+const inspector = css({ w: 'inspector', flexShrink: '0', bg: 'bg.panel', borderLeftWidth: '1px', borderColor: 'border.default', overflowY: 'auto' })
 const fieldLabel = css({ textStyle: 'ui.sm', color: 'fg.muted', mb: '1.5' })
-const timer = css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: '3', borderRadius: 'md', bg: 'bg.canvas', borderWidth: '1px', borderColor: 'border.default', mb: '2' })
+const timer = css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: '3', py: '2', borderRadius: 'md', bg: 'bg.canvas', borderWidth: '1px', borderColor: 'border.default' })
 const timerValue = css({ textStyle: 'ui.mono', fontSize: '[18px]', color: 'fg.default' })
-const shortcut = css({ display: 'flex', justifyContent: 'space-between', py: '1.5', textStyle: 'ui.xs', color: 'fg.muted' })
-const kbd = css({ px: '1.5', py: '0.5', borderRadius: 'xs', bg: 'bg.subtle', color: 'fg.default', textStyle: 'ui.mono' })
+const shortcutGrid = css({ display: 'grid', gridTemplateColumns: '[1fr 1fr]', columnGap: '3', rowGap: '1' })
+const shortcut = css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '2', textStyle: 'ui.xs', color: 'fg.muted' })
+const offAir = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
 const gradient = css({ background: '[token(gradients.ember)]' })
 const gradientTwo = css({ background: '[token(gradients.graphite)]' })
-const notice = css({ p: '3', textStyle: 'ui.xs', color: 'fg.subtle' })
 const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.default' })
 </script>
 
@@ -339,7 +339,7 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
 
     <section :class="center">
       <div :class="centerHead">
-        <span :class="livePill"><span :class="css({ w: '1.5', h: '1.5', borderRadius: 'full', bg: 'live.default' })" />{{ mode.toUpperCase() }}</span>
+        <span :class="[livePill, isLive ? '' : offPill]"><span :class="css({ w: '1.5', h: '1.5', borderRadius: 'full', bg: isLive ? 'live.default' : 'fg.subtle' })" />{{ isLive ? 'ON AIR' : mode.toUpperCase() }}</span>
         <span :class="css({ textStyle: 'ui.sm', color: 'fg.muted' })">{{ outputLabel }}</span>
         <span v-if="timecodeLabel" :class="css({ textStyle: 'ui.mono', color: 'fg.muted' })">
           {{ timecodeLabel }}<template v-if="!showTimecode?.locked"> · no lock</template>
@@ -358,7 +358,8 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
         </Button>
       </div>
 
-      <p v-if="error" :class="errorText">{{ error }}</p>
+      <p v-if="loading" :class="[offAir, css({ px: '4', py: '2' })]">Loading live session…</p>
+      <p v-if="error" :class="errorText" role="alert">{{ error }}</p>
       <p v-if="stageError" :class="errorText">{{ stageError }}</p>
       <p v-if="liveOutput.error" :class="errorText">{{ liveOutput.error }}</p>
 
@@ -392,66 +393,59 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
       </div>
 
       <div :class="controls">
-        <Button variant="secondary" size="md" icon="lucide:skip-back" @click="prev">Previous</Button>
-        <Button variant="primary" size="md" icon="lucide:skip-forward" @click="next">Next slide</Button>
-        <Button variant="secondary" size="md" icon="lucide:arrow-up-right" @click="take">Take</Button>
+        <Button variant="secondary" size="md" icon="lucide:skip-back" :disabled="emptyRail" @click="prev">Previous</Button>
+        <Button variant="primary" size="md" icon="lucide:skip-forward" :disabled="emptyRail" @click="next">Next slide</Button>
+        <Button variant="secondary" size="md" icon="lucide:arrow-up-right" :disabled="emptyRail" @click="take">Take</Button>
         <span :class="css({ flex: '1' })" />
-        <IconButton icon="lucide:chevrons-left" label="Previous item" @click="prevItem" />
-        <IconButton icon="lucide:chevrons-right" label="Next item" @click="nextItem" />
+        <IconButton icon="lucide:chevrons-left" label="Previous item" :disabled="emptyRail" @click="prevItem" />
+        <IconButton icon="lucide:chevrons-right" label="Next item" :disabled="emptyRail" @click="nextItem" />
         <IconButton icon="lucide:square" label="Black" :active="mode === 'black'" @click="setMode('black')" />
         <IconButton icon="lucide:eraser" label="Clear" :active="mode === 'clear'" @click="setMode('clear')" />
         <IconButton icon="lucide:badge" label="Logo" :active="mode === 'logo'" @click="setMode('logo')" />
         <IconButton icon="lucide:pause" label="Freeze" :active="mode === 'freeze'" @click="setMode(mode === 'freeze' ? 'live' : 'freeze')" />
-        <Button variant="danger" size="md" icon="lucide:radio" @click="setMode('live')">Live</Button>
+        <Button variant="danger" size="md" icon="lucide:radio" :disabled="isLive" @click="setMode('live')">{{ isLive ? 'On air' : 'Go live' }}</Button>
       </div>
     </section>
 
     <aside :class="inspector" aria-label="Live inspector">
-      <h2 :class="sectionTitle">Stage message</h2>
-      <p :class="fieldLabel">Shown on the confidence monitor</p>
-      <Input v-model="stageMessage" placeholder="Chorus in 2 · mic 3" size="md" />
+      <PanelSection title="Stage message">
+        <p :class="fieldLabel">Shown on the confidence monitor</p>
+        <Input v-model="stageMessage" placeholder="Chorus in 2 · mic 3" size="md" aria-label="Stage message" />
+      </PanelSection>
 
-      <h2 :class="sectionTitle">Timers</h2>
-      <div v-for="entry in timers" :key="entry.id" :class="timer">
-        <div>
-          <p :class="css({ textStyle: 'ui.xs', color: 'fg.subtle' })">{{ entry.label }}</p>
-          <p :class="timerValue">{{ entry.value }}</p>
+      <PanelSection title="Timers" collapsible storage-key="live.timers">
+        <template #actions>
+          <Badge v-if="timers.some((entry) => entry.running)" tone="success" dot label="Running" />
+        </template>
+        <p v-if="timers.length === 0" :class="offAir">No timers configured.</p>
+        <div v-for="entry in timers" :key="entry.id" :class="timer">
+          <div>
+            <p :class="css({ textStyle: 'ui.xs', color: 'fg.subtle' })">{{ entry.label }}</p>
+            <p :class="timerValue">{{ entry.value }}</p>
+          </div>
+          <div :class="css({ display: 'flex', alignItems: 'center', gap: '1' })">
+            <Button v-if="!entry.running" variant="ghost" size="sm" icon="lucide:play" @click="startTimer(entry.id)">Start</Button>
+            <Button v-else variant="ghost" size="sm" icon="lucide:pause" @click="pauseTimer(entry.id)">Pause</Button>
+            <IconButton icon="lucide:rotate-ccw" label="Reset timer" @click="resetTimer(entry.id)" />
+          </div>
         </div>
-        <div :class="css({ display: 'flex', alignItems: 'center', gap: '1' })">
-          <Button
-            v-if="!entry.running"
-            variant="ghost"
-            size="sm"
-            icon="lucide:play"
-            @click="startTimer(entry.id)"
-          >
-            Start
-          </Button>
-          <Button
-            v-else
-            variant="ghost"
-            size="sm"
-            icon="lucide:pause"
-            @click="pauseTimer(entry.id)"
-          >
-            Pause
-          </Button>
-          <IconButton icon="lucide:rotate-ccw" label="Reset timer" @click="resetTimer(entry.id)" />
-        </div>
-      </div>
+      </PanelSection>
 
       <TimelinePanel :timecode="showTimecode" :apply="applyLiveCommand" />
 
-      <h2 :class="sectionTitle">Keyboard</h2>
-      <div :class="shortcut"><span>Next slide</span><span :class="kbd">Space</span></div>
-      <div :class="shortcut"><span>Previous</span><span :class="kbd">←</span></div>
-      <div :class="shortcut"><span>Take preview</span><span :class="kbd">Enter</span></div>
-      <div :class="shortcut"><span>Previous item</span><span :class="kbd">[</span></div>
-      <div :class="shortcut"><span>Next item</span><span :class="kbd">]</span></div>
-      <div :class="shortcut"><span>Black</span><span :class="kbd">B</span></div>
-      <div :class="shortcut"><span>Clear</span><span :class="kbd">C</span></div>
-      <div :class="shortcut"><span>Logo</span><span :class="kbd">L</span></div>
-      <div :class="shortcut"><span>Freeze</span><span :class="kbd">F</span></div>
+      <PanelSection title="Keyboard" collapsible storage-key="live.keyboard" flush>
+        <div :class="shortcutGrid">
+          <div :class="shortcut"><span>Next</span><Kbd shortcut="Space" /></div>
+          <div :class="shortcut"><span>Previous</span><Kbd shortcut="Left" /></div>
+          <div :class="shortcut"><span>Take</span><Kbd shortcut="Enter" /></div>
+          <div :class="shortcut"><span>Freeze</span><Kbd shortcut="F" /></div>
+          <div :class="shortcut"><span>Prev item</span><Kbd shortcut="[" /></div>
+          <div :class="shortcut"><span>Next item</span><Kbd shortcut="]" /></div>
+          <div :class="shortcut"><span>Black</span><Kbd shortcut="B" /></div>
+          <div :class="shortcut"><span>Clear</span><Kbd shortcut="C" /></div>
+          <div :class="shortcut"><span>Logo</span><Kbd shortcut="L" /></div>
+        </div>
+      </PanelSection>
     </aside>
 
     <Dialog

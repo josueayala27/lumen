@@ -11,6 +11,8 @@ import {
   type ThemeRecord,
 } from '~/data/themes'
 import { updatedLabel } from '~/data/presentations'
+import ErrorNotice from '~/library/ErrorNotice.vue'
+import SkeletonBlock from '~/library/SkeletonBlock.vue'
 import ThemePreview from '~/themes/ThemePreview.vue'
 import {
   Badge,
@@ -60,6 +62,12 @@ function fingerprint(record: ThemeRecord): string {
 function cloneRecord(record: ThemeRecord): ThemeRecord {
   return JSON.parse(JSON.stringify(record)) as ThemeRecord
 }
+
+const query = ref('')
+const filteredItems = computed(() => {
+  const needle = query.value.trim().toLowerCase()
+  return needle ? items.value.filter((item) => item.theme.name.toLowerCase().includes(needle)) : items.value
+})
 
 const dirty = computed(() => (draft.value ? fingerprint(draft.value) !== snapshot.value : false))
 
@@ -211,11 +219,13 @@ const listItem = css({
   transitionProperty: 'background, border-color',
   transitionDuration: 'fast',
   _hover: { bg: 'bg.hover' },
+  _focusVisible: { bg: 'bg.hover', borderColor: 'accent.default' },
 })
 const listItemActive = css({ bg: 'bg.subtle', borderColor: 'accent.default' })
 const listItemName = css({ flex: '1', minW: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textStyle: 'ui.sm' })
 const listItemMeta = css({ display: 'block', textStyle: 'ui.xs', color: 'fg.subtle' })
-const listError = css({ m: '3', textStyle: 'ui.xs', color: 'danger.default' })
+const skeletonStack = css({ display: 'flex', flexDirection: 'column', gap: '1' })
+const editorErrorWrap = css({ px: '5', pt: '4' })
 const empty = css({ p: '4', textStyle: 'ui.sm', color: 'fg.muted', lineHeight: 'normal' })
 const editor = css({ display: 'flex', flexDirection: 'column', flex: '1', minW: '0', minH: '0' })
 const editorHeader = css({
@@ -231,9 +241,10 @@ const editorHeader = css({
 const editorHeading = css({ flex: '1', minW: '0' })
 const editorTitle = css({ textStyle: 'ui.title', color: 'fg.default', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
 const editorSubtitle = css({ mt: '0.5', textStyle: 'ui.xs', color: 'fg.subtle' })
-const editorBody = css({ flex: '1', minH: '0', overflowY: 'auto', px: '5', py: '4' })
-const section = css({ mb: '5', pb: '4', borderBottomWidth: '1px', borderColor: 'border.default' })
-const sectionTitle = css({ mb: '2', textStyle: 'ui.label', color: 'fg.default', textTransform: 'uppercase' })
+const editorBody = css({ flex: '1', minH: '0', overflowY: 'auto', px: '5', py: '5' })
+const editorInner = css({ maxW: '[640px]' })
+const section = css({ mb: '6', pb: '5', borderBottomWidth: '1px', borderColor: 'border.default', _last: { borderBottomWidth: '0', mb: '0', pb: '0' } })
+const sectionTitle = css({ mb: '3', textStyle: 'ui.label', color: 'fg.muted', textTransform: 'uppercase' })
 const sectionHint = css({ mt: '2', textStyle: 'ui.xs', color: 'fg.subtle', lineHeight: 'normal' })
 const rowGroup = css({ display: 'flex', flexDirection: 'column', gap: '2' })
 const placeholder = css({ display: 'grid', placeItems: 'center', h: 'full', p: '6', textStyle: 'ui.sm', color: 'fg.muted', textAlign: 'center', lineHeight: 'normal' })
@@ -251,6 +262,7 @@ const previewPanel = css({
   p: '4',
 })
 const previewTitle = css({ textStyle: 'ui.title', color: 'fg.default' })
+const previewEyebrow = css({ textStyle: 'ui.label', color: 'accent.default', textTransform: 'uppercase', mb: '1' })
 const previewMeta = css({ display: 'flex', flexDirection: 'column', gap: '1.5', p: '3', borderRadius: 'md', bg: 'bg.canvas', borderWidth: '1px', borderColor: 'border.default' })
 const metaRow = css({ display: 'flex', justifyContent: 'space-between', gap: '2', textStyle: 'ui.xs', color: 'fg.muted' })
 const metaLabel = css({ color: 'fg.subtle' })
@@ -278,13 +290,25 @@ const swatchRow = css({ display: 'flex', alignItems: 'center', gap: '2', textSty
         >
           New from default
         </Button>
+        <Input
+          v-if="items.length > 5"
+          v-model="query"
+          live
+          type="search"
+          size="md"
+          placeholder="Filter themes"
+          aria-label="Filter themes"
+          :class="css({ mt: '2' })"
+        />
       </header>
       <div :class="listBody">
-        <p v-if="error" :class="listError">{{ error }}</p>
-        <p v-if="loading" :class="empty">Loading themes…</p>
+        <div v-if="loading" :class="skeletonStack" role="status" aria-label="Loading themes">
+          <SkeletonBlock v-for="n in 4" :key="n" height="48px" />
+        </div>
         <template v-else>
+          <p v-if="items.length > 0 && filteredItems.length === 0" :class="empty">No themes match “{{ query.trim() }}”.</p>
           <button
-            v-for="item in items"
+            v-for="item in filteredItems"
             :key="item.id"
             type="button"
             :class="[listItem, item.id === selectedId ? listItemActive : '']"
@@ -303,11 +327,7 @@ const swatchRow = css({ display: 'flex', alignItems: 'center', gap: '2', textSty
             icon="lucide:palette"
             title="No themes yet"
             description="Themes style backgrounds, titles and transitions across every slide."
-          >
-            <template #actions>
-              <Button variant="primary" size="sm" icon="lucide:plus" @click="create">New theme</Button>
-            </template>
-          </EmptyState>
+          />
         </template>
       </div>
     </aside>
@@ -326,7 +346,11 @@ const swatchRow = css({ display: 'flex', alignItems: 'center', gap: '2', textSty
           </Button>
         </header>
 
+        <div :class="editorErrorWrap" v-if="error">
+          <ErrorNotice :message="error" title="Theme error" retry-label="Reload" @retry="load()" @dismiss="error = ''" />
+        </div>
         <div :class="editorBody">
+          <div :class="editorInner">
           <section :class="section">
             <h3 :class="sectionTitle">Identity</h3>
             <div :class="rowGroup">
@@ -434,15 +458,36 @@ const swatchRow = css({ display: 'flex', alignItems: 'center', gap: '2', textSty
             </div>
             <p :class="sectionHint">Stored on the theme for slides that inherit it.</p>
           </section>
+          </div>
         </div>
       </template>
-      <p v-else :class="placeholder">
-        Select a theme or create one from the default dark theme.
-      </p>
+      <template v-else>
+        <div v-if="error" :class="editorErrorWrap">
+          <ErrorNotice :message="error" title="Could not load themes" @retry="load()" @dismiss="error = ''" />
+        </div>
+        <EmptyState
+          v-if="loading"
+          icon="lucide:palette"
+          title="Loading themes…"
+        />
+        <EmptyState
+          v-else
+          icon="lucide:palette"
+          title="Select a theme to edit"
+          description="Pick one from the list, or create a new theme from the default dark theme."
+        >
+          <template #actions>
+            <Button variant="primary" icon="lucide:plus" :loading="saving" @click="create">New from default</Button>
+          </template>
+        </EmptyState>
+      </template>
     </section>
 
     <aside :class="previewPanel" aria-label="Theme preview">
-      <h2 :class="previewTitle">Preview</h2>
+      <div>
+        <p :class="previewEyebrow">Live preview</p>
+        <h2 :class="previewTitle">{{ draft?.theme.name ?? 'No theme selected' }}</h2>
+      </div>
       <ThemePreview v-if="draft" :theme="draft.theme" />
       <div v-if="draft" :class="previewMeta">
         <div :class="metaRow"><span :class="metaLabel">Theme id</span><span :class="metaValue">{{ draft.id }}</span></div>

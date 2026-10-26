@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import ShowControlPanel from '~/settings/ShowControlPanel.vue'
+import SettingsPage from '~/settings/SettingsPage.vue'
 </script>
 
 <template>
-  <ShowControlPanel />
+  <SettingsPage />
 </template>
