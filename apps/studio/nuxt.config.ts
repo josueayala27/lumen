@@ -1,7 +1,5 @@
 import { fileURLToPath } from 'node:url'
 
-const desktopBuild = process.env.DESKTOP_BUILD === '1'
-
 export default defineNuxtConfig({
   modules: ['@nuxt/fonts', '@nuxt/icon/module'],
   compatibilityDate: '2026-10-01',
@@ -14,7 +12,7 @@ export default defineNuxtConfig({
   ssr: false,
   app: {
     // Tauri serves static files from a custom protocol; relative asset URLs keep it working.
-    baseURL: desktopBuild ? './' : '/',
+    baseURL: process.env.NODE_ENV === 'production' ? './' : '/',
   },
 
   css: ['~/assets/css/panda.css'],

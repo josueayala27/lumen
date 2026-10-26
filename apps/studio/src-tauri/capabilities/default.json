@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for the operator window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-set-cursor-visible",
+    "core:window:allow-start-dragging",
+    "dialog:default",
+    "fs:default",
+    "sql:default",
+    "store:default",
+    "deep-link:default",
+    "log:default"
+  ]
+}
