@@ -17,11 +17,11 @@ const sections: { title: string; items: NavItem[] }[] = [
   {
     title: 'Library',
     items: [
-      { label: 'Presentations', href: '/', icon: 'lucide:presentation', badge: '24' },
-      { label: 'Songs', href: '/songs', icon: 'lucide:music', badge: '86' },
-      { label: 'Media', href: '/media', icon: 'lucide:image', badge: '132' },
-      { label: 'Themes', href: '/themes', icon: 'lucide:palette', badge: '8' },
-      { label: 'Playlists', href: '/playlists', icon: 'lucide:list-music', badge: '5' },
+      { label: 'Presentations', href: '/', icon: 'lucide:presentation' },
+      { label: 'Songs', href: '/songs', icon: 'lucide:music' },
+      { label: 'Media', href: '/media', icon: 'lucide:image' },
+      { label: 'Themes', href: '/themes', icon: 'lucide:palette' },
+      { label: 'Playlists', href: '/playlists', icon: 'lucide:list-music' },
     ],
   },
   {

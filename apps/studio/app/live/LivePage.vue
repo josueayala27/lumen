@@ -1,50 +1,86 @@
 <script setup lang="ts">
+import { slideText } from '@lumen/core'
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
 import { Button, IconButton, Input } from '~/ui'
 import { useShowControl } from '~/control/useShowControl'
-import TimelinePanel from './TimelinePanel.vue'
-import type { LiveCommand } from '@lumen/schema'
+import { getPresentation, listPresentations } from '~/data/presentations'
+import type { LiveCommand, PresentationDoc } from '@lumen/schema'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import TimelinePanel from './TimelinePanel.vue'
 
-interface Cue {
+interface LiveSlide {
   id: string
   label: string
-  kind: 'song' | 'slide'
   lines: string[]
 }
 
-const cues: Cue[] = [
-  { id: 'c1', label: 'Great Are You Lord', kind: 'song', lines: ['You give life, You are love', 'You bring light to the darkness'] },
-  { id: 'c2', label: 'Great Are You Lord', kind: 'song', lines: ['You give hope, You restore', 'Every heart that is broken'] },
-  { id: 'c3', label: 'Great Are You Lord', kind: 'song', lines: ["It's Your breath in our lungs", 'So we pour out our praise'] },
-  { id: 'c4', label: 'Welcome', kind: 'slide', lines: ['Welcome to Riverside', 'Sunday Gathering'] },
-  { id: 'c5', label: 'Way Maker', kind: 'song', lines: ['Way maker, miracle worker', 'Promise keeper, light in the darkness'] },
-]
-
+const route = useRoute()
 const current = ref(0)
 const preview = ref(0)
 const mode = ref<'live' | 'black' | 'clear' | 'logo' | 'freeze'>('live')
 const stageMessage = ref('')
-const currentCue = computed(() => cues[current.value]!)
-const previewCue = computed(() => cues[preview.value]!)
-const nextCue = computed(() => cues[Math.min(cues.length - 1, current.value + 1)]!)
+const slides = ref<LiveSlide[]>([])
+const presentationTitle = ref('No presentation')
+const presentationKind = ref<PresentationDoc['kind']>('presentation')
+const loading = ref(true)
+
+const currentSlide = computed(() => slides.value[current.value])
+const previewSlide = computed(() => slides.value[preview.value])
+const nextSlide = computed(() => slides.value[Math.min(slides.value.length - 1, current.value + 1)])
 const isLive = computed(() => mode.value === 'live')
 
+function toLiveSlides(doc: PresentationDoc): LiveSlide[] {
+  return doc.slides.map((slide, index) => {
+    const text = slideText(slide)
+    return {
+      id: slide.id,
+      label: slide.label || `Slide ${index + 1}`,
+      lines: text.split('\n').filter((line) => line.length > 0),
+    }
+  })
+}
+
+async function loadLive(): Promise<void> {
+  loading.value = true
+  try {
+    const requested = (route.query.presentation as string | undefined) ?? ''
+    let id = requested
+    if (!id) {
+      const list = await listPresentations()
+      id = list[0]?.id ?? ''
+    }
+    if (!id) return
+    const record = await getPresentation(id)
+    if (!record) return
+    presentationTitle.value = record.doc.title
+    presentationKind.value = record.doc.kind
+    slides.value = toLiveSlides(record.doc)
+    current.value = 0
+    preview.value = 0
+  } finally {
+    loading.value = false
+  }
+}
+
 function next(): void {
-  current.value = Math.min(cues.length - 1, current.value + 1)
+  if (slides.value.length === 0) return
+  current.value = Math.min(slides.value.length - 1, current.value + 1)
   preview.value = current.value
 }
 function prev(): void {
+  if (slides.value.length === 0) return
   current.value = Math.max(0, current.value - 1)
   preview.value = current.value
 }
 function take(): void {
+  if (slides.value.length === 0) return
   current.value = preview.value
   mode.value = 'live'
 }
 function goTo(index: number): void {
-  preview.value = index
+  preview.value = Math.max(0, Math.min(slides.value.length - 1, index))
 }
 function onKey(event: KeyboardEvent): void {
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
@@ -104,7 +140,10 @@ const timecodeLabel = computed(() => {
   const separator = value.rate === '29.97df' ? ';' : ':'
   return `${pad(value.hours)}:${pad(value.minutes)}:${pad(value.seconds)}${separator}${pad(value.frames)}`
 })
-onMounted(() => window.addEventListener('keydown', onKey))
+onMounted(() => {
+  window.addEventListener('keydown', onKey)
+  void loadLive()
+})
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 const root = css({ display: 'flex', h: 'full', minH: '0' })
@@ -139,7 +178,7 @@ const pane = css({ flex: '1', minW: '0', display: 'flex', flexDirection: 'column
 const paneLabel = css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', textStyle: 'ui.label', color: 'fg.muted', textTransform: 'uppercase' })
 const slide = css({ position: 'relative', aspectRatio: 'video', borderRadius: 'md', overflow: 'hidden', borderWidth: '1px', borderColor: 'border.default', display: 'grid', placeItems: 'center', p: '8', textAlign: 'center' })
 const liveSlide = css({ borderColor: 'live.default' })
-const slideText = css({ display: 'flex', flexDirection: 'column', gap: '2', fontSize: '[clamp(16px, 1.6vw, 26px)]', fontWeight: 'semibold', lineHeight: '[1.15]', color: 'ink.0', textShadow: '[0_2px_18px_rgba(0,0,0,0.5)]', textAlign: 'center' })
+const slideTextStyle = css({ display: 'flex', flexDirection: 'column', gap: '2', fontSize: '[clamp(16px, 1.6vw, 26px)]', fontWeight: 'semibold', lineHeight: '[1.15]', color: 'ink.0', textShadow: '[0_2px_18px_rgba(0,0,0,0.5)]', textAlign: 'center' })
 const slideLine = css({ lineHeight: '[1.15]' })
 const nextStrip = css({ display: 'flex', gap: '2', p: '4', pt: '0' })
 const nextCard = css({ flex: '1', aspectRatio: 'video', maxW: '[180px]', borderRadius: 'sm', borderWidth: '1px', borderColor: 'border.default', display: 'grid', placeItems: 'center', p: '2', textStyle: 'ui.xs', color: 'fg.muted', bg: 'bg.panel' })
@@ -159,23 +198,26 @@ const gradientTwo = css({ background: '[token(gradients.graphite)]' })
   <div :class="root">
     <aside :class="rail" aria-label="Service playlist">
       <div :class="railHead">
-        <p :class="railEyebrow">Sunday Gathering</p>
-        <h1 :class="railTitle">10:30 service</h1>
-        <p :class="railMeta">5 cues · 42 minutes</p>
+        <p :class="railEyebrow">{{ presentationKind === 'song' ? 'Song' : 'Presentation' }}</p>
+        <h1 :class="railTitle">{{ presentationTitle }}</h1>
+        <p :class="railMeta">{{ loading ? 'Loading…' : `${slides.length} slides` }}</p>
       </div>
       <div :class="railList">
         <button
-          v-for="(item, index) in cues"
+          v-for="(item, index) in slides"
           :key="item.id"
           type="button"
           :class="[cue, index === current ? cueLive : index === preview ? cueActive : '']"
           @click="goTo(index)"
         >
           <span :class="cueIndex">{{ String(index + 1).padStart(2, '0') }}</span>
-          <Icon :name="item.kind === 'song' ? 'lucide:music' : 'lucide:presentation'" :size="14" />
+          <Icon :name="presentationKind === 'song' ? 'lucide:music' : 'lucide:presentation'" :size="14" />
           <span :class="cueLabel">{{ item.label }}</span>
           <Icon v-if="index === current" name="lucide:radio" :size="12" />
         </button>
+        <p v-if="!loading && slides.length === 0" :class="css({ p: '3', textStyle: 'ui.xs', color: 'fg.subtle' })">
+          Open a presentation from the library to go live.
+        </p>
       </div>
     </aside>
 
@@ -193,18 +235,18 @@ const gradientTwo = css({ background: '[token(gradients.graphite)]' })
 
       <div :class="stage">
         <div :class="pane">
-          <p :class="paneLabel">Preview <span>{{ previewCue.label }}</span></p>
+          <p :class="paneLabel">Preview <span>{{ previewSlide?.label ?? '—' }}</span></p>
           <div :class="[slide, gradientTwo]">
-            <div :class="slideText">
-              <span v-for="line in previewCue.lines" :key="line" :class="slideLine">{{ line }}</span>
+            <div :class="slideTextStyle">
+              <span v-for="line in previewSlide?.lines ?? []" :key="line" :class="slideLine">{{ line }}</span>
             </div>
           </div>
         </div>
         <div :class="pane">
-          <p :class="paneLabel">Live <span>{{ currentCue.label }}</span></p>
+          <p :class="paneLabel">Live <span>{{ currentSlide?.label ?? '—' }}</span></p>
           <div :class="[slide, liveSlide, gradient]">
-            <div v-if="isLive" :class="slideText">
-              <span v-for="line in currentCue.lines" :key="line" :class="slideLine">{{ line }}</span>
+            <div v-if="isLive" :class="slideTextStyle">
+              <span v-for="line in currentSlide?.lines ?? []" :key="line" :class="slideLine">{{ line }}</span>
             </div>
             <div v-else :class="css({ textStyle: 'display.lg', color: 'fg.muted', textTransform: 'uppercase', letterSpacing: 'widest' })">{{ mode }}</div>
           </div>
@@ -213,7 +255,7 @@ const gradientTwo = css({ background: '[token(gradients.graphite)]' })
 
       <div :class="nextStrip">
         <div :class="nextCard">
-          <span>Next · {{ nextCue.label }}</span>
+          <span>Next · {{ nextSlide?.label ?? '—' }}</span>
         </div>
         <div :class="nextCard">
           <span>Stage · notes ready</span>

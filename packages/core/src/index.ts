@@ -1,5 +1,6 @@
 export * from './song'
 export * from './scene'
 export * from './live'
+export * from './presentation'
 export * from './timecode'
 export * from './timeline'

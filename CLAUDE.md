@@ -6,6 +6,7 @@
 - `packages/schema/src/scene.ts` before any renderer change.
 - `packages/core/src/live.ts` before any live-control change.
 - `docs/architecture/08-show-control.md` before any MIDI or timecode change.
+- `docs/architecture/09-local-editor.md` before any library, song or editor change.
 
 ## Commands
 
@@ -33,7 +34,7 @@ cd apps/studio/src-tauri && cargo check && cargo test -p lumen-output -p lumen-r
 
 ## Current phase
 
-Phase 0 foundation. The next engineering milestone is the Phase 0.5 native output spike: one borderless wgpu window, a hardcoded scene, and a signed dev build on macOS and Windows.
+Wave 1 — Core presenter. M0.1 and M0.2 are partial; the local text editor exists, but the native renderer is clear-pass only. The next engineering milestone is **M1 Scene renderer v1**, then **M2 Editor v1**. MIDI/LTC/timeline work is frozen as a parallel track until Wave 1 ships.
 
 ## graphify
 
