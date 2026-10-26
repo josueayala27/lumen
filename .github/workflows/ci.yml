@@ -44,7 +44,7 @@ jobs:
         run: cargo check
       - name: Clippy
         working-directory: apps/studio/src-tauri
-        run: cargo clippy -p lumen-output -p lumen-render -p lumen-media -- -D warnings
+        run: cargo clippy -p lumen-output -p lumen-render -p lumen-media -p lumen-control -- -D warnings
       - name: Test
         working-directory: apps/studio/src-tauri
-        run: cargo test -p lumen-output -p lumen-render -p lumen-media
+        run: cargo test -p lumen-output -p lumen-render -p lumen-media -p lumen-control

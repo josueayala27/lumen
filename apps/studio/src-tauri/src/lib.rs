@@ -1,3 +1,5 @@
+mod control;
+
 use lumen_output::{DisplayInfo, OutputWindow};
 use tauri::Manager;
 
@@ -25,7 +27,25 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![list_displays, open_output])
+        .setup(|app| {
+            app.manage(control::ControlState::new(app.handle().clone()));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            list_displays,
+            open_output,
+            control::list_midi_inputs,
+            control::start_midi_input,
+            control::stop_midi_input,
+            control::get_midi_bindings,
+            control::set_midi_bindings,
+            control::begin_midi_learn,
+            control::cancel_midi_learn,
+            control::list_audio_inputs,
+            control::start_ltc_input,
+            control::stop_ltc_input,
+            control::timecode_state
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Lumen");
 }

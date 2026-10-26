@@ -2,6 +2,7 @@
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
 import { Button, IconButton, Input } from '~/ui'
+import { useShowControl } from '~/control/useShowControl'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 interface Cue {
@@ -75,6 +76,31 @@ function onKey(event: KeyboardEvent): void {
       break
   }
 }
+const { timecode: showTimecode } = useShowControl((command) => {
+  switch (command.type) {
+    case 'next':
+    case 'nextItem':
+      next()
+      break
+    case 'prev':
+    case 'prevItem':
+      prev()
+      break
+    case 'take':
+      take()
+      break
+    case 'setMode':
+      mode.value = command.mode
+      break
+  }
+})
+const timecodeLabel = computed(() => {
+  const value = showTimecode.value?.timecode
+  if (!value) return ''
+  const pad = (number: number) => String(number).padStart(2, '0')
+  const separator = value.rate === '29.97df' ? ';' : ':'
+  return `${pad(value.hours)}:${pad(value.minutes)}:${pad(value.seconds)}${separator}${pad(value.frames)}`
+})
 onMounted(() => window.addEventListener('keydown', onKey))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
@@ -154,6 +180,9 @@ const gradientTwo = css({ background: '[token(gradients.graphite)]' })
       <div :class="centerHead">
         <span :class="livePill"><span :class="css({ w: '1.5', h: '1.5', borderRadius: 'full', bg: 'live.default' })" />{{ mode.toUpperCase() }}</span>
         <span :class="css({ textStyle: 'ui.sm', color: 'fg.muted' })">Audience · Stage Left · 1920×1080</span>
+        <span v-if="timecodeLabel" :class="css({ textStyle: 'ui.mono', color: 'fg.muted' })">
+          {{ timecodeLabel }}<template v-if="!showTimecode?.locked"> · no lock</template>
+        </span>
         <span :class="css({ flex: '1' })" />
         <Button variant="secondary" size="sm" icon="lucide:monitor">Displays</Button>
         <Button variant="ghost" size="sm" icon="lucide:settings-2">Output</Button>

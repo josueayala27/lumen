@@ -13,6 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+lumen-control = { path = "crates/lumen-control" }
 lumen-media = { path = "crates/lumen-media" }
 lumen-output = { path = "crates/lumen-output" }
 lumen-render = { path = "crates/lumen-render" }
@@ -28,5 +29,5 @@ tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-store = "2"
 
 [workspace]
-members = [".", "crates/lumen-output", "crates/lumen-render", "crates/lumen-media"]
+members = [".", "crates/lumen-output", "crates/lumen-render", "crates/lumen-media", "crates/lumen-control"]
 resolver = "2"

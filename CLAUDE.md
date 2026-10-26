@@ -5,6 +5,7 @@
 - `docs/architecture/README.md` and the document for the area you touch.
 - `packages/schema/src/scene.ts` before any renderer change.
 - `packages/core/src/live.ts` before any live-control change.
+- `docs/architecture/08-show-control.md` before any MIDI or timecode change.
 
 ## Commands
 
@@ -15,7 +16,7 @@ pnpm check-types
 pnpm test
 pnpm build
 pnpm desktop:dev
-cd apps/studio/src-tauri && cargo check && cargo test -p lumen-output -p lumen-render -p lumen-media
+cd apps/studio/src-tauri && cargo check && cargo test -p lumen-output -p lumen-render -p lumen-media -p lumen-control
 ```
 
 ## Conventions
@@ -26,7 +27,7 @@ cd apps/studio/src-tauri && cargo check && cargo test -p lumen-output -p lumen-r
 - Design tokens are copied from Malla Builder and must stay identical unless a presenter-specific token is added.
 - `apps/studio` is the Tauri SPA. `apps/web` is the SSR Worker. Do not add a server route to studio.
 - The audience output is a native Tauri window from `lumen-output`; never render it with a webview.
-- Rust: keep monitor/window code in `lumen-output`, scene and layout in `lumen-render`, decode and clock in `lumen-media`.
+- Rust: keep monitor/window code in `lumen-output`, scene and layout in `lumen-render`, decode and clock in `lumen-media`, MIDI and timecode in `lumen-control`.
 - Tests: Vitest for TS, PGlite for data, Rust unit tests for placement/clock/scene. Do not add GPU-dependent tests to CI.
 - Commit messages: Conventional Commits.
 

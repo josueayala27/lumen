@@ -3,6 +3,7 @@ import { z } from 'zod'
 export * from './presentation'
 export * from './scene'
 export * from './live'
+export * from './control'
 
 export const API_ERROR_CODES = [
   'bad_request',

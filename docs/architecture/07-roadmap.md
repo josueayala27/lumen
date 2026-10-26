@@ -42,10 +42,18 @@ Remaining Phase 0 exit items:
 
 - Stage display with Rust current/next, notes, clock, timers, safe area.
 
+## Phase 2d — Show control
+
+- MIDI input bindings (note, CC, program change) with learn mode.
+- SMPTE frame math for 24, 25, 29.97, 29.97 drop-frame and 30.
+- Follow external MTC and LTC, with lock state and timeout.
+- Audio input selection for LTC and the `control:event` Tauri channel.
+- Exit: a MIDI pedal drives next/prev/take; MTC and LTC drive a locked timecode readout.
+
 ## Phase 3 — Remote
 
 - Durable Object pairing, QR/code, phone remote, reconnect.
 
 ## Phase 4 — Pro
 
-- NDI/Syphon/Spout, MIDI/OSC, Bible, SongSelect, ProPresenter import, streaming, builds, props/masks, lower thirds, collaboration, billing.
+- NDI/Syphon/Spout, OSC, Bible, SongSelect, ProPresenter import, streaming, builds, props/masks, lower thirds, collaboration, billing.
