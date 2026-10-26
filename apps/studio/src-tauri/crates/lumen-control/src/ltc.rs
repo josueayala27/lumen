@@ -128,20 +128,52 @@ impl LtcTransitionDecoder {
     }
 }
 
+/// Selects `channel` from an interleaved audio frame. Falls back to the first
+/// channel when `channel` is out of range. Returns `None` for an empty frame.
+pub fn channel_sample<T: Copy>(frame: &[T], channel: usize) -> Option<T> {
+    frame.get(channel).or_else(|| frame.first()).copied()
+}
+
+/// Schmitt-trigger polarity. The polarity only changes once the sample
+/// crosses the threshold in the opposite direction, so silence and low-level
+/// noise keep the previous state.
+fn update_polarity(previous: Option<bool>, sample: f32, threshold: f32) -> Option<bool> {
+    if sample >= threshold {
+        Some(true)
+    } else if sample <= -threshold {
+        Some(false)
+    } else {
+        previous
+    }
+}
+
 /// Detects sign changes in LTC audio and feeds the transition decoder.
+///
+/// Samples inside `±threshold` do not change polarity. This rejects silence
+/// and low-level noise that would otherwise produce spurious transitions.
 #[derive(Debug, Clone)]
 pub struct LtcSampleDecoder {
     transitions: LtcTransitionDecoder,
     index: u64,
-    positive: Option<bool>,
+    polarity: Option<bool>,
+    threshold: f32,
 }
 
 impl LtcSampleDecoder {
+    /// Default amplitude threshold, about -34 dBFS. Broadcast LTC is usually
+    /// recorded well above this level.
+    pub const DEFAULT_THRESHOLD: f32 = 0.02;
+
     pub fn new(sample_rate: f64, rate: FrameRate) -> Self {
+        Self::with_threshold(sample_rate, rate, Self::DEFAULT_THRESHOLD)
+    }
+
+    pub fn with_threshold(sample_rate: f64, rate: FrameRate, threshold: f32) -> Self {
         Self {
             transitions: LtcTransitionDecoder::new(sample_rate, rate),
             index: 0,
-            positive: None,
+            polarity: None,
+            threshold: threshold.abs().min(1.0),
         }
     }
 
@@ -149,15 +181,22 @@ impl LtcSampleDecoder {
         self.transitions.set_rate(rate);
     }
 
-    /// Feeds one mono sample. Use channel 0 for multi-channel input.
+    /// Sets the amplitude threshold in normalized sample units. Values are
+    /// clamped to `0.0..=1.0`.
+    pub fn set_threshold(&mut self, threshold: f32) {
+        self.threshold = threshold.abs().min(1.0);
+    }
+
+    /// Feeds one mono sample taken from the selected input channel.
     pub fn push_sample(&mut self, sample: f32) -> Option<Timecode> {
-        let positive = sample >= 0.0;
-        let output = match self.positive {
-            Some(previous) if previous != positive => self.transitions.push_transition(self.index),
-            Some(_) => None,
-            None => None,
+        let polarity = update_polarity(self.polarity, sample, self.threshold);
+        let output = match (self.polarity, polarity) {
+            (Some(previous), Some(current)) if previous != current => {
+                self.transitions.push_transition(self.index)
+            }
+            _ => None,
         };
-        self.positive = Some(positive);
+        self.polarity = polarity;
         self.index += 1;
         output
     }
@@ -277,5 +316,48 @@ mod tests {
         let decoded = decode_bits(&bits, FrameRate::Fps30).unwrap();
         assert_eq!(decoded.rate, FrameRate::Fps29_97Drop);
         assert_eq!(decoded.to_string(), "00:10:00;00");
+    }
+
+    #[test]
+    fn channel_sample_selects_the_requested_channel() {
+        let frame = [0.1, -0.4, 0.9, 0.2];
+        assert_eq!(channel_sample(&frame, 0), Some(0.1));
+        assert_eq!(channel_sample(&frame, 1), Some(-0.4));
+        assert_eq!(channel_sample(&frame, 3), Some(0.2));
+    }
+
+    #[test]
+    fn channel_sample_falls_back_to_the_first_channel() {
+        let frame = [0.1, -0.4];
+        assert_eq!(channel_sample(&frame, 7), Some(0.1));
+        assert_eq!(channel_sample::<f32>(&[], 0), None);
+    }
+
+    #[test]
+    fn hysteresis_ignores_low_level_noise() {
+        let threshold = LtcSampleDecoder::DEFAULT_THRESHOLD;
+        let mut polarity = None;
+        for sample in [0.0, 0.01, -0.01, 0.019, -0.019] {
+            polarity = update_polarity(polarity, sample, threshold);
+        }
+        assert_eq!(polarity, None);
+
+        let mut polarity = Some(true);
+        for sample in [-0.01, 0.019, -0.019, 0.0] {
+            polarity = update_polarity(polarity, sample, threshold);
+            assert_eq!(polarity, Some(true));
+        }
+
+        assert_eq!(update_polarity(Some(true), -threshold, threshold), Some(false));
+        assert_eq!(update_polarity(Some(false), threshold, threshold), Some(true));
+    }
+
+    #[test]
+    fn low_level_noise_produces_no_timecode() {
+        let mut decoder = LtcSampleDecoder::new(48_000.0, FrameRate::Fps25);
+        let noise: Vec<f32> = (0..48_000)
+            .map(|index| if index % 2 == 0 { 0.01 } else { -0.01 })
+            .collect();
+        assert!(decoder.push_samples(&noise).is_empty());
     }
 }

@@ -1,6 +1,6 @@
 //! Device services: MIDI input, MTC over MIDI and LTC over audio input.
 
-use crate::ltc::LtcSampleDecoder;
+use crate::ltc::{channel_sample, LtcSampleDecoder};
 use crate::midi::{
     ControlCommand, MidiBinding, MidiMessage, MidiPortInfo, MidiRouter, MidiStreamParser, Routed,
 };
@@ -10,6 +10,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample, StreamConfig};
 use midir::{MidiInput, MidiInputConnection};
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;

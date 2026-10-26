@@ -25,7 +25,7 @@ External control lives in `apps/studio/src-tauri/crates/lumen-control`. The crat
 MidiBinding { id, kind: note | controlChange | programChange, channel: 0-15 | null, number, command, label }
 ```
 
-`channel: null` matches any channel. Learn mode captures the next note, CC or program change and stores it with the command passed to `begin_learn`. The learned binding is emitted before it can fire, so the UI can persist it.
+`channel: null` matches any channel. Learn mode captures the next note, CC or program change and stores it with the command passed to `begin_learn`. The learned binding is emitted before it can fire, so the UI can persist it. The Settings page (`ShowControlPanel.vue`) lists devices, learns bindings and starts LTC. Bindings are in memory until the settings store lands.
 
 ## Commands
 
