@@ -272,7 +272,10 @@ mod tests {
 
     #[test]
     fn file_names_lose_separators_and_fallbacks() {
-        assert_eq!(sanitize_file_name("/tmp/Palm Sunday.jpg"), "Palm Sunday.jpg");
+        assert_eq!(
+            sanitize_file_name("/tmp/Palm Sunday.jpg"),
+            "Palm Sunday.jpg"
+        );
         assert_eq!(sanitize_file_name("a:b*c?.mp4"), "a_b_c_.mp4");
         assert_eq!(sanitize_file_name(".."), "media");
         assert_eq!(sanitize_file_name(""), "media");

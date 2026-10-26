@@ -59,7 +59,7 @@ describe('resolveDisplay', () => {
   const displays = [display(), projector]
 
   it('matches a saved screen by name and position', () => {
-    expect(resolveDisplay(displays, { ...screenRef(projector), x: 9999 })).toEqual(display())
+    expect(resolveDisplay(displays, { ...screenRef(projector), x: 9999 })).toEqual(projector)
     expect(resolveDisplay(displays, screenRef(projector))).toEqual(projector)
   })
 

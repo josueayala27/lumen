@@ -49,7 +49,8 @@ pub fn probe_file(path: &str) -> Result<MediaInfo, MediaError> {
         .read(&mut header)
         .map_err(|error| MediaError::Decode(error.to_string()))?;
     header.truncate(read);
-    let mime = detect_mime(path, &header).ok_or_else(|| MediaError::Unsupported(path.to_string()))?;
+    let mime =
+        detect_mime(path, &header).ok_or_else(|| MediaError::Unsupported(path.to_string()))?;
 
     match kind_for_mime(&mime) {
         Some(MediaKind::Image) => image_info(path, mime),
@@ -231,7 +232,13 @@ where
         let payload = &data[offset + header_length..offset + size];
         visit(&kind, payload);
         if is_container(&kind) {
-            walk_boxes(data, offset + header_length, offset + size, depth + 1, visit);
+            walk_boxes(
+                data,
+                offset + header_length,
+                offset + size,
+                depth + 1,
+                visit,
+            );
         }
         offset += size;
     }
@@ -465,7 +472,10 @@ mod tests {
 
     #[test]
     fn isobmff_rejects_truncated_boxes() {
-        assert_eq!(probe_isobmff(&[0, 0, 0, 64, b'm', b'o']), VideoProbe::default());
+        assert_eq!(
+            probe_isobmff(&[0, 0, 0, 64, b'm', b'o']),
+            VideoProbe::default()
+        );
     }
 
     #[test]

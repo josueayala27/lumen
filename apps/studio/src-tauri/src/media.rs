@@ -183,7 +183,11 @@ pub fn delete_media_file(app: AppHandle, path: String) -> Result<(), String> {
 pub fn media_files_status(app: AppHandle, paths: Vec<String>) -> Vec<bool> {
     paths
         .into_iter()
-        .map(|raw| managed_path(&app, &raw).map(|path| path.is_file()).unwrap_or(false))
+        .map(|raw| {
+            managed_path(&app, &raw)
+                .map(|path| path.is_file())
+                .unwrap_or(false)
+        })
         .collect()
 }
 

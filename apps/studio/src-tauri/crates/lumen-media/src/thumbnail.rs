@@ -12,7 +12,8 @@ const MAX_THUMBNAIL_EDGE: u32 = 1024;
 /// Decodes an image and returns a PNG thumbnail no larger than `max_edge`.
 pub fn thumbnail_bytes(data: &[u8], max_edge: u32) -> Result<Vec<u8>, MediaError> {
     let edge = max_edge.clamp(MIN_THUMBNAIL_EDGE, MAX_THUMBNAIL_EDGE);
-    let image = image::load_from_memory(data).map_err(|error| MediaError::Decode(error.to_string()))?;
+    let image =
+        image::load_from_memory(data).map_err(|error| MediaError::Decode(error.to_string()))?;
     let thumbnail = if image.width() <= edge && image.height() <= edge {
         image
     } else {

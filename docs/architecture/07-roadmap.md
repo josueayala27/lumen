@@ -238,9 +238,13 @@ Exit: signed macOS and Windows GA builds with rollback and telemetry.
 ## Current state
 
 - M0.1: partial.
-- M0.2: clear pass only.
-- M2: text-only slice; no layer inspector, undo/redo or real canvas.
-- M14/M15: MIDI input, LTC/MTC follow and basic cue timeline exist; freeze new work here.
-- M16: Neon dev branch and local `.dev.vars` exist; no sync.
+- M0.2: renderer spike complete enough for M1; signed builds still open.
+- M1: scene renderer done; gaps: shadow blur, underline raster, HTTP media URLs, group layers.
+- M2: editor layer inspector, undo/redo, copy/paste, Rust preview canvas and snapping done; autosave missing.
+- M3: themes model, store and editor page done; editor applies theme on save.
+- M4: playlists, real live session and crash resume done; timers still static.
+- M5: stage window, current/next, notes, timers and safe area done; stage capability added.
+- M6: media import, probe, thumbnails and media page done; video decode/playback and relink missing.
+- Frozen: MIDI/LTC/timeline track.
 
-Next engineering action: **M1 Scene renderer v1**, then **M2 Editor v1**.
+Next to close Wave 1: video decoder wiring into `lumen-render` video-frame commands, media picker in editor, relink UI, autosave, then a GUI/hardware pass.
