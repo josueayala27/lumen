@@ -10,11 +10,13 @@ pub mod hap;
 pub mod mov;
 pub mod probe;
 pub mod thumbnail;
+pub mod transport;
 pub mod util;
 
 pub use decoder::{DecodeRequest, DecoderConfig, FfmpegVideo};
 pub use hap::{HapFrame, HapTexture, HapTextureFormat};
 pub use mov::{MovSample, MovVideoTrack};
+pub use transport::{clip_position, TransportCommand, VideoTransport};
 pub use probe::{FileProbe, VideoProbe};
 pub use util::{MediaKind, MAX_IMPORT_BYTES};
 
