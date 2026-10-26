@@ -224,7 +224,7 @@ mod tests {
             .as_chunks::<4>()
             .0
             .iter()
-            .all(|texel| texel == [0, 0, 0, 255]));
+            .all(|texel| texel == &[0, 0, 0, 255]));
     }
 
     #[test]
