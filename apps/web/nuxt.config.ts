@@ -32,8 +32,10 @@ export default defineNuxtConfig({
     localApiEndpoint: '/_nuxt_icon',
   },
 
-  nitro: {
-    preset: 'cloudflare_module',
-    cloudflare: { deployConfig: true, nodeCompat: true },
-  },
+  // Nitro 3's Miniflare dev runner is not yet compatible with this Nuxt nightly; use Node in dev
+  // and the Cloudflare module preset for builds.
+  nitro:
+    process.env.NODE_ENV === 'production'
+      ? { preset: 'cloudflare_module', cloudflare: { deployConfig: true, nodeCompat: true } }
+      : {},
 })
