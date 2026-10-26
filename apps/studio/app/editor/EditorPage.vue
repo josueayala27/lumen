@@ -2,6 +2,7 @@
 import {
   addLayer,
   applyThemeToDoc,
+  buildScene,
   canRedo,
   canUndo,
   clampSelection,
@@ -34,12 +35,32 @@ import {
   type SongFields,
   type TextElement,
 } from '@lumen/core'
-import type { Element, PresentationDoc } from '@lumen/schema'
+import type {
+  Element,
+  Frame,
+  PresentationDoc,
+  PreviewBounds,
+  PreviewResult,
+  PreviewTextRun,
+  Slide,
+} from '@lumen/schema'
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Button, ColorField, IconButton, Input, Select, Textarea } from '~/ui'
+import {
+  boundsForElement,
+  hitTestBounds,
+  isTauriRuntime,
+  moveFrame,
+  normalizePoint,
+  previewRender,
+  snapFrame,
+  type DecodedPreview,
+  type NormalizedPoint,
+  type SnapGuide,
+} from '~/control/render'
 import {
   getPresentation,
   savePresentation,
@@ -66,6 +87,27 @@ const titleDraft = ref('')
 const song = ref<SongFields>({ title: '', author: '', ccli: '', key: '', tempo: null, lyrics: '' })
 const tempoText = ref('')
 const selected = ref(0)
+
+interface DragState {
+  id: string
+  slideId: string
+  pointerId: number
+  start: NormalizedPoint
+  origin: Frame
+  frame: Frame
+  guides: SnapGuide[]
+  moved: boolean
+}
+
+const tauriRuntime = isTauriRuntime()
+const sceneCanvas = ref<HTMLCanvasElement | null>(null)
+const previewLayout = shallowRef<PreviewResult | null>(null)
+const previewError = ref('')
+const previewRevision = ref(0)
+const dragging = ref<DragState | null>(null)
+let renderToken = 0
+let fullRenderTimer: ReturnType<typeof setTimeout> | null = null
+let dragRenderHandle = 0
 
 const isSong = computed(() => record.value?.kind === 'song')
 const songSlides = computed(() => splitSongLyrics(song.value.lyrics))
@@ -136,6 +178,253 @@ const frameFields = [
   { key: 'w', label: 'W' },
   { key: 'h', label: 'H' },
 ] as const
+const corners = ['nw', 'ne', 'sw', 'se'] as const
+
+const nativePreview = computed(() => tauriRuntime && !isSong.value && !previewError.value)
+const previewDoc = computed<PresentationDoc | null>(() => {
+  const state = editor.value
+  if (!state) return null
+  const found = themes.value.find((entry) => entry.id === themeId.value)
+  const base = found ? applyThemeToDoc(state.doc, found.theme, found.id) : state.doc
+  const active = dragging.value
+  return active ? withFrame(base, active.slideId, active.id, active.frame) : base
+})
+const sceneSlideIndex = computed(() => {
+  const state = editor.value
+  if (!state) return -1
+  const doc = previewDoc.value ?? state.doc
+  return doc.slides.findIndex((slide) => slide.id === state.slideId)
+})
+const selectionBoxes = computed<PreviewBounds[]>(() => {
+  const layout = previewLayout.value
+  const state = editor.value
+  if (!layout || !state) return []
+  return state.selection
+    .map((id) => boundsForElement(layout.bounds, id))
+    .filter((entry): entry is PreviewBounds => entry !== null)
+})
+const selectionTextRuns = computed<PreviewTextRun[]>(() => {
+  const layout = previewLayout.value
+  const state = editor.value
+  if (!layout || !state || state.selection.length === 0) return []
+  const selectedIds = new Set(state.selection)
+  return layout.textRuns.filter((run) => selectedIds.has(run.elementId))
+})
+const dragGuides = computed<SnapGuide[]>(() => dragging.value?.guides ?? [])
+
+function withFrame(
+  doc: PresentationDoc,
+  slideId: string,
+  id: string,
+  frame: Frame,
+): PresentationDoc {
+  return {
+    ...doc,
+    slides: doc.slides.map((slide: Slide) =>
+      slide.id === slideId
+        ? {
+            ...slide,
+            elements: slide.elements.map((element: Element): Element =>
+              element.id === id ? { ...element, frame } : element,
+            ),
+          }
+        : slide,
+    ),
+  }
+}
+
+function fullSizeForDoc(): { width: number; height: number } {
+  const settings = editor.value?.doc.settings
+  return { width: settings?.width ?? 1920, height: settings?.height ?? 1080 }
+}
+
+function drawFrame(result: DecodedPreview): void {
+  const canvas = sceneCanvas.value
+  if (!canvas) return
+  canvas.width = result.width
+  canvas.height = result.height
+  const context = canvas.getContext('2d')
+  if (!context) return
+  const image = context.createImageData(result.width, result.height)
+  image.data.set(result.rgba)
+  context.putImageData(image, 0, 0)
+}
+
+async function renderAt(width: number, height: number): Promise<void> {
+  if (!nativePreview.value) return
+  const doc = previewDoc.value
+  const index = sceneSlideIndex.value
+  if (!doc || index < 0) return
+  const token = ++renderToken
+  const scene = buildScene(doc, null, index, { width, height }, {
+    assets: [],
+    fonts: [],
+    revision: previewRevision.value,
+    role: 'preview',
+  })
+  try {
+    const result = await previewRender(scene, width, height)
+    if (token !== renderToken) return
+    previewLayout.value = result.layout
+    drawFrame(result)
+  } catch (reason) {
+    if (token !== renderToken) return
+    previewLayout.value = null
+    previewError.value = reason instanceof Error ? reason.message : String(reason)
+  }
+}
+
+function scheduleFullRender(delay = 40): void {
+  if (fullRenderTimer) clearTimeout(fullRenderTimer)
+  fullRenderTimer = setTimeout(() => {
+    fullRenderTimer = null
+    const size = fullSizeForDoc()
+    void renderAt(size.width, size.height)
+  }, delay)
+}
+
+function scheduleDragRender(): void {
+  if (dragRenderHandle) return
+  dragRenderHandle = requestAnimationFrame(() => {
+    dragRenderHandle = 0
+    void renderAt(640, 360)
+  })
+}
+
+function retryPreview(): void {
+  previewError.value = ''
+  scheduleFullRender(0)
+}
+
+watch(
+  [() => editor.value?.doc, () => editor.value?.slideId, themeId, () => isSong.value],
+  () => {
+    previewRevision.value += 1
+    scheduleFullRender()
+  },
+  { flush: 'post' },
+)
+watch(themes, () => scheduleFullRender(), { flush: 'post' })
+
+function pointFromEvent(event: PointerEvent): NormalizedPoint | null {
+  const target = event.currentTarget
+  if (!(target instanceof HTMLElement)) return null
+  const rect = target.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return null
+  return normalizePoint(event.clientX, event.clientY, rect)
+}
+
+function onStagePointerDown(event: PointerEvent): void {
+  const state = editor.value
+  if (!nativePreview.value || isSong.value || !state || event.button !== 0) return
+  const point = pointFromEvent(event)
+  if (!point) return
+  const order = previewLayers.value.map((layer) => layer.id)
+  const hit = hitTestBounds(previewLayout.value?.bounds ?? [], point, order)
+  const additive = event.shiftKey || event.metaKey || event.ctrlKey
+
+  if (!hit) {
+    if (!additive) editor.value = clearSelection(state)
+    return
+  }
+  if (additive) {
+    editor.value = selectLayer(state, hit, true)
+    return
+  }
+
+  const next = selectLayer(state, hit)
+  editor.value = next
+  const slide = currentSlide(next)
+  const element = slide?.elements.find((entry) => entry.id === hit)
+  if (!slide || !element) return
+  dragging.value = {
+    id: hit,
+    slideId: slide.id,
+    pointerId: event.pointerId,
+    start: point,
+    origin: element.frame,
+    frame: element.frame,
+    guides: [],
+    moved: false,
+  }
+  const target = event.currentTarget
+  if (target instanceof HTMLElement) target.setPointerCapture(event.pointerId)
+}
+
+function onStagePointerMove(event: PointerEvent): void {
+  const active = dragging.value
+  if (!active || event.pointerId !== active.pointerId) return
+  const point = pointFromEvent(event)
+  if (!point) return
+  const dx = point.x - active.start.x
+  const dy = point.y - active.start.y
+  const moved = moveFrame(active.origin, dx, dy)
+  const others = (previewLayout.value?.bounds ?? []).filter(
+    (entry) => entry.elementId !== active.id && entry.elementId !== 'slide-background',
+  )
+  const snapped = snapFrame(moved, others)
+  dragging.value = {
+    ...active,
+    frame: snapped.frame,
+    guides: snapped.guides,
+    moved: active.moved || Math.abs(dx) > 0.002 || Math.abs(dy) > 0.002,
+  }
+  scheduleDragRender()
+}
+
+function endDrag(event: PointerEvent, commit: boolean): void {
+  const active = dragging.value
+  if (!active || event.pointerId !== active.pointerId) return
+  const state = editor.value
+  dragging.value = null
+  if (dragRenderHandle) {
+    cancelAnimationFrame(dragRenderHandle)
+    dragRenderHandle = 0
+  }
+  if (!state) return
+  if (commit && active.moved) {
+    editor.value = updateLayer(state, active.id, (element) => ({
+      ...element,
+      frame: active.frame,
+    }))
+  } else {
+    scheduleFullRender(0)
+  }
+}
+
+function onStagePointerUp(event: PointerEvent): void {
+  endDrag(event, true)
+}
+
+function onStagePointerCancel(event: PointerEvent): void {
+  endDrag(event, false)
+}
+
+function percent(value: number): string {
+  return `${(value * 100).toFixed(3)}%`
+}
+
+function boundsStyle(entry: { x: number; y: number; width: number; height: number }): Record<string, string> {
+  return {
+    left: percent(entry.x),
+    top: percent(entry.y),
+    width: percent(entry.width),
+    height: percent(entry.height),
+  }
+}
+
+function guideStyle(guide: SnapGuide): Record<string, string> {
+  return guide.axis === 'x'
+    ? { left: percent(guide.position), top: '0', width: '1px', height: '100%' }
+    : { top: percent(guide.position), left: '0', height: '1px', width: '100%' }
+}
+
+function cornerStyle(corner: (typeof corners)[number]): Record<string, string> {
+  if (corner === 'nw') return { left: '0', top: '0' }
+  if (corner === 'ne') return { left: '100%', top: '0' }
+  if (corner === 'sw') return { left: '0', top: '100%' }
+  return { left: '100%', top: '100%' }
+}
 
 const signature = computed(() =>
   JSON.stringify({
@@ -573,7 +862,12 @@ onMounted(() => {
   void loadThemes()
   window.addEventListener('keydown', onKeydown)
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  if (fullRenderTimer) clearTimeout(fullRenderTimer)
+  if (dragRenderHandle) cancelAnimationFrame(dragRenderHandle)
+  renderToken += 1
+})
 
 const root = css({ display: 'flex', flexDirection: 'column', h: 'full', minH: '0', bg: 'bg.app' })
 const toolbar = css({ display: 'flex', alignItems: 'center', gap: '2', h: 'toolbar', px: '4', flexShrink: '0', borderBottomWidth: '1px', borderColor: 'border.default', bg: 'bg.panel' })
@@ -615,6 +909,13 @@ const slide = css({
   containerType: '[inline-size]',
   background: '[token(gradients.graphite)]',
 })
+const sceneCanvasStyle = css({ position: 'absolute', inset: '0', display: 'block', w: 'full', h: 'full' })
+const overlay = css({ position: 'absolute', inset: '0', pointerEvents: 'none' })
+const selectionBoxStyle = css({ position: 'absolute', borderWidth: '1px', borderColor: 'accent.default', boxShadow: '[0_0_0_1px_rgba(0,0,0,0.35)]' })
+const selectionHandle = css({ position: 'absolute', w: '[8px]', h: '[8px]', bg: 'accent.default', borderRadius: '[1px]', transform: '[translate(-50%,-50%)]' })
+const textRunBox = css({ position: 'absolute', borderWidth: '1px', borderStyle: 'dashed', borderColor: 'accent.default', opacity: '0.55' })
+const guideLine = css({ position: 'absolute', bg: 'accent.default', opacity: '0.9' })
+const previewBadge = css({ position: 'absolute', bottom: '2', left: '2', zIndex: '[10]', px: '2', py: '1', borderRadius: 'sm', bg: 'bg.panel', color: 'fg.muted', textStyle: 'ui.xs', borderWidth: '1px', borderColor: 'border.default', cursor: 'pointer' })
 const songPage = css({ display: 'grid', placeItems: 'center', h: 'full', p: '10', textAlign: 'center' })
 const slideTextStyle = css({ display: 'flex', flexDirection: 'column', gap: '2', fontSize: '[clamp(20px,2.4vw,42px)]', fontWeight: 'semibold', lineHeight: '[1.15]', color: 'ink.0', textShadow: '[0_2px_18px_rgba(0,0,0,0.5)]' })
 const layerBox = css({ position: 'absolute', minW: '0', minH: '0' })
@@ -696,26 +997,76 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
       </aside>
 
       <section :class="stage" aria-label="Slide preview">
-        <div :class="slide">
+        <div
+          :class="slide"
+          @pointerdown="onStagePointerDown"
+          @pointermove="onStagePointerMove"
+          @pointerup="onStagePointerUp"
+          @pointercancel="onStagePointerCancel"
+        >
           <div v-if="isSong" :class="songPage">
             <div :class="slideTextStyle">
               <span v-for="(line, index) in previewLines" :key="index">{{ line }}</span>
             </div>
           </div>
           <template v-else>
-            <div v-if="previewLayers.length === 0" :class="emptyStage">No layers on this slide</div>
-            <div
-              v-for="layer in previewLayers"
-              :key="layer.id"
-              :class="[layerBox, isLayerSelected(layer.id) ? layerSelected : '']"
-              :style="layerStyle(layer)"
-            >
-              <div v-if="layer.kind === 'text'" :class="textLayerBox" :style="textLayerStyle(layer)">
-                <span v-for="(line, index) in textLines(layer)" :key="index">{{ line }}</span>
+            <canvas
+              v-if="nativePreview"
+              ref="sceneCanvas"
+              :class="sceneCanvasStyle"
+              aria-label="Native slide preview"
+            />
+            <div v-if="nativePreview" :class="overlay" aria-hidden="true">
+              <div
+                v-for="run in selectionTextRuns"
+                :key="`${run.elementId}-${run.line}`"
+                :class="textRunBox"
+                :style="boundsStyle(run)"
+              />
+              <div
+                v-for="box in selectionBoxes"
+                :key="box.elementId"
+                :class="selectionBoxStyle"
+                :style="boundsStyle(box)"
+              >
+                <span
+                  v-for="corner in corners"
+                  :key="corner"
+                  :class="selectionHandle"
+                  :style="cornerStyle(corner)"
+                />
               </div>
-              <div v-else-if="layer.kind === 'shape'" :class="shapeLayerBox" :style="shapeLayerStyle(layer)" />
-              <div v-else :class="mediaPlaceholder">{{ layer.kind }}</div>
+              <div
+                v-for="guide in dragGuides"
+                :key="`${guide.axis}-${guide.position}`"
+                :class="guideLine"
+                :style="guideStyle(guide)"
+              />
             </div>
+            <template v-if="!nativePreview">
+              <div v-if="previewLayers.length === 0" :class="emptyStage">No layers on this slide</div>
+              <div
+                v-for="layer in previewLayers"
+                :key="layer.id"
+                :class="[layerBox, isLayerSelected(layer.id) ? layerSelected : '']"
+                :style="layerStyle(layer)"
+              >
+                <div v-if="layer.kind === 'text'" :class="textLayerBox" :style="textLayerStyle(layer)">
+                  <span v-for="(line, index) in textLines(layer)" :key="index">{{ line }}</span>
+                </div>
+                <div v-else-if="layer.kind === 'shape'" :class="shapeLayerBox" :style="shapeLayerStyle(layer)" />
+                <div v-else :class="mediaPlaceholder">{{ layer.kind }}</div>
+              </div>
+            </template>
+            <button
+              v-if="previewError"
+              type="button"
+              :class="previewBadge"
+              :title="previewError"
+              @click="retryPreview"
+            >
+              Native preview unavailable · Retry
+            </button>
           </template>
         </div>
       </section>

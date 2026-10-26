@@ -2769,7 +2769,9 @@ dependencies = [
 name = "lumen-media"
 version = "0.0.1"
 dependencies = [
+ "image",
  "serde",
+ "sha2",
 ]
 
 [[package]]
