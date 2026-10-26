@@ -11,8 +11,8 @@ export default defineNuxtConfig({
 
   ssr: false,
   app: {
-    // Tauri serves static files from a custom protocol; relative asset URLs keep it working.
-    baseURL: process.env.NODE_ENV === 'production' ? './' : '/',
+    // Tauri serves the built files at the protocol root; hash routing handles SPA navigation.
+    baseURL: '/',
   },
 
   css: ['~/assets/css/panda.css'],
