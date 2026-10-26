@@ -505,6 +505,22 @@ impl OutputManager {
         window.close().map_err(|error| error.to_string())
     }
 
+    /// Snapshot of every open audience window, ordered by display index.
+    pub fn open_outputs(&self) -> Vec<OutputWindow> {
+        let mut outputs: Vec<OutputWindow> = self
+            .outputs()
+            .iter()
+            .map(|(label, output)| OutputWindow {
+                label: label.clone(),
+                display_index: output.display_index,
+                width: output.width,
+                height: output.height,
+            })
+            .collect();
+        outputs.sort_by_key(|output| output.display_index);
+        outputs
+    }
+
     pub fn apply_scene(&self, label: Option<&str>, scene: Scene) -> Result<(), String> {
         let outputs = self.outputs();
         match label {

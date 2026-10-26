@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
-import { Button, IconButton, Input } from '~/ui'
+import { Button, Dialog, IconButton, Input } from '~/ui'
 import { useShowControl } from '~/control/useShowControl'
+import { useOutputScreens } from '~/output/useOutputScreens'
+import OutputPanel from '~/output/OutputPanel.vue'
 import type { LiveCommand } from '@lumen/schema'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
@@ -80,6 +82,14 @@ const emptyRail = computed(
   () => !loading.value && items.value.length === 0,
 )
 const stageError = ref('')
+const screensOpen = ref(false)
+const { audienceDisplay, audienceOnline, ensureLoaded: loadScreens, toggleAudience } = useOutputScreens()
+const outputLabel = computed(() => {
+  const display = audienceDisplay.value
+  if (!display) return 'No output display'
+  const state = audienceOnline.value ? 'Audience' : 'Audience off'
+  return `${state} · ${display.name} · ${display.width}×${display.height}`
+})
 
 function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -186,6 +196,7 @@ const timecodeLabel = computed(() => {
 })
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
+  void loadScreens()
   await load({
     playlistId: (route.query.playlist as string | undefined) ?? undefined,
     presentationId: (route.query.presentation as string | undefined) ?? undefined,
@@ -290,14 +301,22 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
     <section :class="center">
       <div :class="centerHead">
         <span :class="livePill"><span :class="css({ w: '1.5', h: '1.5', borderRadius: 'full', bg: 'live.default' })" />{{ mode.toUpperCase() }}</span>
-        <span :class="css({ textStyle: 'ui.sm', color: 'fg.muted' })">Audience · Stage Left · 1920×1080</span>
+        <span :class="css({ textStyle: 'ui.sm', color: 'fg.muted' })">{{ outputLabel }}</span>
         <span v-if="timecodeLabel" :class="css({ textStyle: 'ui.mono', color: 'fg.muted' })">
           {{ timecodeLabel }}<template v-if="!showTimecode?.locked"> · no lock</template>
         </span>
         <span :class="css({ flex: '1' })" />
         <Button variant="ghost" size="sm" icon="lucide:presentation" @click="openStage">Stage</Button>
-        <Button variant="secondary" size="sm" icon="lucide:monitor">Displays</Button>
-        <Button variant="ghost" size="sm" icon="lucide:settings-2">Output</Button>
+        <Button variant="secondary" size="sm" icon="lucide:monitor" @click="screensOpen = true">Screens</Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          :icon="audienceOnline ? 'lucide:square' : 'lucide:settings-2'"
+          :disabled="!audienceDisplay"
+          @click="toggleAudience"
+        >
+          {{ audienceOnline ? 'Stop output' : 'Output' }}
+        </Button>
       </div>
 
       <p v-if="error" :class="errorText">{{ error }}</p>
@@ -381,5 +400,17 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
       <div :class="shortcut"><span>Logo</span><span :class="kbd">L</span></div>
       <div :class="shortcut"><span>Freeze</span><span :class="kbd">F</span></div>
     </aside>
+
+    <Dialog
+      v-model:open="screensOpen"
+      title="Screens"
+      description="Assign the audience output to a display and open or close native audience windows."
+      size="lg"
+    >
+      <OutputPanel />
+      <template #footer="{ close }">
+        <Button variant="secondary" size="sm" @click="close">Done</Button>
+      </template>
+    </Dialog>
   </div>
 </template>

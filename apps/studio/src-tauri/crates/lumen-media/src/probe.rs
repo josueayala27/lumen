@@ -241,7 +241,7 @@ fn is_container(kind: &[u8; 4]) -> bool {
     const CONTAINERS: [&[u8; 4]; 8] = [
         b"moov", b"trak", b"mdia", b"minf", b"stbl", b"edts", b"udta", b"mvex",
     ];
-    CONTAINERS.iter().any(|container| kind == *container)
+    CONTAINERS.contains(&kind)
 }
 
 fn mvhd_duration(payload: &[u8]) -> Option<u64> {

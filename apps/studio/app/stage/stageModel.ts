@@ -13,30 +13,33 @@ export interface StageSourceItem<S extends StageSourceSlide = StageSourceSlide> 
   slides: S[]
 }
 
-export interface StageResolvedSlide<S extends StageSourceSlide = StageSourceSlide> {
+export interface StageResolvedSlide<
+  S extends StageSourceSlide = StageSourceSlide,
+  I extends StageSourceItem<S> = StageSourceItem<S>,
+> {
   itemIndex: number
   slideIndex: number
-  item: StageSourceItem<S>
+  item: I
   slide: S
 }
 
 /** Resolves the live position, ignoring stale indexes in a restored session. */
-export function stageSlideAt<S extends StageSourceSlide>(
-  items: StageSourceItem<S>[],
+export function stageSlideAt<S extends StageSourceSlide, I extends StageSourceItem<S>>(
+  items: I[],
   itemIndex: number,
   slideIndex: number,
-): StageResolvedSlide<S> | null {
+): StageResolvedSlide<S, I> | null {
   const item = items[itemIndex]
   const slide = item?.slides[slideIndex]
   return item && slide ? { itemIndex, slideIndex, item, slide } : null
 }
 
 /** Next cue, rolling into the next item after the last slide. */
-export function stageNextSlide<S extends StageSourceSlide>(
-  items: StageSourceItem<S>[],
+export function stageNextSlide<S extends StageSourceSlide, I extends StageSourceItem<S>>(
+  items: I[],
   itemIndex: number,
   slideIndex: number,
-): StageResolvedSlide<S> | null {
+): StageResolvedSlide<S, I> | null {
   const item = items[itemIndex]
   if (!item) return null
   const slide = item.slides[slideIndex + 1]

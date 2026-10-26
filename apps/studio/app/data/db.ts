@@ -38,6 +38,31 @@ async function migrate(db: Database): Promise<void> {
     CREATE INDEX IF NOT EXISTS playlists_updated_idx
     ON playlists (updated_at DESC)
   `)
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS media_assets (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      name TEXT NOT NULL,
+      sha256 TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      duration_ms INTEGER,
+      width INTEGER,
+      height INTEGER,
+      local_path TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    )
+  `)
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS media_assets_updated_idx
+    ON media_assets (updated_at DESC)
+  `)
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS media_assets_sha_idx
+    ON media_assets (sha256)
+  `)
 }
 
 export async function getDatabase(): Promise<Database | null> {
