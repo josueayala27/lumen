@@ -1,0 +1,21 @@
+{
+  "name": "lumen",
+  "private": true,
+  "packageManager": "pnpm@10.19.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "check-types": "turbo run check-types",
+    "test": "turbo run test",
+    "e2e": "turbo run e2e",
+    "desktop:dev": "pnpm --filter studio desktop:dev",
+    "desktop:build": "pnpm --filter studio desktop:build",
+    "db:generate": "pnpm --filter @lumen/db db:generate",
+    "db:migrate": "pnpm --filter @lumen/db db:migrate",
+    "deploy:check": "pnpm --filter api deploy:dry && pnpm --filter realtime deploy:dry && pnpm --filter web deploy:dry"
+  },
+  "devDependencies": {
+    "turbo": "^2.11.10",
+    "typescript": "^5.9.3"
+  }
+}

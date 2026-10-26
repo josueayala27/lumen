@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "lumen-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "vars": {
+    "API_ORIGIN": "http://localhost:4000",
+    "WEB_ORIGIN": "http://localhost:3001",
+    "STUDIO_ORIGIN": "http://localhost:3000"
+  },
+  "observability": { "enabled": true },
+  "env": {
+    "staging": {
+      "name": "lumen-api-staging",
+      "workers_dev": false,
+      "vars": {
+        "API_ORIGIN": "https://api.staging.lumen.example",
+        "WEB_ORIGIN": "https://app.staging.lumen.example",
+        "STUDIO_ORIGIN": "tauri://localhost"
+      },
+      "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "00000000000000000000000000000000" }],
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "lumen-media-staging" }],
+      "observability": { "enabled": true }
+    },
+    "production": {
+      "name": "lumen-api",
+      "workers_dev": false,
+      "vars": {
+        "API_ORIGIN": "https://api.lumen.example",
+        "WEB_ORIGIN": "https://app.lumen.example",
+        "STUDIO_ORIGIN": "tauri://localhost"
+      },
+      "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "00000000000000000000000000000000" }],
+      "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "lumen-media" }],
+      "observability": { "enabled": true }
+    }
+  }
+}

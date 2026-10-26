@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "styled-system/*": ["./styled-system/*"],
+      "~/*": ["./app/*"]
+    }
+  },
+  "include": ["app/**/*.ts", "app/**/*.vue", "nuxt.config.ts", "panda.config.ts"]
+}
