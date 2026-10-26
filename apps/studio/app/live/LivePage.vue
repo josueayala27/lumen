@@ -3,6 +3,8 @@ import { css } from 'styled-system/css'
 import { Icon } from '#components'
 import { Button, IconButton, Input } from '~/ui'
 import { useShowControl } from '~/control/useShowControl'
+import TimelinePanel from './TimelinePanel.vue'
+import type { LiveCommand } from '@lumen/schema'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 interface Cue {
@@ -76,7 +78,7 @@ function onKey(event: KeyboardEvent): void {
       break
   }
 }
-const { timecode: showTimecode } = useShowControl((command) => {
+function applyLiveCommand(command: LiveCommand): void {
   switch (command.type) {
     case 'next':
     case 'nextItem':
@@ -93,7 +95,8 @@ const { timecode: showTimecode } = useShowControl((command) => {
       mode.value = command.mode
       break
   }
-})
+}
+const { timecode: showTimecode } = useShowControl(applyLiveCommand)
 const timecodeLabel = computed(() => {
   const value = showTimecode.value?.timecode
   if (!value) return ''
@@ -250,6 +253,8 @@ const gradientTwo = css({ background: '[token(gradients.graphite)]' })
         </div>
         <Button variant="ghost" size="sm" icon="lucide:pause">Pause</Button>
       </div>
+
+      <TimelinePanel :timecode="showTimecode" :apply="applyLiveCommand" />
 
       <h2 :class="sectionTitle">Keyboard</h2>
       <div :class="shortcut"><span>Next slide</span><span :class="kbd">Space</span></div>

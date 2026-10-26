@@ -4,6 +4,7 @@ export * from './presentation'
 export * from './scene'
 export * from './live'
 export * from './control'
+export * from './timeline'
 
 export const API_ERROR_CODES = [
   'bad_request',
