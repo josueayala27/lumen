@@ -1,5 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
-import { previewResultSchema, type Frame, type PreviewBounds, type PreviewResult, type Scene } from '@lumen/schema'
+import { previewResultSchema, type Frame, type PreviewResult, type Scene } from '@lumen/schema'
+
+/** Layout entry for one rendered layer, in normalized slide coordinates. */
+export type PreviewBounds = PreviewResult['bounds'][number]
+/** Layout entry for one shaped text line, in normalized slide coordinates. */
+export type PreviewTextRun = PreviewResult['textRuns'][number]
 
 /** A rendered preview frame plus the layout data returned by the same Rust shaping pass. */
 export interface DecodedPreview {

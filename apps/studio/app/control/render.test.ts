@@ -1,4 +1,4 @@
-import type { Frame, PreviewBounds } from '@lumen/schema'
+import type { Frame } from '@lumen/schema'
 import { describe, expect, it } from 'vitest'
 import {
   boundsForElement,
@@ -7,6 +7,7 @@ import {
   moveFrame,
   normalizePoint,
   snapFrame,
+  type PreviewBounds,
 } from './render'
 
 function payload(options: {

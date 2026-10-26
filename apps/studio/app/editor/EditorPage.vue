@@ -39,9 +39,7 @@ import type {
   Element,
   Frame,
   PresentationDoc,
-  PreviewBounds,
   PreviewResult,
-  PreviewTextRun,
   Slide,
 } from '@lumen/schema'
 import { css } from 'styled-system/css'
@@ -59,6 +57,8 @@ import {
   snapFrame,
   type DecodedPreview,
   type NormalizedPoint,
+  type PreviewBounds,
+  type PreviewTextRun,
   type SnapGuide,
 } from '~/control/render'
 import {

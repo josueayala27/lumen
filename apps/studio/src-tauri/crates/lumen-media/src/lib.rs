@@ -5,6 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod probe;
+pub mod thumbnail;
+pub mod util;
+
+pub use probe::{FileProbe, VideoProbe};
+pub use util::{MediaKind, MAX_IMPORT_BYTES};
+
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaInfo {
