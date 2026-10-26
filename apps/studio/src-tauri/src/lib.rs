@@ -1,4 +1,5 @@
 mod control;
+mod media;
 
 use std::sync::Mutex;
 
@@ -163,6 +164,12 @@ pub fn run() {
             output_stats,
             preview_render,
             update_preview_video_frame,
+            media::import_media,
+            media::probe_media,
+            media::delete_media_file,
+            media::media_files_status,
+            media::list_media_files,
+            media::media_thumbnail,
             control::list_midi_inputs,
             control::start_midi_input,
             control::stop_midi_input,

@@ -220,7 +220,7 @@ const footerSpacer = css({ flex: '1' })
             <div v-else-if="current" :class="slideText">
               <span v-for="(line, index) in current.slide.lines" :key="index">{{ line }}</span>
             </div>
-            <p v-else :class="[placeholder, loading ? '' : '']">{{ emptyLabel }}</p>
+            <p v-else :class="placeholder">{{ emptyLabel }}</p>
             <span :class="safeMarker" :style="safeAreaStyle" aria-hidden="true" />
           </div>
           <p v-if="currentRenderError" :class="errorText">{{ currentRenderError }}</p>
