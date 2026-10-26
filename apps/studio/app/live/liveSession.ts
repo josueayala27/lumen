@@ -18,6 +18,8 @@ export interface LiveItem {
   label: string
   kind: 'presentation' | 'media' | 'header'
   presentationKind?: PresentationDoc['kind']
+  /** Library presentation id for presentation items; timeline slide clips address it. */
+  presentationId?: string
   /** Source document for presentation items; null for media and headers. */
   doc: PresentationDoc | null
   slides: LiveSlide[]
@@ -61,6 +63,7 @@ export function buildLiveItems(
           id: item.id,
           label,
           kind: item.kind,
+          presentationId: item.presentationId,
           doc: null,
           slides: [placeholderSlide(item.id, label)],
         }
@@ -69,6 +72,7 @@ export function buildLiveItems(
         id: item.id,
         label: item.label || doc.title,
         kind: item.kind,
+        presentationId: item.presentationId,
         presentationKind: doc.kind,
         doc,
         slides: toLiveSlides(doc),

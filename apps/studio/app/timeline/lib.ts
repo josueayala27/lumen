@@ -1,10 +1,13 @@
 import { formatTimecode, newId, nominalFps, timecodeFromFrames } from '@lumen/core'
 import type {
+  ControlCommand,
   FrameRate,
+  ShowTimeline,
   TimelineClip,
   TimelineMarker,
   TimelineTrack,
 } from '@lumen/schema'
+import { showTimelineSchema } from '@lumen/schema'
 
 /**
  * Pure geometry and editing helpers for the timeline editor.
@@ -309,4 +312,151 @@ export function trackKindLabel(kind: TimelineTrack['kind']): string {
     case 'macro':
       return 'Macros'
   }
+}
+
+// --- Undo history ------------------------------------------------------------
+
+/** Snapshot history of serialized documents. `present` is the committed state. */
+export interface EditHistory {
+  past: string[]
+  present: string
+  future: string[]
+}
+
+export const HISTORY_LIMIT = 100
+
+export function createHistory(present: string): EditHistory {
+  return { past: [], present, future: [] }
+}
+
+/** Records a new state. Equal snapshots are ignored; a new edit drops the redo stack. */
+export function commitHistory(history: EditHistory, next: string, limit = HISTORY_LIMIT): EditHistory {
+  if (next === history.present) return history
+  const past = [...history.past, history.present]
+  return { past: past.slice(Math.max(0, past.length - limit)), present: next, future: [] }
+}
+
+export function undoHistory(history: EditHistory): EditHistory {
+  const previous = history.past[history.past.length - 1]
+  if (previous === undefined) return history
+  return { past: history.past.slice(0, -1), present: previous, future: [history.present, ...history.future] }
+}
+
+export function redoHistory(history: EditHistory): EditHistory {
+  const [next, ...future] = history.future
+  if (next === undefined) return history
+  return { past: [...history.past, history.present], present: next, future }
+}
+
+// --- Clipboard ---------------------------------------------------------------
+
+/** Copy of a clip placed at `startFrame` with a fresh id, clamped into the timeline. */
+export function pastedClip(
+  clip: TimelineClip,
+  startFrame: number,
+  durationFrames: number,
+  id = newId('clip'),
+): TimelineClip {
+  const length = clampNumber(clip.durationFrames, 1, Math.max(1, durationFrames))
+  return {
+    ...JSON.parse(JSON.stringify(clip)) as TimelineClip,
+    id,
+    durationFrames: length,
+    startFrame: clampClipStart(startFrame, length, durationFrames),
+  }
+}
+
+// --- Import / export ---------------------------------------------------------
+
+export function exportTimelineJson(doc: ShowTimeline): string {
+  return `${JSON.stringify(doc, null, 2)}\n`
+}
+
+/**
+ * Parses exported timeline JSON. Ids are regenerated so an import never
+ * overwrites the timeline it came from.
+ */
+export function importTimelineJson(text: string, makeId: (prefix: string) => string = newId): ShowTimeline {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    throw new Error('The file is not valid JSON.')
+  }
+  const parsed = showTimelineSchema.safeParse(raw)
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]
+    throw new Error(`Not a Lumen timeline: ${issue ? `${issue.path.join('.') || 'root'} ${issue.message}` : 'invalid shape'}.`)
+  }
+  const doc = parsed.data
+  return {
+    ...doc,
+    id: makeId('timeline'),
+    tracks: doc.tracks.map((track) => ({
+      ...track,
+      id: makeId('track'),
+      clips: track.clips.map((clip) => ({ ...clip, id: makeId('clip') })),
+      properties: track.properties.map((property) => ({
+        ...property,
+        id: makeId('property'),
+        keyframes: property.keyframes.map((keyframe) => ({ ...keyframe, id: makeId('keyframe') })),
+      })),
+    })),
+    markers: doc.markers.map((marker) => ({ ...marker, id: makeId('marker') })),
+  }
+}
+
+// --- Actions -----------------------------------------------------------------
+
+/** Command choices for macro clips and markers, keyed for select inputs. */
+export const TIMELINE_ACTIONS = [
+  { value: 'none', label: 'No action' },
+  { value: 'next', label: 'Next slide' },
+  { value: 'prev', label: 'Previous slide' },
+  { value: 'nextItem', label: 'Next item' },
+  { value: 'prevItem', label: 'Previous item' },
+  { value: 'take', label: 'Take preview' },
+  { value: 'mode:live', label: 'Output: live' },
+  { value: 'mode:black', label: 'Output: black' },
+  { value: 'mode:clear', label: 'Output: clear' },
+  { value: 'mode:logo', label: 'Output: logo' },
+  { value: 'mode:freeze', label: 'Output: freeze' },
+] as const
+
+export type TimelineActionKey = (typeof TIMELINE_ACTIONS)[number]['value']
+
+export function actionKey(command: ControlCommand | null): TimelineActionKey {
+  if (!command) return 'none'
+  if (command.type === 'setMode') return `mode:${command.mode}`
+  const found = TIMELINE_ACTIONS.find((entry) => entry.value === command.type)
+  return found ? found.value : 'none'
+}
+
+export function commandForKey(key: TimelineActionKey): ControlCommand | null {
+  if (key === 'none') return null
+  if (key.startsWith('mode:')) {
+    return { type: 'setMode', mode: key.slice(5) as Extract<ControlCommand, { type: 'setMode' }>['mode'] }
+  }
+  return { type: key } as ControlCommand
+}
+
+// --- Keyframes ---------------------------------------------------------------
+
+export const KEYFRAME_PROPERTIES = [
+  { value: 'opacity', label: 'Opacity', min: 0, max: 1, step: 0.01, fallback: 1 },
+  { value: 'x', label: 'X', min: -1, max: 2, step: 0.001, fallback: 0 },
+  { value: 'y', label: 'Y', min: -1, max: 2, step: 0.001, fallback: 0 },
+  { value: 'width', label: 'Width', min: 0, max: 2, step: 0.001, fallback: 1 },
+  { value: 'height', label: 'Height', min: 0, max: 2, step: 0.001, fallback: 1 },
+  { value: 'rotation', label: 'Rotation', min: -360, max: 360, step: 1, fallback: 0 },
+  { value: 'fontSize', label: 'Font size', min: 1, max: 400, step: 1, fallback: 64 },
+  { value: 'letterSpacing', label: 'Letter spacing', min: -20, max: 50, step: 0.1, fallback: 0 },
+  { value: 'lineHeight', label: 'Line height', min: 0.5, max: 3, step: 0.01, fallback: 1.2 },
+  { value: 'color', label: 'Color', min: 0, max: 0, step: 0, fallback: '#ffffff' },
+] as const
+
+export type KeyframePropertyName = (typeof KEYFRAME_PROPERTIES)[number]['value']
+
+export function keyframePropertySpec(name: string) {
+  return KEYFRAME_PROPERTIES.find((entry) => entry.value === name) ?? KEYFRAME_PROPERTIES[0]
 }

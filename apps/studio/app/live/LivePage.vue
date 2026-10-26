@@ -6,11 +6,12 @@ import { useShowControl } from '~/control/useShowControl'
 import { useOutputScreens } from '~/output/useOutputScreens'
 import OutputPanel from '~/output/OutputPanel.vue'
 import type { LiveCommand } from '@lumen/schema'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import TimelinePanel from './TimelinePanel.vue'
 import { useLiveSession } from './useLiveSession'
-import { useLiveOutput } from './useLiveOutput'
+import { useLiveOutput, type LiveSceneTransform } from './useLiveOutput'
+import { useShowTimeline } from './useShowTimeline'
 import type { LiveItem } from './liveSession'
 import { saveLiveSession } from './liveSessionStore'
 import { liveTimerViews } from './liveTimers'
@@ -104,11 +105,14 @@ const outputLabel = computed(() => {
   const state = audienceOnline.value ? 'Audience' : 'Audience off'
   return `${state} · ${display.name} · ${display.width}×${display.height}`
 })
+// Filled by the show timeline once it exists; it needs the show-control timecode declared below.
+const timelineTransform = shallowRef<LiveSceneTransform | null>(null)
 const liveOutput = useLiveOutput({
   state,
   items,
   theme,
   media,
+  sceneTransform: timelineTransform,
   outputLabel: computed(() => audienceOutput.value?.label ?? null),
   desktop: computed(() => isTauriRuntime()),
 })
@@ -212,6 +216,15 @@ function applyLiveCommand(command: LiveCommand): void {
 }
 
 const { timecode: showTimecode } = useShowControl(applyLiveCommand)
+const showTimeline = useShowTimeline({
+  timecode: () => showTimecode.value,
+  apply: applyLiveCommand,
+  items,
+  media,
+})
+watch(showTimeline.sceneTransform, (value) => {
+  timelineTransform.value = value
+})
 const timecodeLabel = computed(() => {
   const value = showTimecode.value?.timecode
   if (!value) return ''
@@ -431,7 +444,7 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
         </div>
       </PanelSection>
 
-      <TimelinePanel :timecode="showTimecode" :apply="applyLiveCommand" />
+      <TimelinePanel :timecode="showTimecode" :runner="showTimeline" />
 
       <PanelSection title="Keyboard" collapsible storage-key="live.keyboard" flush>
         <div :class="shortcutGrid">

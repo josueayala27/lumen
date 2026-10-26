@@ -18,6 +18,15 @@ import {
   splitClipAtFrame,
   timecodeLabel,
   trimClipFromEnd,
+  actionKey,
+  commandForKey,
+  commitHistory,
+  createHistory,
+  exportTimelineJson,
+  importTimelineJson,
+  pastedClip,
+  redoHistory,
+  undoHistory,
   trimClipFromStart,
   zoomBy,
 } from './lib'
@@ -189,5 +198,63 @@ describe('zoom and ruler', () => {
     const ticks = rulerTicks(3, '30', 120)
     expect(ticks.map((tick) => tick.frame)).toEqual([0, 30, 60, 90, 120])
     expect(ticks[1]?.label).toBe('00:00:01:00')
+  })
+})
+
+describe('edit history', () => {
+  it('undoes and redoes committed snapshots', () => {
+    let history = createHistory('a')
+    history = commitHistory(history, 'b')
+    history = commitHistory(history, 'b')
+    history = commitHistory(history, 'c')
+    expect(history.past).toEqual(['a', 'b'])
+    history = undoHistory(history)
+    expect(history.present).toBe('b')
+    history = redoHistory(history)
+    expect(history.present).toBe('c')
+    history = undoHistory(undoHistory(history))
+    history = commitHistory(history, 'd')
+    expect(history.future).toEqual([])
+    expect(undoHistory(createHistory('x')).present).toBe('x')
+  })
+
+  it('caps the undo stack', () => {
+    let history = createHistory('0')
+    for (let index = 1; index <= 5; index += 1) history = commitHistory(history, String(index), 3)
+    expect(history.past).toEqual(['2', '3', '4'])
+  })
+})
+
+describe('clipboard and json', () => {
+  it('pastes a clip with a new id inside the timeline', () => {
+    const source = clip('c1', 0, 50)
+    const pasted = pastedClip(source, 90, 100, 'c2')
+    expect(pasted).toMatchObject({ id: 'c2', startFrame: 50, durationFrames: 50 })
+  })
+
+  it('round-trips a timeline with fresh ids', () => {
+    let counter = 0
+    const doc = {
+      schemaVersion: 1 as const,
+      id: 'tl',
+      name: 'Show',
+      frameRate: '25' as const,
+      durationFrames: 100,
+      tracks: [{ id: 't', kind: 'slide' as const, name: 'S', muted: false, locked: false, presentationId: null, slideIndex: null, elementId: null, clips: [clip('c', 0, 10)], properties: [] }],
+      markers: [{ id: 'm', frame: 5, label: 'Go', action: { type: 'take' as const }, enabled: true }],
+    }
+    const imported = importTimelineJson(exportTimelineJson(doc), (prefix) => `${prefix}-${++counter}`)
+    expect(imported.id).toBe('timeline-1')
+    expect(imported.tracks[0]?.clips[0]?.id).toMatch(/^clip-/)
+    expect(imported.markers[0]).toMatchObject({ frame: 5, action: { type: 'take' } })
+    expect(() => importTimelineJson('{')).toThrow('not valid JSON')
+    expect(() => importTimelineJson('{"name":1}')).toThrow('Not a Lumen timeline')
+  })
+
+  it('maps actions to commands and back', () => {
+    expect(commandForKey('mode:black')).toEqual({ type: 'setMode', mode: 'black' })
+    expect(actionKey({ type: 'setMode', mode: 'logo' })).toBe('mode:logo')
+    expect(actionKey({ type: 'nextItem' })).toBe('nextItem')
+    expect(commandForKey('none')).toBeNull()
   })
 })
