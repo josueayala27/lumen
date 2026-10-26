@@ -49,7 +49,10 @@ pub const AV_SYNC_TOLERANCE_MS: u64 = 40;
 
 impl PlaybackClock {
     pub fn new() -> Self {
-        Self { started_at_ms: None, offset_ms: 0 }
+        Self {
+            started_at_ms: None,
+            offset_ms: 0,
+        }
     }
 
     pub fn start(&mut self, now_ms: u64) {

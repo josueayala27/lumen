@@ -10,8 +10,8 @@ import type { AppEnv } from '../types'
 
 export const syncRoutes = new Hono<AppEnv>()
 
-const SYNced = ['presentation', 'theme', 'playlist', 'media'] as const
-type SyncEntity = (typeof SYNced)[number]
+const SYNC_ENTITIES = ['presentation', 'theme', 'playlist', 'media'] as const
+type SyncEntity = (typeof SYNC_ENTITIES)[number]
 
 const pushSchema = z.object({
   workspaceId: z.string().min(1),
@@ -19,7 +19,7 @@ const pushSchema = z.object({
     .array(
       z.object({
         opId: z.string().min(8).max(80),
-        entity: z.enum(SYNced),
+        entity: z.enum(SYNC_ENTITIES),
         id: z.string().min(1),
         baseRev: z.number().int().nonnegative(),
         clientUpdatedAt: z.number().int().nonnegative(),

@@ -80,12 +80,12 @@ workspaceRoutes.get('/:workspaceId/members', async (c) => {
 export const libraryRoutes = new Hono<AppEnv>()
 
 libraryRoutes.get('/', async (c) => {
-  const user = requireUser(c)
+  requireUser(c)
   const workspaceId = c.req.query('workspaceId')
   if (!workspaceId) throw new ApiError(400, 'bad_request', 'workspaceId is required')
   await requireRole(c, workspaceId, 'viewer')
   const rows = await c.var.db.select().from(schema.libraries).where(eq(schema.libraries.workspaceId, workspaceId))
-  return c.json({ libraries: rows, userId: user.id })
+  return c.json({ libraries: rows })
 })
 
 libraryRoutes.post(

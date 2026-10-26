@@ -40,5 +40,20 @@ export default defineNuxtConfig({
     localApiEndpoint: '/_nuxt_icon',
   },
 
+  vite: {
+    optimizeDeps: {
+      include: [
+        '@floating-ui/vue',
+        '@vueuse/core',
+        'gsap',
+        'gsap/CustomEase',
+        'gsap/Flip',
+        'gsap/ScrollSmoother',
+        'gsap/ScrollTrigger',
+        'gsap/SplitText',
+      ],
+    },
+  },
+
   nitro: { preset: 'static' },
 })

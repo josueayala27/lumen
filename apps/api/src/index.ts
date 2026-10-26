@@ -38,7 +38,7 @@ export function createApp(options: AppOptions = {}) {
     if (c.req.header('Authorization')?.startsWith('Bearer ')) return next()
     const origin = c.req.header('Origin')
     const allowed = [c.env.WEB_ORIGIN, c.env.STUDIO_ORIGIN, 'tauri://localhost', 'http://tauri.localhost'].filter(Boolean)
-    if (origin && !allowed.includes(origin)) return c.json({ error: { code: 'forbidden', message: 'Untrusted origin' } }, 403)
+    if (!origin || !allowed.includes(origin)) return c.json({ error: { code: 'forbidden', message: 'Untrusted origin' } }, 403)
     return next()
   })
 

@@ -1,7 +1,7 @@
 import { schema } from '@lumen/db'
 import { zValidator } from '@hono/zod-validator'
 import { AwsClient } from 'aws4fetch'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { libraryWorkspace, requireRole } from '../access'
@@ -27,7 +27,7 @@ mediaRoutes.post('/upload-url', zValidator('json', uploadSchema), async (c) => {
   const [existing] = await c.var.db
     .select()
     .from(schema.mediaAssets)
-    .where(eq(schema.mediaAssets.sha256, body.sha256))
+    .where(and(eq(schema.mediaAssets.libraryId, body.libraryId), eq(schema.mediaAssets.sha256, body.sha256)))
     .limit(1)
   if (existing) return c.json({ asset: existing, upload: null })
 

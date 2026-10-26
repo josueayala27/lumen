@@ -29,7 +29,11 @@ pub struct Placement {
 
 /// Converts a physical monitor rect into the logical coordinates Tauri expects.
 pub fn placement(x: i32, y: i32, width: u32, height: u32, scale_factor: f64) -> Placement {
-    let scale = if scale_factor > 0.0 { scale_factor } else { 1.0 };
+    let scale = if scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
     Placement {
         x: f64::from(x) / scale,
         y: f64::from(y) / scale,
@@ -49,13 +53,18 @@ pub struct OutputWindow {
 pub fn list_displays(app: &AppHandle) -> Result<Vec<DisplayInfo>, String> {
     let primary = app.primary_monitor().map_err(|error| error.to_string())?;
     let primary_pos = primary.as_ref().map(|monitor| *monitor.position());
-    let monitors = app.available_monitors().map_err(|error| error.to_string())?;
+    let monitors = app
+        .available_monitors()
+        .map_err(|error| error.to_string())?;
     Ok(monitors
         .iter()
         .enumerate()
         .map(|(index, monitor)| DisplayInfo {
             index,
-            name: monitor.name().cloned().unwrap_or_else(|| format!("Display {}", index + 1)),
+            name: monitor
+                .name()
+                .cloned()
+                .unwrap_or_else(|| format!("Display {}", index + 1)),
             width: monitor.size().width,
             height: monitor.size().height,
             scale_factor: monitor.scale_factor(),
@@ -68,7 +77,9 @@ pub fn list_displays(app: &AppHandle) -> Result<Vec<DisplayInfo>, String> {
 
 /// Opens a borderless native window covering the selected monitor. No webview is attached.
 pub fn open_audience_window(app: &AppHandle, display_index: usize) -> Result<OutputWindow, String> {
-    let monitors = app.available_monitors().map_err(|error| error.to_string())?;
+    let monitors = app
+        .available_monitors()
+        .map_err(|error| error.to_string())?;
     let monitor = monitors
         .get(display_index)
         .ok_or_else(|| format!("Display {display_index} is not connected"))?;

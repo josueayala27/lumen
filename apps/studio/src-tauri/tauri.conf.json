@@ -4,9 +4,9 @@
   "version": "0.0.1",
   "identifier": "app.lumen.studio",
   "build": {
-    "beforeDevCommand": "pnpm --dir .. dev",
+    "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:3000",
-    "beforeBuildCommand": "pnpm --dir .. build",
+    "beforeBuildCommand": "pnpm build",
     "frontendDist": "../.output/public"
   },
   "app": {

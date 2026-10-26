@@ -9,7 +9,8 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LiveRoom"] }],
   "vars": {
-    "ALLOWED_ORIGINS": "http://localhost:3000,http://localhost:3001"
+    "ALLOWED_ORIGINS": "http://localhost:3000,http://localhost:3001",
+    "REALTIME_TOKEN_SECRET": "dev-only-change-me"
   },
   "observability": { "enabled": true },
   "env": {
