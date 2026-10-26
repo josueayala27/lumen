@@ -22,7 +22,14 @@ Hold a power assertion while live (`SetThreadExecutionState` on Windows, a power
 
 ## Media
 
-`lumen-media` owns playback. Audio is the master clock; video seeks to it within 40 ms. Prefer platform decoders for H.264/AAC and use an LGPL ffmpeg sidecar for other codecs. Cap concurrent decoders at two and preload the next cue.
+`lumen-media` owns playback. Audio is the master clock; video seeks to it within 40 ms.
+
+Two decode paths, chosen per file by `hap_track` in `src/media.rs`:
+
+- **Hap** (`Hap1`, `Hap5`, `HapY`, `HapM`, `HapA`, `Hap7` in QuickTime): `mov.rs` reads the sample table and `hap.rs` undoes the Snappy or chunked second stage on a plain thread. Frames stay block compressed (BC1/BC3/BC4/BC7) and upload to the GPU as-is when the device has `TEXTURE_COMPRESSION_BC`; Hap Q's Scaled YCoCg converts in `scene.wgsl` (mode 3) and Hap DXT1 renders opaque (mode 4). Without BC support, and always for Hap Q Alpha, `lumen-render/src/bc.rs` decodes on the CPU. Every Hap frame is an intra frame, so the thread shows the sample at the clip position: frame-accurate, no drift. Up to 16 Hap decoders.
+- **Everything else**: an ffmpeg process with `-hwaccel auto` (VideoToolbox, D3D11) piping RGBA. Up to 4 decoders.
+
+Frames reach the preview and every output as one reference-counted `VideoFrame`; fan-out never copies pixels. The GPU path is covered by an ignored test (`cargo test -p lumen-render -- --ignored`), since CI has no GPU.
 
 ## Stage display
 

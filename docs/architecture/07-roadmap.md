@@ -40,7 +40,9 @@ The audience path stays native (invariant 1) and runs with no network (invariant
 
 ## Wave A — Visual engine
 
-Everything later depends on this wave. Today video is decoded by an `ffmpeg` subprocess through the CPU with at most two concurrent decoders.
+Everything later depends on this wave.
+
+Status: Hap decode (all variants except HDR) with direct BC upload, CPU fallback, frame-accurate playback, 16 Hap decoders, shared frames across outputs and `-hwaccel auto` for ffmpeg are done. Open: native VideoToolbox/Media Foundation decode with zero-copy textures, NotchLC, ProRes, a seek/transport API on the show clock, decoder preload, and the 8-layer budget measurement on real media.
 
 ### A1 Video engine
 
