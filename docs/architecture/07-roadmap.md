@@ -47,8 +47,9 @@ Remaining Phase 0 exit items:
 - MIDI input bindings (note, CC, program change) with learn mode.
 - SMPTE frame math for 24, 25, 29.97, 29.97 drop-frame and 30.
 - Follow external MTC and LTC, with lock state and timeout.
+- LTC-synced cue timeline with frame cursor, gap/seek resync and persistence.
 - Audio input selection for LTC and the `control:event` Tauri channel.
-- Exit: a MIDI pedal drives next/prev/take; MTC and LTC drive a locked timecode readout.
+- Exit: a MIDI pedal drives next/prev/take; MTC and LTC drive a locked timecode readout; armed cues fire at their frame positions.
 
 ## Phase 3 — Remote
 

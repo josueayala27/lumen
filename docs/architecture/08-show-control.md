@@ -18,6 +18,14 @@ External control lives in `apps/studio/src-tauri/crates/lumen-control`. The crat
 - LTC: sign changes in the selected audio channel become biphase-mark intervals. A half interval followed by a half is a one; a full interval is a zero. The 80-bit window reports a frame when the `0x3FFD` sync word is present and the fields validate.
 - LTC input selects one channel from interleaved frames (`channel`, default `0`). An out-of-range channel falls back to channel 0. A Schmitt trigger with a default amplitude threshold of `0.02` (about -34 dBFS) keeps silence and low-level noise from producing transitions; the threshold is clamped to `0.0..=1.0`.
 
+## Timeline
+
+A timeline stores cue positions as absolute frame numbers, not labels, so drop-frame labels cannot drift. `timelineSchema` holds `id`, `name`, `frameRate` and `cues[]`; each cue has `atFrames`, a `ControlCommand`, `enabled` and a label.
+
+`advanceTimeline(state, timeline, frame)` fires only enabled cues crossed by the current frame. It resynchronizes without firing on the first lock, a backward jump, or a gap larger than two seconds of frames. Cues at or before the first lock are skipped. A timeline rate that differs from the incoming timecode rate blocks firing instead of guessing.
+
+`useTimeline` drives the runner from `control:event` timecode updates and applies commands through the live reducer. The editor lives in the Live inspector (`TimelinePanel.vue`), persists to `timeline.json` through the Tauri store, and shows the playhead, armed state and last fired cue. The panel only runs while the Live workspace is open; a future global runtime can move the listener out of the page.
+
 ## MIDI
 
 `MidiStreamParser` handles running status and SysEx framing. Realtime bytes are ignored. `MidiRouter` matches a trigger against the first binding:

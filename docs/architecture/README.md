@@ -11,7 +11,7 @@ Read these before changing a subsystem. The approved implementation plan is `~/.
 | 05 | [Desktop output](05-desktop-output.md) | Native windows, render threads, power, media |
 | 06 | [Deploy](06-deploy.md) | Cloudflare resources, secrets, migrations, releases |
 | 07 | [Roadmap](07-roadmap.md) | Phase 0 through Phase 4 |
-| 08 | [Show control](08-show-control.md) | MIDI bindings, MTC, LTC, timecode |
+| 08 | [Show control](08-show-control.md) | MIDI bindings, MTC, LTC, timecode, cue timeline |
 
 ## Invariants
 

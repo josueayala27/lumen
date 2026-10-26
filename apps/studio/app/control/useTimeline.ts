@@ -48,6 +48,14 @@ export function useTimeline(
     }
   })
 
+  watch(
+    () => timeline.value?.frameRate,
+    () => {
+      state.value = { frame: null }
+      rateMismatch.value = false
+    },
+  )
+
   const playhead = computed(() => {
     const frame = state.value.frame
     if (frame === null || !timeline.value) return null

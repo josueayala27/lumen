@@ -115,6 +115,10 @@ function usePlayhead(): void {
   if (playhead.value) cueTime.value = formatTimecode(playhead.value)
 }
 
+function setRate(value: FrameRate | undefined): void {
+  if (value && timeline.value) timeline.value.frameRate = value
+}
+
 function labelForCue(cue: TimelineCue): string {
   const at = timecodeFromFrames(cue.atFrames, rate.value)
   return `${formatTimecode(at)} · ${cue.label || cue.action.type}`
@@ -138,7 +142,7 @@ const title = css({ flex: '1', textStyle: 'ui.label', color: 'fg.subtle', textTr
 const field = css({ display: 'flex', flexDirection: 'column', gap: '1.5', mb: '2' })
 const label = css({ textStyle: 'ui.xs', color: 'fg.muted' })
 const row = css({ display: 'flex', alignItems: 'center', gap: '2', mb: '2' })
-const playhead = css({ display: 'flex', alignItems: 'baseline', gap: '2', mb: '2' })
+const playheadRow = css({ display: 'flex', alignItems: 'baseline', gap: '2', mb: '2' })
 const mono = css({ textStyle: 'ui.mono', fontSize: '[18px]', color: 'fg.default' })
 const hint = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
 const failure = css({ textStyle: 'ui.xs', color: 'danger.default', mb: '2' })
@@ -175,12 +179,12 @@ const cueNote = css({ textStyle: 'ui.xs', color: 'fg.subtle', overflow: 'hidden'
           :model-value="timeline.frameRate"
           :options="rateOptions"
           aria-label="Timeline frame rate"
-          @update:model-value="timeline.frameRate = $event"
+          @update:model-value="setRate"
         />
         <Button variant="ghost" size="sm" :disabled="!playhead" @click="usePlayhead">At playhead</Button>
       </div>
 
-      <div :class="playhead">
+      <div :class="playheadRow">
         <span :class="mono">{{ playheadLabel }}</span>
         <span :class="hint">{{ props.timecode?.source?.toUpperCase() ?? 'NO SOURCE' }}</span>
       </div>
