@@ -114,7 +114,8 @@ export function useShowTimeline(options: ShowTimelineOptions) {
 
   let previousFrame: number | null = null
   let frameHandle: number | null = null
-  let lastTick = 0
+  // Internal playback is measured from an anchor so sub-frame ticks never round away.
+  let anchor: { time: number; frame: number } | null = null
   const audio = new Map<string, HTMLAudioElement>()
 
   const doc = computed<ShowTimeline | null>(() => record.value?.doc ?? null)
@@ -250,13 +251,17 @@ export function useShowTimeline(options: ShowTimelineOptions) {
     frameHandle = null
     const current = doc.value
     if (!current || !playback.value.playing || clock.value !== 'internal') return
-    const elapsed = lastTick ? time - lastTick : 0
-    lastTick = time
     const master = audioMasterFrame()
-    const next =
-      master !== null && master > playback.value.frame
-        ? { ...playback.value, frame: master }
-        : advancePlayback(current, playback.value, elapsed)
+    let next: PlaybackState
+    if (master !== null && master > playback.value.frame) {
+      next = { ...playback.value, frame: master }
+      anchor = { time, frame: master }
+    } else {
+      if (!anchor) anchor = { time, frame: playback.value.frame }
+      next = advancePlayback(current, { ...playback.value, frame: anchor.frame }, time - anchor.time)
+      // A loop wrap restarts the anchor so later ticks stay small.
+      if (next.frame < playback.value.frame && playback.value.loop) anchor = { time, frame: next.frame }
+    }
     if (next.frame !== playback.value.frame || next.playing !== playback.value.playing) {
       playback.value = next
       evaluate(true)
@@ -266,13 +271,14 @@ export function useShowTimeline(options: ShowTimelineOptions) {
 
   function schedule(): void {
     if (frameHandle !== null || typeof requestAnimationFrame === 'undefined') return
-    lastTick = 0
+    anchor = null
     frameHandle = requestAnimationFrame(tick)
   }
 
   function cancel(): void {
     if (frameHandle !== null) cancelAnimationFrame(frameHandle)
     frameHandle = null
+    anchor = null
   }
 
   function play(): void {
@@ -302,6 +308,7 @@ export function useShowTimeline(options: ShowTimelineOptions) {
 
   function seek(frame: number): void {
     if (!doc.value) return
+    anchor = null
     playback.value = seekPlayback(doc.value, playback.value, frame)
     previousFrame = null
     evaluate(true)
@@ -309,6 +316,7 @@ export function useShowTimeline(options: ShowTimelineOptions) {
 
   function step(delta: number): void {
     if (!doc.value) return
+    anchor = null
     playback.value = stepFrame(doc.value, playback.value, delta)
     evaluate(delta > 0)
   }

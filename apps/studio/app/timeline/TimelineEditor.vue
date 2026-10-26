@@ -110,7 +110,8 @@ let historyTimer: ReturnType<typeof setTimeout> | undefined
 const clipboard = ref<{ clip: TimelineClip; trackKind: TimelineTrack['kind'] } | null>(null)
 const playing = ref(false)
 let playHandle: number | null = null
-let lastPlayTick = 0
+// Playback is measured from an anchor so sub-frame ticks never round away.
+let playAnchor: { time: number; frame: number } | null = null
 
 const selectedTrackId = ref<string | null>(null)
 const selectedKeyframe = ref<{ trackId: string; propertyId: string; keyframeId: string } | null>(null)
@@ -614,9 +615,8 @@ function duplicateSelection(): void {
 function playTick(time: number): void {
   playHandle = null
   if (!playing.value) return
-  const elapsed = lastPlayTick ? time - lastPlayTick : 0
-  lastPlayTick = time
-  const next = advancePlayback(doc.value, createPlaybackState({ frame: Math.round(playhead.value), playing: true }), elapsed)
+  if (!playAnchor) playAnchor = { time, frame: Math.round(playhead.value) }
+  const next = advancePlayback(doc.value, createPlaybackState({ frame: playAnchor.frame, playing: true }), time - playAnchor.time)
   playhead.value = Math.min(next.frame, doc.value.durationFrames)
   if (!next.playing || playhead.value >= doc.value.durationFrames - 1) {
     playing.value = false
@@ -642,12 +642,13 @@ function togglePlay(): void {
   }
   if (playhead.value >= doc.value.durationFrames - 1) playhead.value = 0
   playing.value = true
-  lastPlayTick = 0
+  playAnchor = null
   playHandle = requestAnimationFrame(playTick)
 }
 
 function stopPlay(): void {
   playing.value = false
+  playAnchor = null
   if (playHandle !== null) cancelAnimationFrame(playHandle)
   playHandle = null
 }
@@ -1746,7 +1747,7 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
               <p v-if="selectedTrack.properties.length === 0" :class="inspectorNote">No animated properties yet.</p>
               <div v-for="property in selectedTrack.properties" :key="property.id" :class="propertyRow">
                 <span :class="propertyName">{{ propertyLabel(property.property) }}</span>
-                <span :class="inspectorNote">{{ property.keyframes.length }} keys · {{ sampledLabel(property) }}</span>
+                <span :class="inspectorNote">{{ property.keyframes.length }} {{ property.keyframes.length === 1 ? 'key' : 'keys' }} · {{ sampledLabel(property) }}</span>
                 <IconButton icon="lucide:diamond-plus" label="Keyframe at playhead" size="sm" :disabled="selectedTrack.locked" @click="keyAtPlayhead(selectedTrack, property)" />
                 <IconButton icon="lucide:x" :label="`Remove ${propertyLabel(property.property)}`" size="sm" :disabled="selectedTrack.locked" @click="removeProperty(property)" />
               </div>
