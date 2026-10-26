@@ -1,13 +1,19 @@
 import type {
   ShowTimeline,
   TimelineClip,
-  TimelineEasing,
   TimelineMarker,
   TimelineProperty,
   TimelineTrack,
 } from '@lumen/schema'
 import { nominalFps } from './timecode'
 import { maxGapFrames } from './timeline'
+import {
+  clampFrame,
+  sampleKeyframes,
+  timelineClipsAt,
+  timelineMarkersBetween,
+  timelineTotalDurationFrames,
+} from './showTimeline'
 
 /**
  * Transport state for the show timeline. `frame` is always a timeline frame;
@@ -45,19 +51,13 @@ export function createPlaybackState(overrides: Partial<PlaybackState> = {}): Pla
 }
 
 export function lastFrame(timeline: ShowTimeline): number {
-  return Math.max(0, timeline.durationFrames - 1)
-}
-
-/** Clamps a frame into the timeline's playable range. */
-export function clampFrame(timeline: ShowTimeline, frame: number): number {
-  if (!Number.isFinite(frame)) return 0
-  return Math.min(lastFrame(timeline), Math.max(0, Math.trunc(frame)))
+  return Math.max(0, timelineTotalDurationFrames(timeline) - 1)
 }
 
 /** Wraps a frame into range when looping, otherwise clamps it. */
 export function wrapFrame(timeline: ShowTimeline, frame: number, loop: boolean): number {
-  const duration = Math.max(1, timeline.durationFrames)
   if (!loop) return clampFrame(timeline, frame)
+  const duration = Math.max(1, timelineTotalDurationFrames(timeline))
   const wrapped = Math.trunc(frame) % duration
   return wrapped < 0 ? wrapped + duration : wrapped
 }
@@ -137,106 +137,26 @@ export function syncExternalFrame(
   return { ...state, frame: timelineFrameFromExternal(timeline, state, externalFrame) }
 }
 
-/** Clips on unmuted tracks visible at `frame`. */
-export function timelineClipsAt(timeline: ShowTimeline, frame: number): TimelineClip[] {
-  const clips: TimelineClip[] = []
-  for (const track of timeline.tracks) {
-    if (track.muted) continue
-    for (const clip of track.clips) {
-      if (frame >= clip.startFrame && frame < clip.startFrame + clip.durationFrames) {
-        clips.push(clip)
-      }
-    }
-  }
-  return clips.sort((a, b) => a.startFrame - b.startFrame || a.id.localeCompare(b.id))
-}
-
-/**
- * Enabled markers crossed between frames. A forward move uses `(previous, frame]`;
- * a same-frame evaluation reports markers exactly at `frame`.
- */
-export function timelineMarkersBetween(
+function activeMarkers(
   timeline: ShowTimeline,
-  previousFrame: number,
+  previousFrame: number | null,
   frame: number,
 ): TimelineMarker[] {
-  const forward = frame > previousFrame
-  const candidates = timeline.markers.filter((marker) => {
-    if (!marker.enabled) return false
-    return forward ? marker.frame > previousFrame && marker.frame <= frame : marker.frame === frame
-  })
-
+  if (previousFrame === null || frame <= previousFrame) return []
   const seen = new Set<string>()
   const markers: TimelineMarker[] = []
-  for (const marker of candidates) {
-    if (seen.has(marker.id)) continue
+  for (const marker of timelineMarkersBetween(timeline, previousFrame, frame)) {
+    if (!marker.enabled || seen.has(marker.id)) continue
     seen.add(marker.id)
     markers.push(marker)
   }
-  return markers.sort((a, b) => a.frame - b.frame || a.id.localeCompare(b.id))
+  return markers
 }
 
-function cubicBezierEase(t: number, easing: TimelineEasing): number {
-  if (t <= 0) return 0
-  if (t >= 1) return 1
-  const sample = (a: number, b: number, u: number): number => {
-    const inverse = 1 - u
-    return 3 * inverse * inverse * u * a + 3 * inverse * u * u * b + u * u * u
-  }
-  let low = 0
-  let high = 1
-  let u = t
-  for (let index = 0; index < 20; index += 1) {
-    u = (low + high) / 2
-    if (sample(easing.x1, easing.x2, u) < t) low = u
-    else high = u
-  }
-  return sample(easing.y1, easing.y2, (low + high) / 2)
-}
-
-function easeValue(t: number, easing: TimelineEasing): number {
-  switch (easing.kind) {
-    case 'easeIn':
-      return t * t
-    case 'easeOut':
-      return 1 - (1 - t) * (1 - t)
-    case 'easeInOut':
-      return t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) * (-2 * t + 2) / 2
-    case 'bezier':
-      return cubicBezierEase(t, easing)
-    default:
-      return t
-  }
-}
-
-function sampleProperty(property: TimelineProperty, frame: number): number | string | null {
-  const keyframes = [...property.keyframes].sort((a, b) => a.frame - b.frame)
-  const first = keyframes[0]
-  const last = keyframes[keyframes.length - 1]
-  if (!first || !last) return null
-  if (frame <= first.frame) return first.value
-  if (frame >= last.frame) return last.value
-
-  for (let index = 0; index < keyframes.length - 1; index += 1) {
-    const from = keyframes[index]
-    const to = keyframes[index + 1]
-    if (!from || !to || frame < from.frame || frame > to.frame) continue
-    const span = to.frame - from.frame
-    if (span <= 0) return to.value
-    const t = easeValue((frame - from.frame) / span, to.easing)
-    if (typeof from.value === 'number' && typeof to.value === 'number') {
-      return from.value + (to.value - from.value) * t
-    }
-    return from.value
-  }
-  return last.value
-}
-
-/** Samples each animated property on a track at `frame`. */
-export function sampleKeyframes(track: TimelineTrack, frame: number): KeyframeSample[] {
+function sampleTrackKeyframes(track: TimelineTrack, frame: number): KeyframeSample[] {
   const samples: KeyframeSample[] = []
   for (const property of track.properties) {
-    const value = sampleProperty(property, frame)
+    const value = sampleKeyframes(property, frame)
     if (value === null) continue
     samples.push({ trackId: track.id, property: property.property, frame, value })
   }
@@ -255,23 +175,22 @@ export function evaluateTimeline(
   const current = clampFrame(timeline, frame)
   const gapLimit = maxGapFrames(timeline.frameRate)
   const resynced =
-    previousFrame === null ||
-    current < previousFrame ||
-    current - previousFrame > gapLimit
+    previousFrame === null || current < previousFrame || current - previousFrame > gapLimit
 
-  const markers = resynced ? [] : timelineMarkersBetween(timeline, previousFrame, current)
   const keyframes: KeyframeSample[] = []
   for (const track of timeline.tracks) {
     if (track.muted) continue
-    keyframes.push(...sampleKeyframes(track, current))
+    keyframes.push(...sampleTrackKeyframes(track, current))
   }
 
   return {
     frame: current,
     previousFrame,
     resynced,
-    clips: timelineClipsAt(timeline, current),
-    markers,
+    clips: timelineClipsAt(timeline, current)
+      .filter((entry) => !entry.track.muted)
+      .map((entry) => entry.clip),
+    markers: resynced ? [] : activeMarkers(timeline, previousFrame, current),
     keyframes,
   }
 }
