@@ -29,6 +29,11 @@ fn close_output(outputs: State<'_, OutputManager>, label: String) -> Result<(), 
 }
 
 #[tauri::command]
+fn list_outputs(outputs: State<'_, OutputManager>) -> Vec<OutputWindow> {
+    outputs.open_outputs()
+}
+
+#[tauri::command]
 fn apply_scene(
     outputs: State<'_, OutputManager>,
     label: Option<String>,
