@@ -72,6 +72,13 @@ pub struct AssetRef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LayerSource {
+    pub asset_id: String,
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Layer {
     Text {
@@ -96,14 +103,14 @@ pub enum Layer {
         frame: Frame,
         z: i32,
         opacity: f64,
-        asset_id: String,
+        source: LayerSource,
     },
     Video {
         id: String,
         frame: Frame,
         z: i32,
         opacity: f64,
-        asset_id: String,
+        source: LayerSource,
     },
 }
 
@@ -251,6 +258,58 @@ mod tests {
         }"##;
         let scene: Scene = serde_json::from_str(json).expect("scene");
         assert!(scene.background.is_some());
+    }
+
+    #[test]
+    fn deserializes_typescript_image_and_video_layers() {
+        let json = r##"{
+            "schemaVersion": 1,
+            "revision": 5,
+            "role": "audience",
+            "viewport": { "width": 1920.0, "height": 1080.0, "scale": 1.0 },
+            "colorSpace": "srgb",
+            "background": {
+                "kind": "image",
+                "id": "bg",
+                "frame": { "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0 },
+                "z": 0,
+                "opacity": 1.0,
+                "source": { "assetId": "asset_bg", "hash": "bg-hash" },
+                "fit": "cover",
+                "radius": 0
+            },
+            "layers": [{
+                "kind": "video",
+                "id": "clip",
+                "frame": { "x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0 },
+                "z": 1,
+                "opacity": 1.0,
+                "source": { "assetId": "asset_clip", "hash": "clip-hash" },
+                "fit": "cover",
+                "loop": true,
+                "muted": true,
+                "volume": 1.0,
+                "startMs": 0
+            }],
+            "fonts": [],
+            "assets": [],
+            "safeArea": { "top": 0.05, "right": 0.05, "bottom": 0.05, "left": 0.05 }
+        }"##;
+        let scene: Scene = serde_json::from_str(json).expect("scene");
+        match scene.background {
+            Some(Layer::Image { source, .. }) => {
+                assert_eq!(source.asset_id, "asset_bg");
+                assert_eq!(source.hash, "bg-hash");
+            }
+            other => panic!("expected image background, got {other:?}"),
+        }
+        match &scene.layers[0] {
+            Layer::Video { source, .. } => {
+                assert_eq!(source.asset_id, "asset_clip");
+                assert_eq!(source.hash, "clip-hash");
+            }
+            other => panic!("expected video layer, got {other:?}"),
+        }
     }
 
     #[test]

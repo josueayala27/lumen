@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::thread::{self, JoinHandle};
+use std::thread::{self, JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 
 use lumen_render::{PendingSurface, RenderError, RenderStats, Scene, SurfaceRenderer};
@@ -305,6 +305,7 @@ struct OutputManagerInner {
     app: AppHandle,
     outputs: Mutex<HashMap<String, ManagedOutput>>,
     polling: AtomicBool,
+    main_thread: ThreadId,
 }
 
 /// Owns every live audience window and its render thread.
@@ -314,12 +315,14 @@ pub struct OutputManager {
 }
 
 impl OutputManager {
+    /// Must be constructed on the Tauri main thread, normally from `setup`.
     pub fn new(app: AppHandle) -> Self {
         Self {
             inner: Arc::new(OutputManagerInner {
                 app,
                 outputs: Mutex::new(HashMap::new()),
                 polling: AtomicBool::new(false),
+                main_thread: thread::current().id(),
             }),
         }
     }
@@ -331,9 +334,27 @@ impl OutputManager {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Opens a window and starts its render thread. Call from the main thread so the surface can
-    /// be created on macOS. A hardcoded spike scene is applied immediately.
+    /// Opens a window and starts its render thread. Surface creation is marshalled to the main
+    /// thread because wgpu requires it on macOS. A hardcoded spike scene is applied immediately.
     pub fn open(&self, display_index: usize) -> Result<OutputWindow, String> {
+        if thread::current().id() == self.inner.main_thread {
+            return self.open_on_main_thread(display_index);
+        }
+
+        let manager = self.clone();
+        let (sender, receiver) = mpsc::channel();
+        self.inner
+            .app
+            .run_on_main_thread(move || {
+                let _ = sender.send(manager.open_on_main_thread(display_index));
+            })
+            .map_err(|error| error.to_string())?;
+        receiver
+            .recv()
+            .map_err(|error| format!("main thread did not answer: {error}"))?
+    }
+
+    fn open_on_main_thread(&self, display_index: usize) -> Result<OutputWindow, String> {
         let label = format!("audience-{display_index}");
         if let Some(existing) = self.outputs().get(&label) {
             existing.window.show().map_err(|error| error.to_string())?;
