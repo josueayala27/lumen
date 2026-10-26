@@ -21,6 +21,7 @@ use lumen_media::hap::{self, HapFrame, HapTextureFormat};
 use lumen_media::mov::MovVideoTrack;
 use lumen_media::probe::probe_file;
 use lumen_media::thumbnail::{thumbnail_file, DEFAULT_THUMBNAIL_EDGE};
+use lumen_media::transport::{clip_position, TransportCommand, VideoTransport};
 use lumen_media::util::{
     detect_mime, extension_for_mime, is_local_file_path, kind_for_mime, sanitize_file_name,
     sha256_file, MediaKind, MAX_IMPORT_BYTES,
@@ -245,19 +246,81 @@ enum Backend {
     Hap,
 }
 
+/// Callers that want videos decoded. A video plays while any caller wants it.
+pub const OWNER_OUTPUT: &str = "output";
+pub const OWNER_PREVIEW: &str = "preview";
+/// Next cue: decoders start paused on their first frame so the cut is instant.
+pub const OWNER_PRELOAD: &str = "preload";
+
+/// Which videos each caller currently wants.
+#[derive(Debug, Default)]
+struct Demand {
+    owners: HashMap<String, Vec<VideoSource>>,
+}
+
+impl Demand {
+    fn set(&mut self, owner: &str, sources: Vec<VideoSource>) {
+        if sources.is_empty() {
+            self.owners.remove(owner);
+        } else {
+            self.owners.insert(owner.to_string(), sources);
+        }
+    }
+
+    /// Every wanted video, with `true` when a caller other than preload wants it.
+    /// The first caller to list an asset decides its source settings.
+    fn wanted(&self) -> Vec<(VideoSource, bool)> {
+        let mut order: Vec<String> = Vec::new();
+        let mut merged: HashMap<String, (VideoSource, bool)> = HashMap::new();
+        let mut owners: Vec<(&String, &Vec<VideoSource>)> = self.owners.iter().collect();
+        // Active callers first so their settings win over preload.
+        owners.sort_by_key(|(owner, _)| (owner.as_str() == OWNER_PRELOAD, owner.as_str()));
+        for (owner, sources) in owners {
+            let active = owner.as_str() != OWNER_PRELOAD;
+            for source in sources {
+                match merged.get_mut(&source.asset_id) {
+                    Some(entry) => entry.1 |= active,
+                    None => {
+                        order.push(source.asset_id.clone());
+                        merged.insert(source.asset_id.clone(), (source.clone(), active));
+                    }
+                }
+            }
+        }
+        order
+            .into_iter()
+            .filter_map(|asset_id| merged.remove(&asset_id))
+            .collect()
+    }
+}
+
 struct Playback {
     stop: Arc<AtomicBool>,
     backend: Backend,
+    transport: Arc<Mutex<VideoTransport>>,
+    /// False while the decoder only holds a preloaded first frame.
+    active: bool,
 }
+
+#[derive(Default)]
+struct PlaybackState {
+    demand: Demand,
+    playbacks: HashMap<String, Playback>,
+    /// Transport commands for videos whose decoder has not started yet.
+    pending: HashMap<String, TransportCommand>,
+}
+
+const MAX_PENDING_COMMANDS: usize = 64;
 
 /// Owns decoder threads for every scene sent to a preview or an output.
 ///
-/// Scenes are the source of truth: a video asset referenced by the current
-/// scene starts one decoder, and refs that disappear stop theirs. Frames are
-/// pushed through the same video-frame paths the renderer already exposes.
+/// Scenes are the source of truth: each caller (output, preview, preload)
+/// reports the videos its scenes reference, a video decodes while any caller
+/// wants it, and videos nobody wants stop. Each decoder follows its own
+/// transport, which the show drives with play, pause, seek and rate.
 #[derive(Default)]
 pub struct VideoPlaybackManager {
-    playbacks: Mutex<HashMap<String, Playback>>,
+    state: Mutex<PlaybackState>,
     config: Mutex<Option<Result<DecoderConfig, String>>>,
 }
 
@@ -281,45 +344,66 @@ impl VideoPlaybackManager {
         guard.as_ref().expect("decoder config was resolved").clone()
     }
 
-    /// Starts decoders for newly referenced videos and stops the rest.
-    pub fn sync(&self, app: &AppHandle, scenes: &[&Scene]) {
-        let mut desired: Vec<VideoSource> = Vec::new();
+    fn state(&self) -> std::sync::MutexGuard<'_, PlaybackState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Replaces the videos `owner` wants, starts new decoders and stops unwanted ones.
+    pub fn sync_owner(&self, app: &AppHandle, owner: &str, scenes: &[&Scene]) {
+        let mut sources: Vec<VideoSource> = Vec::new();
         let mut seen = HashSet::new();
         for scene in scenes {
             for source in scene_video_sources(scene) {
                 if seen.insert(source.asset_id.clone()) {
-                    desired.push(source);
+                    sources.push(source);
                 }
             }
         }
-        if desired.is_empty() {
-            self.stop_referenced(&HashSet::new());
-            return;
-        }
-        let wanted = desired
-            .iter()
-            .map(|source| source.asset_id.clone())
-            .collect::<HashSet<_>>();
-        self.stop_referenced(&wanted);
 
-        let mut playbacks = self
-            .playbacks
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let running = |backend: Backend| {
-            playbacks
+        let mut state = self.state();
+        state.demand.set(owner, sources);
+        let wanted = state.demand.wanted();
+        let wanted_ids: HashSet<&str> = wanted
+            .iter()
+            .map(|(source, _)| source.asset_id.as_str())
+            .collect();
+        state.playbacks.retain(|asset_id, playback| {
+            if wanted_ids.contains(asset_id.as_str()) {
+                return true;
+            }
+            playback.stop.store(true, Ordering::Relaxed);
+            false
+        });
+
+        let running = |state: &PlaybackState, backend: Backend| {
+            state
+                .playbacks
                 .values()
                 .filter(|playback| playback.backend == backend)
                 .count()
         };
-        let mut ffmpeg_running = running(Backend::Ffmpeg);
-        let mut hap_running = running(Backend::Hap);
-        for source in desired {
-            if playbacks.contains_key(&source.asset_id) {
+        let mut ffmpeg_running = running(&state, Backend::Ffmpeg);
+        let mut hap_running = running(&state, Backend::Hap);
+        let now = Instant::now();
+        for (source, active) in wanted {
+            if let Some(playback) = state.playbacks.get_mut(&source.asset_id) {
+                if active && !playback.active {
+                    // A preloaded cue went live: start from the frame already on screen.
+                    playback.active = true;
+                    lock_transport(&playback.transport).play(now);
+                }
                 continue;
             }
+            let mut transport = VideoTransport::new(source.start_ms, active, now);
+            if let Some(command) = state.pending.remove(&source.asset_id) {
+                transport.apply(command, now);
+            }
+            let transport = Arc::new(Mutex::new(transport));
             let stop = Arc::new(AtomicBool::new(false));
             let thread_stop = Arc::clone(&stop);
+            let thread_transport = Arc::clone(&transport);
             let thread_app = app.clone();
             let asset_id = source.asset_id.clone();
             let backend = match hap_track(&source.local_path) {
@@ -329,7 +413,13 @@ impl VideoPlaybackManager {
                     }
                     hap_running += 1;
                     thread::spawn(move || {
-                        run_hap_decoder(&thread_app, &source, &track, &thread_stop);
+                        run_hap_decoder(
+                            &thread_app,
+                            &source,
+                            &track,
+                            &thread_transport,
+                            &thread_stop,
+                        );
                     });
                     Backend::Hap
                 }
@@ -342,38 +432,54 @@ impl VideoPlaybackManager {
                     };
                     ffmpeg_running += 1;
                     thread::spawn(move || {
-                        run_decoder(&thread_app, &source, &config, &thread_stop);
+                        run_decoder(
+                            &thread_app,
+                            &source,
+                            &config,
+                            &thread_transport,
+                            &thread_stop,
+                        );
                     });
                     Backend::Ffmpeg
                 }
             };
-            playbacks.insert(asset_id, Playback { stop, backend });
+            state.playbacks.insert(
+                asset_id,
+                Playback {
+                    stop,
+                    backend,
+                    transport,
+                    active,
+                },
+            );
         }
     }
 
-    fn stop_referenced(&self, wanted: &HashSet<String>) {
-        let mut playbacks = self
-            .playbacks
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        playbacks.retain(|asset_id, playback| {
-            if wanted.contains(asset_id) {
-                return true;
-            }
-            playback.stop.store(true, Ordering::Relaxed);
-            false
-        });
+    /// Plays, pauses, seeks or changes the rate of one video. Commands for a video
+    /// that is not decoding yet apply when its decoder starts.
+    pub fn transport(&self, asset_id: &str, command: TransportCommand) {
+        let mut state = self.state();
+        if let Some(playback) = state.playbacks.get(asset_id) {
+            lock_transport(&playback.transport).apply(command, Instant::now());
+            return;
+        }
+        if state.pending.len() >= MAX_PENDING_COMMANDS && !state.pending.contains_key(asset_id) {
+            state.pending.clear();
+        }
+        let entry = state.pending.entry(asset_id.to_string()).or_default();
+        entry.playing = command.playing.or(entry.playing);
+        entry.position_ms = command.position_ms.or(entry.position_ms);
+        entry.rate = command.rate.or(entry.rate);
     }
 
     pub fn stop_all(&self) {
-        let mut playbacks = self
-            .playbacks
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for playback in playbacks.values() {
+        let mut state = self.state();
+        for playback in state.playbacks.values() {
             playback.stop.store(true, Ordering::Relaxed);
         }
-        playbacks.clear();
+        state.playbacks.clear();
+        state.demand = Demand::default();
+        state.pending.clear();
     }
 }
 
@@ -383,42 +489,89 @@ impl Drop for VideoPlaybackManager {
     }
 }
 
-fn run_decoder(app: &AppHandle, source: &VideoSource, config: &DecoderConfig, stop: &AtomicBool) {
-    let mut request = DecodeRequest::new(
-        PathBuf::from(source.local_path.clone()),
-        source.width,
-        source.height,
-    );
-    request.start_ms = source.start_ms;
-    request.loop_playback = source.loop_playback;
-    let mut decoder = match FfmpegVideo::open(&request, config) {
-        Ok(decoder) => decoder,
-        Err(error) => {
-            eprintln!(
-                "lumen-media: decoder for {} failed: {error}",
-                source.asset_id
-            );
-            return;
-        }
-    };
-    loop {
+fn lock_transport(transport: &Mutex<VideoTransport>) -> std::sync::MutexGuard<'_, VideoTransport> {
+    transport
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Streams a non-Hap file through ffmpeg. A transport change (seek, pause, play,
+/// rate) restarts the process at the new position; while paused the first frame
+/// at that position stays on screen. ffmpeg plays at realtime only, so rate is
+/// ignored on this path.
+fn run_decoder(
+    app: &AppHandle,
+    source: &VideoSource,
+    config: &DecoderConfig,
+    transport: &Mutex<VideoTransport>,
+    stop: &AtomicBool,
+) {
+    'session: loop {
         if stop.load(Ordering::Relaxed) {
             return;
         }
-        match decoder.read_frame() {
-            Ok(Some(rgba)) => {
-                let frame = VideoFrame::rgba(decoder.width(), decoder.height(), rgba);
-                push_frame(app, &source.asset_id, frame);
-            }
-            Ok(None) => return,
+        let (generation, position, playing) = {
+            let transport = lock_transport(transport);
+            (
+                transport.generation(),
+                transport.position_ms(Instant::now()),
+                transport.playing(),
+            )
+        };
+        let mut request = DecodeRequest::new(
+            PathBuf::from(source.local_path.clone()),
+            source.width,
+            source.height,
+        );
+        request.start_ms = position;
+        request.loop_playback = source.loop_playback;
+        let mut decoder = match FfmpegVideo::open(&request, config) {
+            Ok(decoder) => decoder,
             Err(error) => {
-                if !stop.load(Ordering::Relaxed) {
-                    eprintln!(
-                        "lumen-media: decoder for {} stopped: {error}",
-                        source.asset_id
-                    );
-                }
+                eprintln!(
+                    "lumen-media: decoder for {} failed: {error}",
+                    source.asset_id
+                );
                 return;
+            }
+        };
+        let mut shown_first = false;
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                return;
+            }
+            if lock_transport(transport).generation() != generation {
+                continue 'session;
+            }
+            if !playing && shown_first {
+                thread::sleep(Duration::from_millis(30));
+                continue;
+            }
+            match decoder.read_frame() {
+                Ok(Some(rgba)) => {
+                    let frame = VideoFrame::rgba(decoder.width(), decoder.height(), rgba);
+                    push_frame(app, &source.asset_id, frame);
+                    shown_first = true;
+                }
+                Ok(None) => {
+                    // End of a non-looping clip: hold the last frame until the show moves it.
+                    while lock_transport(transport).generation() == generation {
+                        if stop.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(50));
+                    }
+                    continue 'session;
+                }
+                Err(error) => {
+                    if !stop.load(Ordering::Relaxed) {
+                        eprintln!(
+                            "lumen-media: decoder for {} stopped: {error}",
+                            source.asset_id
+                        );
+                    }
+                    return;
+                }
             }
         }
     }
@@ -470,27 +623,15 @@ fn hap_video_frame(frame: HapFrame, width: u32, height: u32) -> Result<VideoFram
     })
 }
 
-/// Position in the clip for `elapsed_ms` of playback, or `None` once a
-/// non-looping clip has finished.
-fn hap_position_ms(start_ms: u64, elapsed_ms: u64, duration_ms: u64, looping: bool) -> Option<u64> {
-    let duration = duration_ms.max(1);
-    let position = start_ms.saturating_add(elapsed_ms);
-    if position < duration {
-        Some(position)
-    } else if looping {
-        Some(position % duration)
-    } else {
-        None
-    }
-}
-
-/// Plays a Hap file on its own clock. Each sample is an intra frame, so the
-/// frame shown is always the one at the clip position: no drift, no decoder
-/// warm-up, and a late thread skips frames instead of falling behind.
+/// Plays a Hap file on its transport. Each sample is an intra frame, so the
+/// frame shown is always the one at the transport position: seeks land on the
+/// exact frame, paused clips hold it, and a late thread skips frames instead of
+/// falling behind. A finished non-looping clip holds its last frame.
 fn run_hap_decoder(
     app: &AppHandle,
     source: &VideoSource,
     track: &MovVideoTrack,
+    transport: &Mutex<VideoTransport>,
     stop: &AtomicBool,
 ) {
     let mut file = match File::open(&source.local_path) {
@@ -504,19 +645,26 @@ fn run_hap_decoder(
         }
     };
     let duration_ms = track.duration_ms();
-    let started = Instant::now();
     let mut shown: Option<usize> = None;
     loop {
         if stop.load(Ordering::Relaxed) {
             return;
         }
-        let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let Some(position) =
-            hap_position_ms(source.start_ms, elapsed, duration_ms, source.loop_playback)
-        else {
-            // A finished clip holds its last frame on screen.
-            return;
+        let now = Instant::now();
+        let (raw_position, wait) = {
+            let transport = lock_transport(transport);
+            let raw = transport.position_ms(now);
+            let (position, _) = clip_position(raw, duration_ms, source.loop_playback);
+            let index = track.sample_index_at_ms(position);
+            let next_ms = if index + 1 < track.samples.len() {
+                track.sample_time_ms(index + 1)
+            } else {
+                duration_ms
+            };
+            let target = raw + next_ms.saturating_sub(position);
+            (raw, transport.wait_until(target, now))
         };
+        let (position, _) = clip_position(raw_position, duration_ms, source.loop_playback);
         let index = track.sample_index_at_ms(position);
         if shown != Some(index) {
             let decoded = track
@@ -538,13 +686,7 @@ fn run_hap_decoder(
             }
             shown = Some(index);
         }
-        let next_ms = if index + 1 < track.samples.len() {
-            track.sample_time_ms(index + 1)
-        } else {
-            duration_ms
-        };
-        let wait = next_ms.saturating_sub(position).clamp(1, 50);
-        thread::sleep(Duration::from_millis(wait));
+        thread::sleep(wait);
     }
 }
 
@@ -660,12 +802,55 @@ mod tests {
     use super::*;
     use lumen_media::HapTexture;
 
+    fn source(asset_id: &str, start_ms: u64) -> VideoSource {
+        VideoSource {
+            asset_id: asset_id.to_string(),
+            local_path: format!("/media/{asset_id}.mov"),
+            width: 1920,
+            height: 1080,
+            start_ms,
+            loop_playback: true,
+        }
+    }
+
     #[test]
-    fn hap_position_loops_or_ends() {
-        assert_eq!(hap_position_ms(0, 500, 1000, false), Some(500));
-        assert_eq!(hap_position_ms(250, 900, 1000, true), Some(150));
-        assert_eq!(hap_position_ms(0, 1000, 1000, false), None);
-        assert_eq!(hap_position_ms(0, 5, 0, true), Some(0));
+    fn demand_merges_callers_and_marks_preload_inactive() {
+        let mut demand = Demand::default();
+        demand.set(
+            OWNER_PRELOAD,
+            vec![source("next", 0), source("shared", 900)],
+        );
+        demand.set(OWNER_OUTPUT, vec![source("live", 0), source("shared", 100)]);
+        let wanted = demand.wanted();
+        let find = |id: &str| {
+            wanted
+                .iter()
+                .find(|(source, _)| source.asset_id == id)
+                .cloned()
+        };
+        assert_eq!(find("next").map(|(_, active)| active), Some(false));
+        assert_eq!(find("live").map(|(_, active)| active), Some(true));
+        // The active caller's settings win over the preload's.
+        assert_eq!(
+            find("shared").map(|(source, active)| (source.start_ms, active)),
+            Some((100, true))
+        );
+        assert_eq!(wanted.len(), 3);
+
+        demand.set(OWNER_OUTPUT, Vec::new());
+        demand.set(OWNER_PREVIEW, vec![source("editor", 0)]);
+        let ids: HashSet<String> = demand
+            .wanted()
+            .into_iter()
+            .map(|(source, _)| source.asset_id)
+            .collect();
+        assert_eq!(
+            ids,
+            ["next", "shared", "editor"]
+                .map(String::from)
+                .into_iter()
+                .collect()
+        );
     }
 
     #[test]

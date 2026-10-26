@@ -93,7 +93,11 @@ impl VideoTransport {
     }
 
     pub fn set_rate(&mut self, rate: f64, now: Instant) {
-        let rate = if rate.is_finite() { rate.clamp(0.0, 8.0) } else { 1.0 };
+        let rate = if rate.is_finite() {
+            rate.clamp(0.0, 8.0)
+        } else {
+            1.0
+        };
         if (rate - self.rate).abs() > f64::EPSILON {
             self.reanchor(now);
             self.rate = rate;
@@ -189,7 +193,11 @@ mod tests {
         let start = Instant::now();
         let mut transport = VideoTransport::new(0, false, start);
         transport.apply(
-            TransportCommand { playing: Some(true), position_ms: Some(2000), rate: None },
+            TransportCommand {
+                playing: Some(true),
+                position_ms: Some(2000),
+                rate: None,
+            },
             start,
         );
         assert!(transport.playing());
@@ -209,7 +217,13 @@ mod tests {
         let start = Instant::now();
         let transport = VideoTransport::new(0, true, start);
         assert_eq!(transport.wait_until(20, start), Duration::from_millis(20));
-        assert_eq!(transport.wait_until(10_000, start), Duration::from_millis(50));
-        assert_eq!(VideoTransport::new(0, false, start).wait_until(20, start), Duration::from_millis(50));
+        assert_eq!(
+            transport.wait_until(10_000, start),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            VideoTransport::new(0, false, start).wait_until(20, start),
+            Duration::from_millis(50)
+        );
     }
 }

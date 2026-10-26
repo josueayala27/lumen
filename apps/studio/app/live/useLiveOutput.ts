@@ -1,6 +1,6 @@
 import type { LiveState, Scene, Theme } from '@lumen/schema'
 import { computed, ref, watch, type Ref } from 'vue'
-import { applyScene, applyTransition } from '~/output/api'
+import { applyScene, applyTransition, preloadScene } from '~/output/api'
 import {
   nextLivePosition,
   resolveLiveSlide,
@@ -13,6 +13,7 @@ import {
   modeScene,
   sceneForSlide,
   sceneRevision,
+  sceneVideoKey,
   transitionPlan,
   type MediaAssetLike,
   type SceneSlideSource,
@@ -89,6 +90,16 @@ export function useLiveOutput(options: LiveOutputOptions) {
     return effectiveTransition(sourceSlide, options.theme.value)
   }
 
+  let preloadKey = ''
+
+  /** Starts the next cue's videos paused so the cut shows a decoded frame at once. */
+  function preloadNext(scene: Scene | null): void {
+    const key = scene ? sceneVideoKey(scene) : ''
+    if (key === preloadKey) return
+    preloadKey = key
+    void preloadScene(key ? scene : null).catch(() => undefined)
+  }
+
   async function push(): Promise<void> {
     const label = options.outputLabel.value
     if (!options.desktop.value || !label) {
@@ -154,6 +165,7 @@ export function useLiveOutput(options: LiveOutputOptions) {
     nextScene.value = nextSource
       ? sceneForSlide(nextSource, options.theme.value, options.media.value, sceneRevision())
       : null
+    preloadNext(nextScene.value)
     const canTransition =
       previous !== null && lastKey.value !== key && lastMode === 'live' && !isCut(transition)
 

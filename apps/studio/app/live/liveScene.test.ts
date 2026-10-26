@@ -10,6 +10,7 @@ import {
   modeScene,
   sceneForSlide,
   transitionPlan,
+  sceneVideoKey,
   withTimelineMedia,
   type MediaAssetLike,
 } from './liveScene'
@@ -222,5 +223,16 @@ describe('timeline media', () => {
   it('returns the same scene when no visual clip is active', () => {
     const base = blackScene(1)
     expect(withTimelineMedia(base, [])).toBe(base)
+  })
+})
+
+describe('scene video key', () => {
+  it('lists video assets with their start so preloads change only when videos do', () => {
+    const base = sceneForSlide({ doc: doc(), slideIndex: 0, label: 'Slide' }, null, [], 1)
+    expect(sceneVideoKey(base)).toBe('')
+    const video: MediaAssetLike = { id: 'v1', kind: 'video', sha256: 'hv', width: 1920, height: 1080, localPath: '/m/v.mp4', missing: false }
+    const withVideo = withTimelineMedia(base, [{ clipId: 'c1', asset: video, startMs: 500, loop: true, gain: 0 }])
+    expect(sceneVideoKey(withVideo)).toBe('v1@500')
+    expect(sceneVideoKey({ ...withVideo, revision: 99 })).toBe('v1@500')
   })
 })

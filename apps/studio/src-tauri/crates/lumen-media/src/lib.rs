@@ -16,8 +16,8 @@ pub mod util;
 pub use decoder::{DecodeRequest, DecoderConfig, FfmpegVideo};
 pub use hap::{HapFrame, HapTexture, HapTextureFormat};
 pub use mov::{MovSample, MovVideoTrack};
-pub use transport::{clip_position, TransportCommand, VideoTransport};
 pub use probe::{FileProbe, VideoProbe};
+pub use transport::{clip_position, TransportCommand, VideoTransport};
 pub use util::{MediaKind, MAX_IMPORT_BYTES};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

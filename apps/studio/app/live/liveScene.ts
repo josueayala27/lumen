@@ -280,3 +280,12 @@ export function withTimelineMedia(scene: Scene, entries: readonly TimelineMediaL
   if (layers.length === 0) return scene
   return { ...scene, assets, layers: [...layers, ...scene.layers] }
 }
+
+/** Stable key for the videos a scene plays, so preloads are sent only when they change. */
+export function sceneVideoKey(scene: Scene): string {
+  const layers = scene.background ? [scene.background, ...scene.layers] : scene.layers
+  return layers
+    .filter((layer) => layer.kind === 'video')
+    .map((layer) => (layer.kind === 'video' ? `${layer.source.assetId}@${layer.startMs}` : ''))
+    .join('|')
+}

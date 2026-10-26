@@ -22,6 +22,7 @@ import {
 import type { LiveCommand, ShowTimeline, TimecodeSnapshot } from '@lumen/schema'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, type Ref } from 'vue'
 import { toLiveCommand } from '~/control/commands'
+import { videoTransport } from '~/output/api'
 import { loadTimeline as loadLegacyTimeline } from '~/control/timelineStore'
 import {
   getTimeline,
@@ -51,6 +52,8 @@ export interface FiredAction {
 const SELECTED_KEY = 'lumen.live.timeline'
 /** Audio drifting further than this from the timeline is reseeked. */
 const AUDIO_DRIFT_SECONDS = 0.04
+/** Running video clips are re-anchored to the timeline this often; Rust ignores drift under 40 ms. */
+const VIDEO_REANCHOR_MS = 1000
 
 function readSelected(): string {
   try {
@@ -117,6 +120,7 @@ export function useShowTimeline(options: ShowTimelineOptions) {
   // Internal playback is measured from an anchor so sub-frame ticks never round away.
   let anchor: { time: number; frame: number } | null = null
   const audio = new Map<string, HTMLAudioElement>()
+  const videoSync = new Map<string, { playing: boolean; at: number }>()
 
   const doc = computed<ShowTimeline | null>(() => record.value?.doc ?? null)
   const fps = computed(() => (doc.value ? nominalFps(doc.value.frameRate) : 30))
@@ -198,6 +202,37 @@ export function useShowTimeline(options: ShowTimelineOptions) {
       if (fired.length > 0) lastFired.value = fired.slice(-4)
     }
     void syncAudio(result)
+    syncVideo(result)
+  }
+
+  /** Keeps video clips on the audience output frame-locked to the timeline clock. */
+  function syncVideo(result: TimelineEvaluation): void {
+    const current = doc.value
+    if (!current || !armed.value || !isTauri()) {
+      videoSync.clear()
+      return
+    }
+    const playing = playback.value.playing || clock.value === 'external'
+    const now = typeof performance === 'undefined' ? Date.now() : performance.now()
+    const active = new Set<string>()
+    for (const { clip } of activeMediaClips(result)) {
+      if (clip.kind !== 'media' || !clip.assetId) continue
+      const asset = options.media.value.find((entry) => entry.id === clip.assetId)
+      if (!asset || asset.kind !== 'video') continue
+      active.add(clip.id)
+      const last = videoSync.get(clip.id)
+      const due = !last || result.resynced || last.playing !== playing || (playing && now - last.at >= VIDEO_REANCHOR_MS)
+      if (!due) continue
+      videoSync.set(clip.id, { playing, at: now })
+      void videoTransport(clip.assetId, {
+        playing,
+        positionMs: mediaClipSourceSeconds(current, clip, result.frame) * 1000,
+        rate: clock.value === 'internal' ? playback.value.rate : 1,
+      }).catch(() => undefined)
+    }
+    for (const id of videoSync.keys()) {
+      if (!active.has(id)) videoSync.delete(id)
+    }
   }
 
   async function syncAudio(result: TimelineEvaluation): Promise<void> {

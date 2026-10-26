@@ -408,6 +408,77 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// Decode throughput for the A1 budget (8 layers of 1080p60). Timing only;
+    /// run with `cargo test --release -p lumen-media -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn bench_hap_q_1080p_decode() {
+        let (width, height) = (1920u32, 1080u32);
+        let size = HapTextureFormat::Bc3YCoCg.data_len(width, height);
+        // Block data compresses poorly; mix noise with runs to approximate real Hap Q.
+        let mut state = 0x2545_F491u32;
+        let frames: Vec<Vec<u8>> = (0..30)
+            .map(|frame| {
+                let raw: Vec<u8> = (0..size)
+                    .map(|index| {
+                        state ^= state << 13;
+                        state ^= state >> 17;
+                        state ^= state << 5;
+                        if (index / 64 + frame) % 3 == 0 {
+                            0x80
+                        } else {
+                            state as u8
+                        }
+                    })
+                    .collect();
+                encode(0xBF, &compress(&raw))
+            })
+            .collect();
+        let movie =
+            crate::mov::fixture::movie(b"HapY", width as u16, height as u16, 60, 1, &frames);
+        let path = std::env::temp_dir().join(format!("lumen-hap-bench-{}.mov", std::process::id()));
+        std::fs::write(&path, &movie).expect("write movie");
+        let track = crate::mov::MovVideoTrack::open(&path).expect("track");
+
+        let layers = 8;
+        let rounds = 60;
+        let started = std::time::Instant::now();
+        let threads: Vec<_> = (0..layers)
+            .map(|_| {
+                let track = track.clone();
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let mut file = std::fs::File::open(&path).expect("open");
+                    let mut worst = std::time::Duration::ZERO;
+                    for round in 0..rounds {
+                        let frame_started = std::time::Instant::now();
+                        let bytes = track
+                            .read_sample(&mut file, round % track.samples.len())
+                            .expect("sample");
+                        let frame = decode_frame(&bytes).expect("frame");
+                        validate_frame(&frame, 1920, 1080).expect("size");
+                        worst = worst.max(frame_started.elapsed());
+                    }
+                    worst
+                })
+            })
+            .collect();
+        let worst = threads
+            .into_iter()
+            .map(|thread| thread.join().expect("join"))
+            .max()
+            .unwrap_or_default();
+        let elapsed = started.elapsed();
+        let frames_decoded = layers * rounds;
+        eprintln!(
+            "hap q 1080p: {frames_decoded} frames on {layers} threads in {elapsed:?} = {:.0} fps total, {:.1} fps per layer, worst frame {worst:?}, {:.1} MB per frame on disk",
+            frames_decoded as f64 / elapsed.as_secs_f64(),
+            rounds as f64 / elapsed.as_secs_f64(),
+            frames.iter().map(Vec::len).sum::<usize>() as f64 / frames.len() as f64 / 1e6,
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn block_sizes_round_up_to_whole_blocks() {
         assert_eq!(HapTextureFormat::Bc1.data_len(1920, 1080), 480 * 270 * 8);

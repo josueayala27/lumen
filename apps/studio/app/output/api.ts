@@ -50,3 +50,25 @@ export function applyScene(label: string | null, scene: Scene): Promise<void> {
 export function applyTransition(label: string | null, plan: TransitionPlan): Promise<void> {
   return invoke('apply_transition', { label, plan })
 }
+
+/** Starts the next cue's videos paused on their first frame; `null` releases them. */
+export function preloadScene(scene: Scene | null): Promise<void> {
+  return invoke('preload_scene', { scene })
+}
+
+/** A transport change for one video; omitted fields are kept. */
+export interface VideoTransportCommand {
+  playing?: boolean
+  positionMs?: number
+  rate?: number
+}
+
+/** Plays, pauses, seeks or re-rates one video asset on the outputs and preview. */
+export function videoTransport(assetId: string, command: VideoTransportCommand): Promise<void> {
+  return invoke('video_transport', {
+    assetId,
+    playing: command.playing ?? null,
+    positionMs: command.positionMs === undefined ? null : Math.max(0, Math.round(command.positionMs)),
+    rate: command.rate ?? null,
+  })
+}

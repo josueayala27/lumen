@@ -60,7 +60,7 @@ fn apply_scene(
     let playback_scene = scene.clone();
     outputs.apply_scene(label.as_deref(), scene)?;
     if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
-        playback.sync(&app, &[&playback_scene]);
+        playback.sync_owner(&app, media::OWNER_OUTPUT, &[&playback_scene]);
     }
     Ok(())
 }
@@ -76,9 +76,39 @@ fn apply_transition(
     let to = plan.to.clone();
     outputs.apply_transition(label.as_deref(), plan)?;
     if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
-        playback.sync(&app, &[&from, &to]);
+        playback.sync_owner(&app, media::OWNER_OUTPUT, &[&from, &to]);
     }
     Ok(())
+}
+
+/// Starts the next cue's videos paused on their first frame, or releases them with `None`.
+#[tauri::command]
+fn preload_scene(app: tauri::AppHandle, scene: Option<Scene>) {
+    if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
+        let scenes: Vec<&Scene> = scene.iter().collect();
+        playback.sync_owner(&app, media::OWNER_PRELOAD, &scenes);
+    }
+}
+
+/// Drives one video's transport from the show clock. Omitted fields are kept.
+#[tauri::command]
+fn video_transport(
+    app: tauri::AppHandle,
+    asset_id: String,
+    playing: Option<bool>,
+    position_ms: Option<u64>,
+    rate: Option<f64>,
+) {
+    if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
+        playback.transport(
+            &asset_id,
+            lumen_media::TransportCommand {
+                playing,
+                position_ms,
+                rate,
+            },
+        );
+    }
 }
 
 #[tauri::command]
@@ -145,7 +175,7 @@ fn preview_render(
     height: u32,
 ) -> Result<tauri::ipc::Response, String> {
     if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
-        playback.sync(&app, &[&scene]);
+        playback.sync_owner(&app, media::OWNER_PREVIEW, &[&scene]);
     }
     let mut renderer = preview
         .0
@@ -201,6 +231,8 @@ pub fn run() {
             apply_scene,
             apply_transition,
             update_output_video_frame,
+            preload_scene,
+            video_transport,
             apply_hardcoded_scene,
             output_stats,
             preview_render,

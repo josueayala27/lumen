@@ -2118,6 +2118,79 @@ impl crate::Renderer for PreviewRenderer {
 mod tests {
     use super::*;
 
+    /// GPU cost of the A1 budget: 8 Hap Q 1080p layers uploaded and composited per
+    /// frame. The preview path also reads the frame back to the CPU, so this is an
+    /// upper bound for an output window. Run with
+    /// `cargo test --release -p lumen-render bench -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn bench_eight_hap_q_layers_1080p() {
+        let layers: Vec<serde_json::Value> = (0..8)
+            .map(|index| {
+                serde_json::json!({
+                    "kind": "video",
+                    "id": format!("layer-{index}"),
+                    "frame": { "x": (index % 4) as f64 * 0.25, "y": (index / 4) as f64 * 0.5, "w": 0.25, "h": 0.5, "rotation": 0 },
+                    "opacity": 0.9,
+                    "source": { "assetId": format!("clip-{index}"), "hash": "h" },
+                    "fit": "cover"
+                })
+            })
+            .collect();
+        let assets: Vec<serde_json::Value> = (0..8)
+            .map(|index| serde_json::json!({ "id": format!("clip-{index}"), "hash": "h", "kind": "video", "intrinsic": { "width": 1920, "height": 1080 } }))
+            .collect();
+        let scene: Scene = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 1, "revision": 1, "role": "preview",
+            "viewport": { "width": 1920, "height": 1080 },
+            "layers": layers, "fonts": [], "assets": assets,
+            "safeArea": { "top": 0, "right": 0, "bottom": 0, "left": 0 }
+        }))
+        .expect("scene");
+        let mut renderer = PreviewRenderer::new().expect("preview renderer");
+        let size = crate::video::bc_len(1920, 1080, 16);
+        let frames: Vec<Arc<[u8]>> = (0..4u8)
+            .map(|seed| {
+                Arc::from(
+                    (0..size)
+                        .map(|index| (index as u8).wrapping_mul(31).wrapping_add(seed))
+                        .collect::<Vec<u8>>(),
+                )
+            })
+            .collect();
+        let rounds = 120;
+        let mut upload = std::time::Duration::ZERO;
+        let mut render = std::time::Duration::ZERO;
+        for round in 0..rounds {
+            let started = std::time::Instant::now();
+            for layer in 0..8 {
+                let pixels =
+                    VideoPixels::Bc3YCoCg(Arc::clone(&frames[(round + layer) % frames.len()]));
+                renderer
+                    .update_video(
+                        &format!("clip-{layer}"),
+                        &VideoFrame {
+                            width: 1920,
+                            height: 1080,
+                            pixels,
+                        },
+                    )
+                    .expect("upload");
+            }
+            upload += started.elapsed();
+            let started = std::time::Instant::now();
+            renderer.render(&scene, 1920, 1080).expect("render");
+            render += started.elapsed();
+        }
+        eprintln!(
+            "8 × hap q 1080p on GPU (BC: {}): upload {:.2} ms/frame, composite + readback {:.2} ms/frame, total {:.2} ms (60 fps budget 16.67 ms)",
+            renderer.scene_renderer.bc_supported,
+            upload.as_secs_f64() * 1000.0 / rounds as f64,
+            render.as_secs_f64() * 1000.0 / rounds as f64,
+            (upload + render).as_secs_f64() * 1000.0 / rounds as f64,
+        );
+    }
+
     /// Renders block-compressed video frames on the real GPU. Ignored in CI (no GPU);
     /// run with `cargo test -p lumen-render -- --ignored`.
     #[test]
