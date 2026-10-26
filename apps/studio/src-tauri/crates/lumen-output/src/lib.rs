@@ -157,10 +157,7 @@ pub fn open_audience_window(app: &AppHandle, display_index: usize) -> Result<Out
 enum OutputCommand {
     Scene(Box<Scene>),
     Transition(Box<TransitionPlan>),
-    VideoFrame {
-        asset_id: String,
-        frame: VideoFrame,
-    },
+    VideoFrame { asset_id: String, frame: VideoFrame },
     Resize(u32, u32),
     Stop,
 }

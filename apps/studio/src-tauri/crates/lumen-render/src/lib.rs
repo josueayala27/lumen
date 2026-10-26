@@ -15,13 +15,13 @@ mod text;
 mod video;
 
 pub use color::ClearColor;
-pub use video::{VideoFrame, VideoPixels};
 pub use geometry::{easing_progress, fit_uv, rotated_bounds, FrameRect, UvRect};
 pub use renderer::{
     create_window_surface, scene_clear_color, spike_scene, surface_action, FrameTiming,
     PendingSurface, PreviewFrame, PreviewRenderer, RenderStats, SurfaceAction, SurfaceFactory,
     SurfaceRenderer,
 };
+pub use video::{VideoFrame, VideoPixels};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

@@ -87,7 +87,10 @@ impl MovVideoTrack {
             return 0;
         }
         let time = time_ms.saturating_mul(u64::from(self.timescale)) / 1000;
-        match self.samples.binary_search_by(|sample| sample.time.cmp(&time)) {
+        match self
+            .samples
+            .binary_search_by(|sample| sample.time.cmp(&time))
+        {
             Ok(index) => index,
             Err(0) => 0,
             Err(index) => (index - 1).min(self.samples.len() - 1),
@@ -187,7 +190,9 @@ fn children(data: &[u8]) -> Vec<([u8; 4], &[u8])> {
     let mut boxes = Vec::new();
     let mut offset = 0usize;
     while offset + 8 <= data.len() {
-        let Some(size32) = be_u32(data, offset) else { break };
+        let Some(size32) = be_u32(data, offset) else {
+            break;
+        };
         let mut kind = [0u8; 4];
         kind.copy_from_slice(&data[offset + 4..offset + 8]);
         let (size, header) = match size32 {
@@ -359,15 +364,21 @@ fn build_samples(stbl: &[u8]) -> Result<Vec<MovSample>, MediaError> {
 }
 
 fn be_u16(data: &[u8], offset: usize) -> Option<u16> {
-    Some(u16::from_be_bytes(data.get(offset..offset + 2)?.try_into().ok()?))
+    Some(u16::from_be_bytes(
+        data.get(offset..offset + 2)?.try_into().ok()?,
+    ))
 }
 
 fn be_u32(data: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_be_bytes(data.get(offset..offset + 4)?.try_into().ok()?))
+    Some(u32::from_be_bytes(
+        data.get(offset..offset + 4)?.try_into().ok()?,
+    ))
 }
 
 fn be_u64(data: &[u8], offset: usize) -> Option<u64> {
-    Some(u64::from_be_bytes(data.get(offset..offset + 8)?.try_into().ok()?))
+    Some(u64::from_be_bytes(
+        data.get(offset..offset + 8)?.try_into().ok()?,
+    ))
 }
 
 /// Builders for synthetic QuickTime files, shared with the Hap tests.
@@ -389,7 +400,14 @@ pub(crate) mod fixture {
 
     /// A `.mov` with one video track whose samples are stored back to back in `mdat`,
     /// two samples per chunk, at `delta` timescale units per frame.
-    pub fn movie(codec: &[u8; 4], width: u16, height: u16, timescale: u32, delta: u32, frames: &[Vec<u8>]) -> Vec<u8> {
+    pub fn movie(
+        codec: &[u8; 4],
+        width: u16,
+        height: u16,
+        timescale: u32,
+        delta: u32,
+        frames: &[Vec<u8>],
+    ) -> Vec<u8> {
         let ftyp = boxed(b"ftyp", b"qt  \0\0\0\0qt  ");
         let mut mdat_payload = Vec::new();
         for frame in frames {
@@ -456,7 +474,10 @@ pub(crate) mod fixture {
         let mut hdlr_body = vec![0u8; 4];
         hdlr_body.extend_from_slice(b"vide");
         hdlr_body.extend_from_slice(&[0u8; 13]);
-        let mdia = boxed(b"mdia", &[full(b"mdhd", &mdhd_body), full(b"hdlr", &hdlr_body), minf].concat());
+        let mdia = boxed(
+            b"mdia",
+            &[full(b"mdhd", &mdhd_body), full(b"hdlr", &hdlr_body), minf].concat(),
+        );
         let mut sound_hdlr = vec![0u8; 4];
         sound_hdlr.extend_from_slice(b"soun");
         sound_hdlr.extend_from_slice(&[0u8; 13]);
@@ -517,7 +538,10 @@ mod tests {
         std::fs::write(&path, &file).expect("write fixture");
         let track = MovVideoTrack::open(&path).expect("open");
         let mut handle = File::open(&path).expect("reopen");
-        assert_eq!(track.read_sample(&mut handle, 1).expect("sample"), vec![9u8; 8]);
+        assert_eq!(
+            track.read_sample(&mut handle, 1).expect("sample"),
+            vec![9u8; 8]
+        );
         assert!(track.read_sample(&mut handle, 2).is_err());
         let _ = std::fs::remove_file(&path);
     }

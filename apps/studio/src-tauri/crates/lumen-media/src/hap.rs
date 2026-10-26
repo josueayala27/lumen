@@ -54,7 +54,10 @@ pub struct HapFrame {
 
 /// QuickTime sample description codes that carry Hap frames.
 pub fn is_hap_codec(codec: &[u8; 4]) -> bool {
-    matches!(codec, b"Hap1" | b"Hap5" | b"HapY" | b"HapM" | b"HapA" | b"Hap7")
+    matches!(
+        codec,
+        b"Hap1" | b"Hap5" | b"HapY" | b"HapM" | b"HapA" | b"Hap7"
+    )
 }
 
 const MULTIPLE_IMAGES: u8 = 0x0D;
@@ -80,7 +83,9 @@ fn section(data: &[u8]) -> Result<(u8, &[u8], &[u8]), MediaError> {
     let short = u32::from(data[0]) | u32::from(data[1]) << 8 | u32::from(data[2]) << 16;
     let kind = data[3];
     let (size, header): (usize, usize) = if short == 0 {
-        let bytes = data.get(4..8).ok_or_else(|| invalid("truncated section header"))?;
+        let bytes = data
+            .get(4..8)
+            .ok_or_else(|| invalid("truncated section header"))?;
         (u32::from_le_bytes(bytes.try_into().unwrap()) as usize, 8)
     } else {
         (short as usize, 4)
@@ -99,7 +104,9 @@ fn texture_format(code: u8) -> Result<HapTextureFormat, MediaError> {
         0x0F => Ok(HapTextureFormat::Bc3YCoCg),
         0x01 => Ok(HapTextureFormat::Bc4),
         0x0C => Ok(HapTextureFormat::Bc7),
-        0x02 | 0x03 => Err(MediaError::Unsupported("Hap HDR (BC6) is not supported".to_string())),
+        0x02 | 0x03 => Err(MediaError::Unsupported(
+            "Hap HDR (BC6) is not supported".to_string(),
+        )),
         other => Err(invalid(format!("unknown texture format 0x{other:X}"))),
     }
 }
@@ -115,12 +122,13 @@ fn snappy(data: &[u8]) -> Result<Vec<u8>, MediaError> {
 }
 
 fn le_u32_table(data: &[u8]) -> Result<Vec<u32>, MediaError> {
-    if data.len() % 4 != 0 {
+    let (entries, rest) = data.as_chunks::<4>();
+    if !rest.is_empty() {
         return Err(invalid("chunk table is not a multiple of four bytes"));
     }
-    Ok(data
-        .chunks_exact(4)
-        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+    Ok(entries
+        .iter()
+        .map(|bytes| u32::from_le_bytes(*bytes))
         .collect())
 }
 
@@ -149,7 +157,10 @@ fn decode_complex(payload: &[u8]) -> Result<Vec<u8>, MediaError> {
     if compressors.len() != sizes.len() {
         return Err(invalid("chunk tables disagree on chunk count"));
     }
-    if offsets.as_ref().is_some_and(|offsets| offsets.len() != sizes.len()) {
+    if offsets
+        .as_ref()
+        .is_some_and(|offsets| offsets.len() != sizes.len())
+    {
         return Err(invalid("chunk tables disagree on chunk count"));
     }
 
@@ -184,7 +195,11 @@ fn decode_texture(kind: u8, payload: &[u8]) -> Result<HapTexture, MediaError> {
         COMPRESSOR_NONE => payload.to_vec(),
         COMPRESSOR_SNAPPY => snappy(payload)?,
         COMPRESSOR_COMPLEX => decode_complex(payload)?,
-        other => return Err(invalid(format!("unknown second-stage compressor 0x{other:X}"))),
+        other => {
+            return Err(invalid(format!(
+                "unknown second-stage compressor 0x{other:X}"
+            )))
+        }
     };
     Ok(HapTexture { format, data })
 }
@@ -206,11 +221,14 @@ pub fn decode_frame(data: &[u8]) -> Result<HapFrame, MediaError> {
     }
     match textures.as_slice() {
         [color, alpha]
-            if color.format == HapTextureFormat::Bc3YCoCg && alpha.format == HapTextureFormat::Bc4 =>
+            if color.format == HapTextureFormat::Bc3YCoCg
+                && alpha.format == HapTextureFormat::Bc4 =>
         {
             Ok(HapFrame { textures })
         }
-        _ => Err(invalid("multiple-image frames must be Scaled YCoCg DXT5 plus RGTC1 alpha")),
+        _ => Err(invalid(
+            "multiple-image frames must be Scaled YCoCg DXT5 plus RGTC1 alpha",
+        )),
     }
 }
 
@@ -247,7 +265,9 @@ pub(crate) mod fixture {
     }
 
     pub fn snappy(data: &[u8]) -> Vec<u8> {
-        snap::raw::Encoder::new().compress_vec(data).expect("snappy")
+        snap::raw::Encoder::new()
+            .compress_vec(data)
+            .expect("snappy")
     }
 }
 
@@ -266,7 +286,13 @@ mod tests {
     fn decodes_uncompressed_and_snappy_textures() {
         let raw = blocks(HapTextureFormat::Bc1, 8, 8, 3);
         let plain = decode_frame(&encode(0xAB, &raw)).expect("plain");
-        assert_eq!(plain.textures, vec![HapTexture { format: HapTextureFormat::Bc1, data: raw.clone() }]);
+        assert_eq!(
+            plain.textures,
+            vec![HapTexture {
+                format: HapTextureFormat::Bc1,
+                data: raw.clone()
+            }]
+        );
 
         let raw = blocks(HapTextureFormat::Bc3YCoCg, 16, 8, 9);
         let frame = decode_frame(&encode(0xBF, &compress(&raw))).expect("snappy");
@@ -288,7 +314,11 @@ mod tests {
             .iter()
             .flat_map(|size| size.to_le_bytes())
             .collect();
-        let tables = [encode(CHUNK_COMPRESSORS, &[COMPRESSOR_NONE, COMPRESSOR_SNAPPY]), encode(CHUNK_SIZES, &sizes)].concat();
+        let tables = [
+            encode(CHUNK_COMPRESSORS, &[COMPRESSOR_NONE, COMPRESSOR_SNAPPY]),
+            encode(CHUNK_SIZES, &sizes),
+        ]
+        .concat();
         let mut payload = encode(DECODE_INSTRUCTIONS, &tables);
         payload.extend_from_slice(&frame_data);
         let frame = decode_frame(&encode(0xCE, &payload)).expect("chunked");
@@ -323,7 +353,11 @@ mod tests {
         assert_eq!(frame.textures[1].format, HapTextureFormat::Bc4);
         assert_eq!(frame.textures[1].data, alpha);
 
-        let wrong = [encode(0xAB, &blocks(HapTextureFormat::Bc1, 8, 8, 0)), encode(0xA1, &alpha)].concat();
+        let wrong = [
+            encode(0xAB, &blocks(HapTextureFormat::Bc1, 8, 8, 0)),
+            encode(0xA1, &alpha),
+        ]
+        .concat();
         assert!(decode_frame(&encode(MULTIPLE_IMAGES, &wrong)).is_err());
     }
 
@@ -333,7 +367,10 @@ mod tests {
         let mut long = vec![0, 0, 0, 0xA1];
         long.extend_from_slice(&(raw.len() as u32).to_le_bytes());
         long.extend_from_slice(&raw);
-        assert_eq!(decode_frame(&long).expect("long header").textures[0].data, raw);
+        assert_eq!(
+            decode_frame(&long).expect("long header").textures[0].data,
+            raw
+        );
 
         assert!(decode_frame(&[]).is_err());
         assert!(decode_frame(&[0x10, 0, 0, 0xAB, 1, 2]).is_err());
@@ -346,8 +383,13 @@ mod tests {
     #[test]
     fn plays_a_hap_movie_frame_by_frame() {
         // Three 8×8 Hap Q frames, Snappy-compressed, in a 25 fps QuickTime file.
-        let raws: Vec<Vec<u8>> = (0..3).map(|seed| blocks(HapTextureFormat::Bc3YCoCg, 8, 8, seed * 40)).collect();
-        let samples: Vec<Vec<u8>> = raws.iter().map(|raw| encode(0xBF, &compress(raw))).collect();
+        let raws: Vec<Vec<u8>> = (0..3)
+            .map(|seed| blocks(HapTextureFormat::Bc3YCoCg, 8, 8, seed * 40))
+            .collect();
+        let samples: Vec<Vec<u8>> = raws
+            .iter()
+            .map(|raw| encode(0xBF, &compress(raw)))
+            .collect();
         let movie = crate::mov::fixture::movie(b"HapY", 8, 8, 25, 1, &samples);
         let path = std::env::temp_dir().join(format!("lumen-hap-{}.mov", std::process::id()));
         std::fs::write(&path, &movie).expect("write movie");
@@ -358,7 +400,8 @@ mod tests {
         for (time_ms, expected) in [(0u64, 0usize), (40, 1), (79, 1), (80, 2)] {
             let index = track.sample_index_at_ms(time_ms);
             assert_eq!(index, expected, "frame at {time_ms} ms");
-            let frame = decode_frame(&track.read_sample(&mut file, index).expect("sample")).expect("frame");
+            let frame =
+                decode_frame(&track.read_sample(&mut file, index).expect("sample")).expect("frame");
             validate_frame(&frame, track.width, track.height).expect("size");
             assert_eq!(frame.textures[0].data, raws[expected]);
         }

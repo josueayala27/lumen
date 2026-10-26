@@ -444,12 +444,21 @@ impl VideoTexture {
 }
 
 /// Creates an empty texture for a block-compressed format, padded to whole blocks.
-fn compressed_texture(device: &wgpu::Device, format: wgpu::TextureFormat, width: u32, height: u32) -> GpuTexture {
+fn compressed_texture(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+) -> GpuTexture {
     let width = width.max(1).div_ceil(4) * 4;
     let height = height.max(1).div_ceil(4) * 4;
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("lumen-video-bc"),
-        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -458,7 +467,12 @@ fn compressed_texture(device: &wgpu::Device, format: wgpu::TextureFormat, width:
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    GpuTexture { texture, view, width, height }
+    GpuTexture {
+        texture,
+        view,
+        width,
+        height,
+    }
 }
 
 /// Requests BC texture support when the adapter has it; Hap frames then upload without CPU work.
@@ -639,7 +653,9 @@ impl SceneRenderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let bc_supported = device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
+        let bc_supported = device
+            .features()
+            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
         let white = upload_texture(&device, &queue, "lumen-white", 1, 1, &[255; 4], false);
         let atlas = upload_texture(&device, &queue, "lumen-atlas", 1, 1, &[0; 4], false);
         Self {
@@ -693,7 +709,9 @@ impl SceneRenderer {
     fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
         let (width, height) = (frame.width, frame.height);
         if width == 0 || height == 0 {
-            return Err(RenderError::Backend(format!("video frame for {asset_id} is empty")));
+            return Err(RenderError::Backend(format!(
+                "video frame for {asset_id} is empty"
+            )));
         }
         let short = |bytes: usize, expected: usize| {
             RenderError::Backend(format!(
@@ -712,18 +730,46 @@ impl SceneRenderer {
             VideoPixels::Bc1(data) => {
                 check(data, 8)?;
                 if self.bc_supported {
-                    self.write_compressed_video(asset_id, wgpu::TextureFormat::Bc1RgbaUnormSrgb, width, height, data, 8, MODE_OPAQUE);
+                    self.write_compressed_video(
+                        asset_id,
+                        wgpu::TextureFormat::Bc1RgbaUnormSrgb,
+                        width,
+                        height,
+                        data,
+                        8,
+                        MODE_OPAQUE,
+                    );
                 } else {
-                    self.write_rgba_video(asset_id, width, height, &crate::bc::decode_bc1(width, height, data), MODE_TEXTURE);
+                    self.write_rgba_video(
+                        asset_id,
+                        width,
+                        height,
+                        &crate::bc::decode_bc1(width, height, data),
+                        MODE_TEXTURE,
+                    );
                 }
                 Ok(())
             }
             VideoPixels::Bc3(data) => {
                 check(data, 16)?;
                 if self.bc_supported {
-                    self.write_compressed_video(asset_id, wgpu::TextureFormat::Bc3RgbaUnormSrgb, width, height, data, 16, MODE_TEXTURE);
+                    self.write_compressed_video(
+                        asset_id,
+                        wgpu::TextureFormat::Bc3RgbaUnormSrgb,
+                        width,
+                        height,
+                        data,
+                        16,
+                        MODE_TEXTURE,
+                    );
                 } else {
-                    self.write_rgba_video(asset_id, width, height, &crate::bc::decode_bc3(width, height, data), MODE_TEXTURE);
+                    self.write_rgba_video(
+                        asset_id,
+                        width,
+                        height,
+                        &crate::bc::decode_bc3(width, height, data),
+                        MODE_TEXTURE,
+                    );
                 }
                 Ok(())
             }
@@ -731,9 +777,23 @@ impl SceneRenderer {
                 check(data, 16)?;
                 if self.bc_supported {
                     // YCoCg values are not colours: sample them linearly and convert in the shader.
-                    self.write_compressed_video(asset_id, wgpu::TextureFormat::Bc3RgbaUnorm, width, height, data, 16, MODE_YCOCG);
+                    self.write_compressed_video(
+                        asset_id,
+                        wgpu::TextureFormat::Bc3RgbaUnorm,
+                        width,
+                        height,
+                        data,
+                        16,
+                        MODE_YCOCG,
+                    );
                 } else {
-                    self.write_rgba_video(asset_id, width, height, &crate::bc::decode_ycocg(width, height, data, None), MODE_TEXTURE);
+                    self.write_rgba_video(
+                        asset_id,
+                        width,
+                        height,
+                        &crate::bc::decode_ycocg(width, height, data, None),
+                        MODE_TEXTURE,
+                    );
                 }
                 Ok(())
             }
@@ -746,7 +806,13 @@ impl SceneRenderer {
             }
             VideoPixels::Bc4(data) => {
                 check(data, 8)?;
-                self.write_rgba_video(asset_id, width, height, &crate::bc::decode_bc4(width, height, data), MODE_TEXTURE);
+                self.write_rgba_video(
+                    asset_id,
+                    width,
+                    height,
+                    &crate::bc::decode_bc4(width, height, data),
+                    MODE_TEXTURE,
+                );
                 Ok(())
             }
             VideoPixels::Bc7(data) => {
@@ -756,21 +822,52 @@ impl SceneRenderer {
                         "Hap R (BC7) needs a GPU with BC texture support".to_string(),
                     ));
                 }
-                self.write_compressed_video(asset_id, wgpu::TextureFormat::Bc7RgbaUnormSrgb, width, height, data, 16, MODE_TEXTURE);
+                self.write_compressed_video(
+                    asset_id,
+                    wgpu::TextureFormat::Bc7RgbaUnormSrgb,
+                    width,
+                    height,
+                    data,
+                    16,
+                    MODE_TEXTURE,
+                );
                 Ok(())
             }
         }
     }
 
-    fn write_rgba_video(&mut self, asset_id: &str, width: u32, height: u32, rgba: &[u8], mode: f32) {
+    fn write_rgba_video(
+        &mut self,
+        asset_id: &str,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        mode: f32,
+    ) {
         let reuse = self.videos.get(asset_id).is_some_and(|video| {
-            video.upload == VideoUpload::Rgba && video.gpu.width == width && video.gpu.height == height
+            video.upload == VideoUpload::Rgba
+                && video.gpu.width == width
+                && video.gpu.height == height
         });
         if !reuse {
-            let gpu = upload_texture(&self.device, &self.queue, "lumen-video-frame", width, height, rgba, true);
+            let gpu = upload_texture(
+                &self.device,
+                &self.queue,
+                "lumen-video-frame",
+                width,
+                height,
+                rgba,
+                true,
+            );
             self.videos.insert(
                 asset_id.to_string(),
-                VideoTexture { gpu, upload: VideoUpload::Rgba, frame_width: width, frame_height: height, mode },
+                VideoTexture {
+                    gpu,
+                    upload: VideoUpload::Rgba,
+                    frame_width: width,
+                    frame_height: height,
+                    mode,
+                },
             );
             return;
         }
@@ -789,7 +886,11 @@ impl SceneRenderer {
                     bytes_per_row: Some(width * 4),
                     rows_per_image: Some(height),
                 },
-                wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
             );
         }
     }
@@ -813,7 +914,13 @@ impl SceneRenderer {
             let gpu = compressed_texture(&self.device, format, width, height);
             self.videos.insert(
                 asset_id.to_string(),
-                VideoTexture { gpu, upload, frame_width: width, frame_height: height, mode },
+                VideoTexture {
+                    gpu,
+                    upload,
+                    frame_width: width,
+                    frame_height: height,
+                    mode,
+                },
             );
         }
         let Some(video) = self.videos.get_mut(asset_id) else {
@@ -841,7 +948,11 @@ impl SceneRenderer {
                 bytes_per_row: Some(blocks_x * block_bytes),
                 rows_per_image: Some(blocks_y),
             },
-            wgpu::Extent3d { width: video.gpu.width, height: video.gpu.height, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: video.gpu.width,
+                height: video.gpu.height,
+                depth_or_array_layers: 1,
+            },
         );
     }
 
@@ -2006,6 +2117,81 @@ impl crate::Renderer for PreviewRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Renders block-compressed video frames on the real GPU. Ignored in CI (no GPU);
+    /// run with `cargo test -p lumen-render -- --ignored`.
+    #[test]
+    #[ignore]
+    fn gpu_renders_block_compressed_video() {
+        let scene: Scene = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 1,
+            "revision": 1,
+            "role": "preview",
+            "viewport": { "width": 64, "height": 64 },
+            "layers": [{
+                "kind": "video",
+                "id": "clip-layer",
+                "frame": { "x": 0, "y": 0, "w": 1, "h": 1, "rotation": 0 },
+                "source": { "assetId": "clip", "hash": "h" },
+                "fit": "stretch"
+            }],
+            "fonts": [],
+            "assets": [{ "id": "clip", "hash": "h", "kind": "video", "intrinsic": { "width": 6, "height": 6 } }],
+            "safeArea": { "top": 0, "right": 0, "bottom": 0, "left": 0 }
+        }))
+        .expect("scene");
+        let mut renderer = PreviewRenderer::new().expect("preview renderer");
+        eprintln!(
+            "BC textures on this GPU: {}",
+            renderer.scene_renderer.bc_supported
+        );
+        let centre = |frame: &PreviewFrame| {
+            let offset = ((frame.height / 2) * frame.width + frame.width / 2) as usize * 4;
+            [
+                frame.rgba[offset],
+                frame.rgba[offset + 1],
+                frame.rgba[offset + 2],
+            ]
+        };
+
+        // 6×6 pads to 2×2 blocks. Solid red DXT1 in three-colour mode would be
+        // transparent on index 3; Hap DXT1 must stay opaque.
+        let red = [0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0].repeat(4);
+        renderer
+            .update_video(
+                "clip",
+                &VideoFrame {
+                    width: 6,
+                    height: 6,
+                    pixels: VideoPixels::Bc1(Arc::from(red)),
+                },
+            )
+            .expect("bc1 frame");
+        let frame = renderer.render(&scene, 64, 64).expect("render bc1");
+        assert_eq!(centre(&frame), [255, 0, 0]);
+
+        // Scaled YCoCg grey: Co = Cg ≈ 0.5 (565 0x8400), scale 0, Y = 200.
+        let mut block = vec![200u8, 200, 0, 0, 0, 0, 0, 0];
+        block.extend_from_slice(&[0x00, 0x84, 0x00, 0x84, 0, 0, 0, 0]);
+        renderer
+            .update_video(
+                "clip",
+                &VideoFrame {
+                    width: 6,
+                    height: 6,
+                    pixels: VideoPixels::Bc3YCoCg(Arc::from(block.repeat(4))),
+                },
+            )
+            .expect("ycocg frame");
+        let frame = renderer.render(&scene, 64, 64).expect("render ycocg");
+        let [r, g, b] = centre(&frame);
+        for channel in [r, g, b] {
+            assert!(
+                channel.abs_diff(200) <= 10,
+                "ycocg grey came out as {r},{g},{b}"
+            );
+        }
+    }
 
     #[test]
     fn frame_timing_tracks_last_and_average() {

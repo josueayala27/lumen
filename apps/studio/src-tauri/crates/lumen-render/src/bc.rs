@@ -29,9 +29,19 @@ fn colour_block(block: &[u8], four_colour: bool) -> [[u8; 4]; 16] {
         ]
     };
     let palette = if four_colour || c0 > c1 {
-        [[a[0], a[1], a[2], 255], [b[0], b[1], b[2], 255], mix(2, 1, 3), mix(1, 2, 3)]
+        [
+            [a[0], a[1], a[2], 255],
+            [b[0], b[1], b[2], 255],
+            mix(2, 1, 3),
+            mix(1, 2, 3),
+        ]
     } else {
-        [[a[0], a[1], a[2], 255], [b[0], b[1], b[2], 255], mix(1, 1, 2), [0, 0, 0, 0]]
+        [
+            [a[0], a[1], a[2], 255],
+            [b[0], b[1], b[2], 255],
+            mix(1, 1, 2),
+            [0, 0, 0, 0],
+        ]
     };
     let indices = u32::from_le_bytes([block[4], block[5], block[6], block[7]]);
     let mut out = [[0u8; 4]; 16];
@@ -71,8 +81,14 @@ fn single_channel_block(block: &[u8]) -> [u8; 16] {
 }
 
 /// Walks blocks in raster order and writes 4×4 texels clipped to the image.
-fn for_each_block<F>(width: u32, height: u32, block_bytes: usize, data: &[u8], out: &mut [u8], mut write: F)
-where
+fn for_each_block<F>(
+    width: u32,
+    height: u32,
+    block_bytes: usize,
+    data: &[u8],
+    out: &mut [u8],
+    mut write: F,
+) where
     F: FnMut(&[u8], &mut [[u8; 4]; 16]),
 {
     let blocks_x = width.div_ceil(4) as usize;
@@ -149,7 +165,7 @@ pub fn decode_bc4(width: u32, height: u32, data: &[u8]) -> Vec<u8> {
 /// Follows van Waveren and Castaño, "Real-Time YCoCg-DXT Compression" (2007).
 pub fn ycocg_to_rgba(pixels: &mut [u8]) {
     const OFFSET: f32 = 128.0 / 255.0;
-    for texel in pixels.chunks_exact_mut(4) {
+    for texel in pixels.as_chunks_mut::<4>().0 {
         let co = texel[0] as f32 / 255.0 - OFFSET;
         let cg = texel[1] as f32 / 255.0 - OFFSET;
         let scale = texel[2] as f32 / 255.0 * (255.0 / 8.0) + 1.0;
@@ -170,7 +186,12 @@ pub fn decode_ycocg(width: u32, height: u32, color: &[u8], alpha: Option<&[u8]>)
     ycocg_to_rgba(&mut out);
     if let Some(alpha) = alpha {
         let matte = decode_bc4(width, height, alpha);
-        for (texel, matte) in out.chunks_exact_mut(4).zip(matte.chunks_exact(4)) {
+        for (texel, matte) in out
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(matte.as_chunks::<4>().0)
+        {
             texel[3] = matte[0];
         }
     }
@@ -187,7 +208,11 @@ mod tests {
         let block = [0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0];
         let pixels = decode_bc1(3, 2, &block);
         assert_eq!(pixels.len(), 3 * 2 * 4);
-        assert!(pixels.chunks_exact(4).all(|texel| texel == [255, 0, 0, 255]));
+        assert!(pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|texel| texel == &[255, 0, 0, 255]));
     }
 
     #[test]
@@ -195,7 +220,11 @@ mod tests {
         // c0 < c1 selects the three-colour palette; index 3 would be transparent black.
         let block = [0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         let pixels = decode_bc1(4, 4, &block);
-        assert!(pixels.chunks_exact(4).all(|texel| texel == [0, 0, 0, 255]));
+        assert!(pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|texel| texel == [0, 0, 0, 255]));
     }
 
     #[test]

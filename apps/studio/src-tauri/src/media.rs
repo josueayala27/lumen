@@ -487,11 +487,19 @@ fn hap_position_ms(start_ms: u64, elapsed_ms: u64, duration_ms: u64, looping: bo
 /// Plays a Hap file on its own clock. Each sample is an intra frame, so the
 /// frame shown is always the one at the clip position: no drift, no decoder
 /// warm-up, and a late thread skips frames instead of falling behind.
-fn run_hap_decoder(app: &AppHandle, source: &VideoSource, track: &MovVideoTrack, stop: &AtomicBool) {
+fn run_hap_decoder(
+    app: &AppHandle,
+    source: &VideoSource,
+    track: &MovVideoTrack,
+    stop: &AtomicBool,
+) {
     let mut file = match File::open(&source.local_path) {
         Ok(file) => file,
         Err(error) => {
-            eprintln!("lumen-media: hap {} failed to open: {error}", source.asset_id);
+            eprintln!(
+                "lumen-media: hap {} failed to open: {error}",
+                source.asset_id
+            );
             return;
         }
     };
@@ -503,7 +511,9 @@ fn run_hap_decoder(app: &AppHandle, source: &VideoSource, track: &MovVideoTrack,
             return;
         }
         let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let Some(position) = hap_position_ms(source.start_ms, elapsed, duration_ms, source.loop_playback) else {
+        let Some(position) =
+            hap_position_ms(source.start_ms, elapsed, duration_ms, source.loop_playback)
+        else {
             // A finished clip holds its last frame on screen.
             return;
         };
@@ -512,7 +522,9 @@ fn run_hap_decoder(app: &AppHandle, source: &VideoSource, track: &MovVideoTrack,
             let decoded = track
                 .read_sample(&mut file, index)
                 .and_then(|bytes| hap::decode_frame(&bytes))
-                .and_then(|frame| hap::validate_frame(&frame, track.width, track.height).map(|_| frame))
+                .and_then(|frame| {
+                    hap::validate_frame(&frame, track.width, track.height).map(|_| frame)
+                })
                 .map_err(|error| error.to_string())
                 .and_then(|frame| hap_video_frame(frame, track.width, track.height));
             match decoded {
@@ -658,14 +670,22 @@ mod tests {
 
     #[test]
     fn hap_frames_map_to_renderer_payloads() {
-        let texture = |format, len| HapTexture { format, data: vec![0u8; len] };
-        let single = HapFrame { textures: vec![texture(HapTextureFormat::Bc1, 8)] };
+        let texture = |format, len| HapTexture {
+            format,
+            data: vec![0u8; len],
+        };
+        let single = HapFrame {
+            textures: vec![texture(HapTextureFormat::Bc1, 8)],
+        };
         let frame = hap_video_frame(single, 4, 4).expect("bc1");
         assert!(matches!(frame.pixels, VideoPixels::Bc1(_)));
         assert_eq!((frame.width, frame.height), (4, 4));
 
         let pair = HapFrame {
-            textures: vec![texture(HapTextureFormat::Bc3YCoCg, 16), texture(HapTextureFormat::Bc4, 8)],
+            textures: vec![
+                texture(HapTextureFormat::Bc3YCoCg, 16),
+                texture(HapTextureFormat::Bc4, 8),
+            ],
         };
         assert!(matches!(
             hap_video_frame(pair, 4, 4).expect("hap q alpha").pixels,
@@ -673,7 +693,10 @@ mod tests {
         ));
 
         let wrong = HapFrame {
-            textures: vec![texture(HapTextureFormat::Bc1, 8), texture(HapTextureFormat::Bc1, 8)],
+            textures: vec![
+                texture(HapTextureFormat::Bc1, 8),
+                texture(HapTextureFormat::Bc1, 8),
+            ],
         };
         assert!(hap_video_frame(wrong, 4, 4).is_err());
         assert!(hap_video_frame(HapFrame { textures: vec![] }, 4, 4).is_err());
