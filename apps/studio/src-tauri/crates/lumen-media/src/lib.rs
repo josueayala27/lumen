@@ -5,10 +5,12 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod decoder;
 pub mod probe;
 pub mod thumbnail;
 pub mod util;
 
+pub use decoder::{DecodeRequest, DecoderConfig, FfmpegVideo};
 pub use probe::{FileProbe, VideoProbe};
 pub use util::{MediaKind, MAX_IMPORT_BYTES};
 

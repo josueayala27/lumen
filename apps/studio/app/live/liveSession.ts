@@ -5,6 +5,7 @@ import type {
   PlaylistDoc,
   PresentationDoc,
 } from '@lumen/schema'
+import { defaultTimers } from './liveTimers'
 
 export interface LiveSlide {
   id: string
@@ -17,6 +18,8 @@ export interface LiveItem {
   label: string
   kind: 'presentation' | 'media' | 'header'
   presentationKind?: PresentationDoc['kind']
+  /** Source document for presentation items; null for media and headers. */
+  doc: PresentationDoc | null
   slides: LiveSlide[]
 }
 
@@ -36,6 +39,7 @@ export function presentationLiveItem(doc: PresentationDoc, id = newId('item')): 
     label: doc.title,
     kind: 'presentation',
     presentationKind: doc.kind,
+    doc,
     slides: toLiveSlides(doc),
   }
 }
@@ -57,6 +61,7 @@ export function buildLiveItems(
           id: item.id,
           label,
           kind: item.kind,
+          doc: null,
           slides: [placeholderSlide(item.id, label)],
         }
       }
@@ -65,6 +70,7 @@ export function buildLiveItems(
         label: item.label || doc.title,
         kind: item.kind,
         presentationKind: doc.kind,
+        doc,
         slides: toLiveSlides(doc),
       }
     }
@@ -73,6 +79,7 @@ export function buildLiveItems(
       id: item.id,
       label,
       kind: item.kind,
+      doc: null,
       slides: [placeholderSlide(item.id, label)],
     }
   })
@@ -97,7 +104,7 @@ export function newLiveState(
     previewSlideIndex: 0,
     mode: 'live',
     stageMessage: '',
-    timers: [],
+    timers: defaultTimers(),
   }
 }
 
@@ -148,10 +155,28 @@ export function applyLiveCommand(
   return liveReducer(state, command, context)
 }
 
-export function nextLiveSlide(items: LiveItem[], itemIndex: number, slideIndex: number): LiveSlide | null {
+export interface LivePosition {
+  item: LiveItem
+  itemIndex: number
+  slideIndex: number
+  slide: LiveSlide
+}
+
+/** Next cue, rolling into the next item after the last slide. */
+export function nextLivePosition(
+  items: LiveItem[],
+  itemIndex: number,
+  slideIndex: number,
+): LivePosition | null {
   const item = items[itemIndex]
   if (!item) return null
   const next = item.slides[slideIndex + 1]
-  if (next) return next
-  return items[itemIndex + 1]?.slides[0] ?? null
+  if (next) return { item, itemIndex, slideIndex: slideIndex + 1, slide: next }
+  const nextItem = items[itemIndex + 1]
+  const first = nextItem?.slides[0]
+  return nextItem && first ? { item: nextItem, itemIndex: itemIndex + 1, slideIndex: 0, slide: first } : null
+}
+
+export function nextLiveSlide(items: LiveItem[], itemIndex: number, slideIndex: number): LiveSlide | null {
+  return nextLivePosition(items, itemIndex, slideIndex)?.slide ?? null
 }

@@ -8,7 +8,30 @@ use lumen_render::{PreviewRenderer, RenderStats, Scene, TransitionPlan};
 use tauri::{Manager, State};
 
 #[derive(Default)]
-struct PreviewState(Mutex<Option<PreviewRenderer>>);
+pub(crate) struct PreviewState(Mutex<Option<PreviewRenderer>>);
+
+impl PreviewState {
+    /// Updates an already-created preview renderer from the decoder thread.
+    /// Frames that arrive before the first preview render are dropped.
+    pub(crate) fn push_video_frame(
+        &self,
+        asset_id: &str,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), String> {
+        let mut renderer = self
+            .0
+            .lock()
+            .map_err(|_| "preview renderer lock poisoned".to_string())?;
+        match renderer.as_mut() {
+            Some(renderer) => renderer
+                .update_video_frame(asset_id, width, height, rgba)
+                .map_err(|error| error.to_string()),
+            None => Ok(()),
+        }
+    }
+}
 
 #[tauri::command]
 fn list_displays(app: tauri::AppHandle) -> Result<Vec<DisplayInfo>, String> {
@@ -35,20 +58,33 @@ fn list_outputs(outputs: State<'_, OutputManager>) -> Vec<OutputWindow> {
 
 #[tauri::command]
 fn apply_scene(
+    app: tauri::AppHandle,
     outputs: State<'_, OutputManager>,
     label: Option<String>,
     scene: Scene,
 ) -> Result<(), String> {
-    outputs.apply_scene(label.as_deref(), scene)
+    let playback_scene = scene.clone();
+    outputs.apply_scene(label.as_deref(), scene)?;
+    if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
+        playback.sync(&app, &[&playback_scene]);
+    }
+    Ok(())
 }
 
 #[tauri::command]
 fn apply_transition(
+    app: tauri::AppHandle,
     outputs: State<'_, OutputManager>,
     label: Option<String>,
     plan: TransitionPlan,
 ) -> Result<(), String> {
-    outputs.apply_transition(label.as_deref(), plan)
+    let from = plan.from.clone();
+    let to = plan.to.clone();
+    outputs.apply_transition(label.as_deref(), plan)?;
+    if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
+        playback.sync(&app, &[&from, &to]);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -108,11 +144,15 @@ fn update_preview_video_frame(
 /// megabytes of pixels as a JSON number array.
 #[tauri::command]
 fn preview_render(
+    app: tauri::AppHandle,
     preview: State<'_, PreviewState>,
     scene: Scene,
     width: u32,
     height: u32,
 ) -> Result<tauri::ipc::Response, String> {
+    if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
+        playback.sync(&app, &[&scene]);
+    }
     let mut renderer = preview
         .0
         .lock()
@@ -152,6 +192,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
             app.manage(PreviewState::default());
+            app.manage(media::VideoPlaybackManager::new());
             app.manage(control::ControlState::new(app.handle().clone()));
             let outputs = OutputManager::new(app.handle().clone());
             outputs.start_monitor_poll();
@@ -171,6 +212,7 @@ pub fn run() {
             preview_render,
             update_preview_video_frame,
             media::import_media,
+            media::relink_media,
             media::probe_media,
             media::delete_media_file,
             media::media_files_status,

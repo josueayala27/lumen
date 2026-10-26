@@ -1,12 +1,14 @@
 import { liveReducer } from '@lumen/core'
-import type { LiveCommand, LiveState, OutputMode } from '@lumen/schema'
-import { computed, ref } from 'vue'
+import type { LiveCommand, LiveState, OutputMode, Theme } from '@lumen/schema'
+import { computed, ref, watch } from 'vue'
+import { listMediaAssets, type MediaAsset } from '~/data/media'
 import {
   getPresentation,
   listPresentations,
   type PresentationRecord,
 } from '~/data/presentations'
 import { getPlaylist, listPlaylists, type PlaylistRecord } from '~/data/playlists'
+import { getTheme } from '~/data/themes'
 import {
   buildLiveItems,
   clampLiveState,
@@ -18,6 +20,7 @@ import {
   type LiveItem,
 } from './liveSession'
 import { loadLiveSession, saveLiveSession } from './liveSessionStore'
+import { ensureTimers } from './liveTimers'
 
 export interface LiveLoadOptions {
   playlistId?: string
@@ -32,6 +35,8 @@ export function useLiveSession() {
   const presentation = ref<PresentationRecord | null>(null)
   const loading = ref(true)
   const error = ref('')
+  const theme = ref<Theme | null>(null)
+  const media = ref<MediaAsset[]>([])
 
   const context = computed(() => liveContext(items.value))
   const current = computed(() =>
@@ -48,6 +53,33 @@ export function useLiveSession() {
   const previewItem = computed(() => preview.value?.item ?? null)
   const previewSlide = computed(() => preview.value?.slide ?? null)
   const slideCount = computed(() => items.value.reduce((sum, item) => sum + item.slides.length, 0))
+
+  let themeToken = 0
+  watch(
+    () => currentItem.value?.doc?.themeId ?? null,
+    async (themeId) => {
+      const token = ++themeToken
+      if (!themeId) {
+        theme.value = null
+        return
+      }
+      try {
+        const record = await getTheme(themeId)
+        if (token === themeToken) theme.value = record?.theme ?? null
+      } catch {
+        if (token === themeToken) theme.value = null
+      }
+    },
+    { immediate: true },
+  )
+
+  async function loadMedia(): Promise<void> {
+    try {
+      media.value = await listMediaAssets()
+    } catch {
+      media.value = []
+    }
+  }
 
   function snapshot() {
     return {
@@ -85,7 +117,8 @@ export function useLiveSession() {
       stored.playlistId === playlistId &&
       stored.presentationId === presentationId
     ) {
-      state.value = clampLiveState(stored.state, context.value)
+      const restored = clampLiveState(stored.state, context.value)
+      state.value = { ...restored, timers: ensureTimers(restored.timers) }
     } else {
       state.value = newLiveState(playlistId)
     }
@@ -120,6 +153,7 @@ export function useLiveSession() {
     loading.value = true
     error.value = ''
     try {
+      await loadMedia()
       if (options.presentationId) {
         await loadPresentation(options.presentationId)
         return
@@ -195,6 +229,18 @@ export function useLiveSession() {
     dispatch({ type: 'setMessage', message })
   }
 
+  function startTimer(timerId: string, now = Date.now()): void {
+    dispatch({ type: 'timerStart', timerId, now })
+  }
+
+  function pauseTimer(timerId: string, now = Date.now()): void {
+    dispatch({ type: 'timerStop', timerId, now })
+  }
+
+  function resetTimer(timerId: string): void {
+    dispatch({ type: 'timerReset', timerId })
+  }
+
   return {
     state,
     items,
@@ -202,6 +248,8 @@ export function useLiveSession() {
     presentation,
     loading,
     error,
+    theme,
+    media,
     context,
     currentItem,
     currentSlide,
@@ -219,5 +267,8 @@ export function useLiveSession() {
     goTo,
     setMode,
     setStageMessage,
+    startTimer,
+    pauseTimer,
+    resetTimer,
   }
 }

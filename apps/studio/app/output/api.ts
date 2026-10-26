@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { Scene, TransitionPlan } from '@lumen/schema'
 
 /** A monitor as reported by `lumen-output`. Field names match the Rust serialization. */
 export interface DisplayInfo {
@@ -38,4 +39,14 @@ export function openOutput(displayIndex: number): Promise<OutputWindow> {
 
 export function closeOutput(label: string): Promise<void> {
   return invoke('close_output', { label })
+}
+
+/** Sends a scene to one output window, or to every open output when label is null. */
+export function applyScene(label: string | null, scene: Scene): Promise<void> {
+  return invoke('apply_scene', { label, scene })
+}
+
+/** Starts a transition between two scenes on the assigned audience output. */
+export function applyTransition(label: string | null, plan: TransitionPlan): Promise<void> {
+  return invoke('apply_transition', { label, plan })
 }

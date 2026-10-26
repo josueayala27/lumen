@@ -10,8 +10,10 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import TimelinePanel from './TimelinePanel.vue'
 import { useLiveSession } from './useLiveSession'
+import { useLiveOutput } from './useLiveOutput'
 import type { LiveItem } from './liveSession'
 import { saveLiveSession } from './liveSessionStore'
+import { liveTimerViews } from './liveTimers'
 
 const route = useRoute()
 const {
@@ -21,6 +23,8 @@ const {
   presentation,
   loading,
   error,
+  theme,
+  media,
   currentItem,
   currentSlide,
   previewItem,
@@ -37,6 +41,9 @@ const {
   goTo,
   setMode,
   setStageMessage,
+  startTimer,
+  pauseTimer,
+  resetTimer,
 } = useLiveSession()
 
 const mode = computed(() => state.value.mode)
@@ -83,13 +90,30 @@ const emptyRail = computed(
 )
 const stageError = ref('')
 const screensOpen = ref(false)
-const { audienceDisplay, audienceOnline, ensureLoaded: loadScreens, toggleAudience } = useOutputScreens()
+const {
+  audienceDisplay,
+  audienceOnline,
+  audienceOutput,
+  ensureLoaded: loadScreens,
+  toggleAudience,
+} = useOutputScreens()
 const outputLabel = computed(() => {
   const display = audienceDisplay.value
   if (!display) return 'No output display'
   const state = audienceOnline.value ? 'Audience' : 'Audience off'
   return `${state} · ${display.name} · ${display.width}×${display.height}`
 })
+const liveOutput = useLiveOutput({
+  state,
+  items,
+  theme,
+  media,
+  outputLabel: computed(() => audienceOutput.value?.label ?? null),
+  desktop: computed(() => isTauriRuntime()),
+})
+const now = ref(Date.now())
+const timers = computed(() => liveTimerViews(state.value.timers, now.value))
+let clockTimer: ReturnType<typeof setInterval> | undefined
 
 function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -196,6 +220,9 @@ const timecodeLabel = computed(() => {
 })
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
+  clockTimer = setInterval(() => {
+    now.value = Date.now()
+  }, 1000)
   void loadScreens()
   await load({
     playlistId: (route.query.playlist as string | undefined) ?? undefined,
@@ -208,7 +235,10 @@ onMounted(async () => {
     state: state.value,
   })
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey)
+  if (clockTimer) clearInterval(clockTimer)
+})
 
 const root = css({ display: 'flex', h: 'full', minH: '0' })
 const rail = css({ w: '[300px]', flexShrink: '0', display: 'flex', flexDirection: 'column', bg: 'bg.panel', borderRightWidth: '1px', borderColor: 'border.default' })
@@ -321,6 +351,7 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
 
       <p v-if="error" :class="errorText">{{ error }}</p>
       <p v-if="stageError" :class="errorText">{{ stageError }}</p>
+      <p v-if="liveOutput.error" :class="errorText">{{ liveOutput.error }}</p>
 
       <div :class="stage">
         <div :class="pane">
@@ -372,19 +403,32 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
       <Input v-model="stageMessage" placeholder="Chorus in 2 · mic 3" size="md" />
 
       <h2 :class="sectionTitle">Timers</h2>
-      <div :class="timer">
+      <div v-for="entry in timers" :key="entry.id" :class="timer">
         <div>
-          <p :class="css({ textStyle: 'ui.xs', color: 'fg.subtle' })">Service countdown</p>
-          <p :class="timerValue">04:32</p>
+          <p :class="css({ textStyle: 'ui.xs', color: 'fg.subtle' })">{{ entry.label }}</p>
+          <p :class="timerValue">{{ entry.value }}</p>
         </div>
-        <Button variant="ghost" size="sm" icon="lucide:play">Start</Button>
-      </div>
-      <div :class="timer">
-        <div>
-          <p :class="css({ textStyle: 'ui.xs', color: 'fg.subtle' })">Elapsed</p>
-          <p :class="timerValue">26:08</p>
+        <div :class="css({ display: 'flex', alignItems: 'center', gap: '1' })">
+          <Button
+            v-if="!entry.running"
+            variant="ghost"
+            size="sm"
+            icon="lucide:play"
+            @click="startTimer(entry.id)"
+          >
+            Start
+          </Button>
+          <Button
+            v-else
+            variant="ghost"
+            size="sm"
+            icon="lucide:pause"
+            @click="pauseTimer(entry.id)"
+          >
+            Pause
+          </Button>
+          <IconButton icon="lucide:rotate-ccw" label="Reset timer" @click="resetTimer(entry.id)" />
         </div>
-        <Button variant="ghost" size="sm" icon="lucide:pause">Pause</Button>
       </div>
 
       <TimelinePanel :timecode="showTimecode" :apply="applyLiveCommand" />

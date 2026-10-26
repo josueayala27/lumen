@@ -6,11 +6,16 @@
 //! playlists. These commands only touch files and metadata so the two sides do
 //! not open competing SQLite handles.
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 use base64::Engine as _;
+use lumen_media::decoder::{DecodeRequest, DecoderConfig, FfmpegVideo, MAX_DECODE_EDGE};
 use lumen_media::probe::probe_file;
 use lumen_media::thumbnail::{thumbnail_file, DEFAULT_THUMBNAIL_EDGE};
 use lumen_media::util::{
@@ -18,8 +23,13 @@ use lumen_media::util::{
     sha256_file, MediaKind, MAX_IMPORT_BYTES,
 };
 use lumen_media::{FileProbe, MediaBackend};
+use lumen_output::OutputManager;
+use lumen_render::{AssetKind, AssetState, Layer, Scene};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
+
+/// Decoder budget from the architecture contract.
+pub const MAX_CONCURRENT_DECODERS: usize = 2;
 
 /// Metadata returned by an import; the frontend persists it as a row.
 #[derive(Debug, Serialize)]
@@ -148,9 +158,259 @@ fn import_blocking(app: &AppHandle, source: &str) -> Result<ImportedMedia, Strin
     })
 }
 
+/// A video reference found in a scene, resolved to a local file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoSource {
+    pub asset_id: String,
+    pub local_path: String,
+    pub width: u32,
+    pub height: u32,
+    pub start_ms: u64,
+    pub loop_playback: bool,
+}
+
+fn layer_video_source(layer: &Layer) -> Option<(&str, bool, u64)> {
+    match layer {
+        Layer::Video {
+            source,
+            loop_,
+            start_ms,
+            ..
+        } => Some((source.asset_id.as_str(), *loop_, *start_ms)),
+        _ => None,
+    }
+}
+
+fn intrinsic_edge(value: f64) -> Option<u32> {
+    if !value.is_finite() || value < 1.0 {
+        return None;
+    }
+    let clamped = value.round().clamp(1.0, f64::from(MAX_DECODE_EDGE));
+    u32::try_from(clamped as u64).ok().filter(|edge| *edge > 0)
+}
+
+fn local_scene_path(raw: &str) -> Option<String> {
+    let path = raw.strip_prefix("file://").unwrap_or(raw);
+    is_local_file_path(path).then(|| path.to_string())
+}
+
+/// Video assets referenced by the current scene, in draw order and de-duplicated.
+/// Whole-document asset lists are ignored so slides that are not on screen do
+/// not consume a decoder.
+pub fn scene_video_sources(scene: &Scene) -> Vec<VideoSource> {
+    let mut references: Vec<(&str, bool, u64)> = Vec::new();
+    let mut seen = HashSet::new();
+    for layer in scene.background.iter().chain(scene.layers.iter()) {
+        let Some((asset_id, loop_playback, start_ms)) = layer_video_source(layer) else {
+            continue;
+        };
+        if seen.insert(asset_id) {
+            references.push((asset_id, loop_playback, start_ms));
+        }
+    }
+
+    let assets = scene
+        .assets
+        .iter()
+        .map(|asset| (asset.id.as_str(), asset))
+        .collect::<HashMap<_, _>>();
+    references
+        .into_iter()
+        .filter_map(|(asset_id, loop_playback, start_ms)| {
+            let asset = assets.get(asset_id)?;
+            if asset.kind != AssetKind::Video || asset.state != AssetState::Ready {
+                return None;
+            }
+            let local_path = local_scene_path(asset.local_path.as_deref()?)?;
+            Some(VideoSource {
+                asset_id: asset_id.to_string(),
+                local_path,
+                width: intrinsic_edge(asset.intrinsic.width)?,
+                height: intrinsic_edge(asset.intrinsic.height)?,
+                start_ms,
+                loop_playback,
+            })
+        })
+        .collect()
+}
+
+struct Playback {
+    stop: Arc<AtomicBool>,
+}
+
+/// Owns decoder threads for every scene sent to a preview or an output.
+///
+/// Scenes are the source of truth: a video asset referenced by the current
+/// scene starts one decoder, and refs that disappear stop theirs. Frames are
+/// pushed through the same video-frame paths the renderer already exposes.
+#[derive(Default)]
+pub struct VideoPlaybackManager {
+    playbacks: Mutex<HashMap<String, Playback>>,
+    config: Mutex<Option<Result<DecoderConfig, String>>>,
+}
+
+impl VideoPlaybackManager {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn decoder_config(&self) -> Result<DecoderConfig, String> {
+        let mut guard = self
+            .config
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if guard.is_none() {
+            let resolved = DecoderConfig::from_env().map_err(|error| error.to_string());
+            if let Err(error) = &resolved {
+                eprintln!("lumen-media: video playback unavailable: {error}");
+            }
+            *guard = Some(resolved);
+        }
+        guard.as_ref().expect("decoder config was resolved").clone()
+    }
+
+    /// Starts decoders for newly referenced videos and stops the rest.
+    pub fn sync(&self, app: &AppHandle, scenes: &[&Scene]) {
+        let mut desired: Vec<VideoSource> = Vec::new();
+        let mut seen = HashSet::new();
+        for scene in scenes {
+            for source in scene_video_sources(scene) {
+                if seen.insert(source.asset_id.clone()) {
+                    desired.push(source);
+                }
+            }
+        }
+        if desired.is_empty() {
+            self.stop_referenced(&HashSet::new());
+            return;
+        }
+        let config = match self.decoder_config() {
+            Ok(config) => config,
+            Err(_) => return,
+        };
+        let wanted = desired
+            .iter()
+            .map(|source| source.asset_id.clone())
+            .collect::<HashSet<_>>();
+        self.stop_referenced(&wanted);
+
+        let mut playbacks = self
+            .playbacks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for source in desired.into_iter().take(MAX_CONCURRENT_DECODERS) {
+            if playbacks.contains_key(&source.asset_id) {
+                continue;
+            }
+            let stop = Arc::new(AtomicBool::new(false));
+            let thread_stop = Arc::clone(&stop);
+            let thread_app = app.clone();
+            let thread_config = config.clone();
+            let asset_id = source.asset_id.clone();
+            thread::spawn(move || {
+                run_decoder(&thread_app, &source, &thread_config, &thread_stop);
+            });
+            playbacks.insert(asset_id, Playback { stop });
+        }
+    }
+
+    fn stop_referenced(&self, wanted: &HashSet<String>) {
+        let mut playbacks = self
+            .playbacks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        playbacks.retain(|asset_id, playback| {
+            if wanted.contains(asset_id) {
+                return true;
+            }
+            playback.stop.store(true, Ordering::Relaxed);
+            false
+        });
+    }
+
+    pub fn stop_all(&self) {
+        let mut playbacks = self
+            .playbacks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for playback in playbacks.values() {
+            playback.stop.store(true, Ordering::Relaxed);
+        }
+        playbacks.clear();
+    }
+}
+
+impl Drop for VideoPlaybackManager {
+    fn drop(&mut self) {
+        self.stop_all();
+    }
+}
+
+fn run_decoder(app: &AppHandle, source: &VideoSource, config: &DecoderConfig, stop: &AtomicBool) {
+    let mut request = DecodeRequest::new(
+        PathBuf::from(source.local_path.clone()),
+        source.width,
+        source.height,
+    );
+    request.start_ms = source.start_ms;
+    request.loop_playback = source.loop_playback;
+    let mut decoder = match FfmpegVideo::open(&request, config) {
+        Ok(decoder) => decoder,
+        Err(error) => {
+            eprintln!(
+                "lumen-media: decoder for {} failed: {error}",
+                source.asset_id
+            );
+            return;
+        }
+    };
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+        match decoder.read_frame() {
+            Ok(Some(rgba)) => {
+                let width = decoder.width();
+                let height = decoder.height();
+                if let Some(preview) = app.try_state::<crate::PreviewState>() {
+                    let _ = preview.push_video_frame(&source.asset_id, width, height, &rgba);
+                }
+                if let Some(outputs) = app.try_state::<OutputManager>() {
+                    let _ = outputs.update_video_frame(
+                        None,
+                        source.asset_id.clone(),
+                        width,
+                        height,
+                        rgba,
+                    );
+                }
+            }
+            Ok(None) => return,
+            Err(error) => {
+                if !stop.load(Ordering::Relaxed) {
+                    eprintln!(
+                        "lumen-media: decoder for {} stopped: {error}",
+                        source.asset_id
+                    );
+                }
+                return;
+            }
+        }
+    }
+}
+
 /// Copies a local file into the managed folder and probes it.
 #[tauri::command]
 pub async fn import_media(app: AppHandle, path: String) -> Result<ImportedMedia, String> {
+    tauri::async_runtime::spawn_blocking(move || import_blocking(&app, &path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// Imports a replacement file for an existing asset row. The caller keeps the
+/// asset id; metadata and the managed path come from the new file.
+#[tauri::command]
+pub async fn relink_media(app: AppHandle, path: String) -> Result<ImportedMedia, String> {
     tauri::async_runtime::spawn_blocking(move || import_blocking(&app, &path))
         .await
         .map_err(|error| error.to_string())?

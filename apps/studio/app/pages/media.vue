@@ -10,6 +10,7 @@ import {
   importMediaFile,
   listMediaAssets,
   mediaThumbnail,
+  relinkMediaAsset,
   type MediaAsset,
 } from '~/data/media'
 import {
@@ -28,6 +29,7 @@ const items = ref<MediaAsset[]>([])
 const view = ref<View>('grid')
 const loading = ref(true)
 const importing = ref(false)
+const relinking = ref<string | null>(null)
 const error = ref('')
 const thumbs = ref<Record<string, string>>({})
 
@@ -104,6 +106,35 @@ async function importSelected(): Promise<void> {
     error.value = reason instanceof Error ? reason.message : String(reason)
   } finally {
     importing.value = false
+  }
+}
+
+async function relink(asset: MediaAsset): Promise<void> {
+  if (!isTauri()) {
+    error.value = 'Relinking media requires the desktop app.'
+    return
+  }
+  error.value = ''
+  try {
+    const selection = await open({
+      multiple: false,
+      directory: false,
+      title: `Relink "${asset.name}"`,
+      filters: [
+        {
+          name: 'Media',
+          extensions: ['png', 'jpg', 'jpeg', 'webp', 'mp4', 'm4v', 'mov', 'webm'],
+        },
+      ],
+    })
+    if (!selection || Array.isArray(selection)) return
+    relinking.value = asset.id
+    await relinkMediaAsset(asset.id, selection)
+    await load()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : String(reason)
+  } finally {
+    relinking.value = null
   }
 }
 
@@ -244,6 +275,14 @@ const itemMeta = css({ mt: '0.5', textStyle: 'ui.xs', color: 'fg.subtle', overfl
               <p :class="itemName">{{ asset.name }}</p>
               <p :class="itemMeta">{{ metaLine(asset) }}</p>
             </div>
+            <IconButton
+              v-if="asset.missing"
+              icon="lucide:link"
+              label="Relink media"
+              size="sm"
+              :disabled="relinking === asset.id"
+              @click.stop="relink(asset)"
+            />
             <IconButton
               icon="lucide:trash-2"
               label="Delete media"

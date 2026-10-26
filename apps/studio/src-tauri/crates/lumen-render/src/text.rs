@@ -29,11 +29,22 @@ pub(crate) struct GlyphDraw {
     pub center: (f32, f32),
 }
 
+/// One underline quad in target pixels, before rotation.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DecorationDraw {
+    pub layer_index: u32,
+    pub rect: FrameRect,
+    pub color: [f32; 4],
+    pub rotation: f32,
+    pub center: (f32, f32),
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct TextLayout {
     pub bounds: Vec<PreviewBounds>,
     pub text_runs: Vec<PreviewTextRun>,
     pub glyphs: Vec<GlyphDraw>,
+    pub decorations: Vec<DecorationDraw>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +53,9 @@ pub(crate) struct AtlasData {
     pub height: u32,
     pub pixels: Vec<u8>,
     pub uvs: HashMap<CacheKey, [f32; 4]>,
+    /// UV rects expanded by [`Self::blur_padding`], used to sample blurred shadow atlases.
+    pub shadow_uvs: HashMap<CacheKey, [f32; 4]>,
+    pub blur_padding: u32,
 }
 
 impl AtlasData {
@@ -51,6 +65,8 @@ impl AtlasData {
             height: 1,
             pixels: vec![0, 0, 0, 0],
             uvs: HashMap::new(),
+            shadow_uvs: HashMap::new(),
+            blur_padding: 0,
         }
     }
 }
@@ -290,6 +306,32 @@ impl TextEngine {
                 center,
             });
         }
+
+        for decoration in shaped.decorations {
+            let color = decoration
+                .color
+                .map(|color| {
+                    let (r, g, b, a) = color.as_rgba_tuple();
+                    ClearColor::from_rgba8(r, g, b, a)
+                })
+                .unwrap_or(layer_color)
+                .with_alpha(opacity);
+            if color.a <= 0.0 || decoration.w <= 0.0 {
+                continue;
+            }
+            result.decorations.push(DecorationDraw {
+                layer_index,
+                rect: FrameRect {
+                    x: origin_x + decoration.x,
+                    y: origin_y + decoration.y,
+                    w: decoration.w,
+                    h: decoration.h.max(1.0),
+                },
+                color: color.to_array(),
+                rotation,
+                center,
+            });
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -348,24 +390,60 @@ impl TextEngine {
                 shaped.glyphs.extend(run.glyphs.iter().cloned());
                 shaped.lines.push(line);
             }
+            for span in run.decorations {
+                if span.data.text_decoration.underline == UnderlineStyle::None {
+                    continue;
+                }
+                let glyphs = &run.glyphs[span.glyph_range.clone()];
+                let mut x_min = f32::INFINITY;
+                let mut x_max = f32::NEG_INFINITY;
+                for glyph in glyphs {
+                    x_min = x_min.min(glyph.x);
+                    x_max = x_max.max(glyph.x + glyph.w);
+                }
+                if !x_min.is_finite() || x_max <= x_min {
+                    continue;
+                }
+                let thickness = (span.data.underline_metrics.thickness * span.font_size)
+                    .max(1.0)
+                    .ceil();
+                let y = run.line_y - span.data.underline_metrics.offset * span.font_size;
+                shaped.decorations.push(ShapedDecoration {
+                    x: x_min,
+                    y,
+                    w: x_max - x_min,
+                    h: thickness,
+                    color: span
+                        .data
+                        .text_decoration
+                        .underline_color_opt
+                        .or(span.color_opt),
+                });
+            }
         }
         shaped
     }
 
     /// Rasterizes the glyphs used by a layout into one RGBA atlas.
-    pub(crate) fn build_atlas(&mut self, glyphs: &[GlyphDraw]) -> AtlasData {
+    ///
+    /// `padding` leaves room around each glyph for shadow blur bleeding; the returned
+    /// `shadow_uvs` expand each glyph rect by the same amount.
+    pub(crate) fn build_atlas(&mut self, glyphs: &[GlyphDraw], padding: u32) -> AtlasData {
+        let padding = padding.clamp(ATLAS_PADDING, ATLAS_HEIGHT / 4);
         let mut atlas = AtlasData {
             width: ATLAS_WIDTH,
             height: ATLAS_HEIGHT,
             pixels: vec![0; ATLAS_WIDTH as usize * ATLAS_HEIGHT as usize * 4],
             uvs: HashMap::new(),
+            shadow_uvs: HashMap::new(),
+            blur_padding: padding,
         };
         if glyphs.is_empty() {
             return AtlasData::empty();
         }
 
-        let mut cursor_x = ATLAS_PADDING;
-        let mut cursor_y = ATLAS_PADDING;
+        let mut cursor_x = padding;
+        let mut cursor_y = padding;
         let mut shelf_height = 0;
         for glyph in glyphs {
             if atlas.uvs.contains_key(&glyph.cache_key) {
@@ -379,12 +457,12 @@ impl TextEngine {
             if image_w == 0 || image_h == 0 {
                 continue;
             }
-            if cursor_x + image_w + ATLAS_PADDING > ATLAS_WIDTH {
-                cursor_x = ATLAS_PADDING;
-                cursor_y += shelf_height + ATLAS_PADDING;
+            if cursor_x + image_w + padding > ATLAS_WIDTH {
+                cursor_x = padding;
+                cursor_y += shelf_height + padding;
                 shelf_height = 0;
             }
-            if cursor_y + image_h + ATLAS_PADDING > ATLAS_HEIGHT {
+            if cursor_y + image_h + padding > ATLAS_HEIGHT {
                 continue;
             }
 
@@ -398,7 +476,18 @@ impl TextEngine {
                     (cursor_y + image_h) as f32 / ATLAS_HEIGHT as f32,
                 ],
             );
-            cursor_x += image_w + ATLAS_PADDING;
+            let left = cursor_x.saturating_sub(padding);
+            let top = cursor_y.saturating_sub(padding);
+            atlas.shadow_uvs.insert(
+                glyph.cache_key,
+                [
+                    left as f32 / ATLAS_WIDTH as f32,
+                    top as f32 / ATLAS_HEIGHT as f32,
+                    (cursor_x + image_w + padding).min(ATLAS_WIDTH) as f32 / ATLAS_WIDTH as f32,
+                    (cursor_y + image_h + padding).min(ATLAS_HEIGHT) as f32 / ATLAS_HEIGHT as f32,
+                ],
+            );
+            cursor_x += image_w + padding;
             shelf_height = shelf_height.max(image_h);
         }
         atlas
@@ -469,7 +558,17 @@ fn shape_attrs<'a>(
 struct ShapedBlock {
     lines: Vec<ShapedLine>,
     glyphs: Vec<cosmic_text::LayoutGlyph>,
+    decorations: Vec<ShapedDecoration>,
     total_height: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ShapedDecoration {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    color: Option<CosmicColor>,
 }
 
 #[derive(Debug)]
@@ -563,9 +662,10 @@ mod tests {
     #[test]
     fn atlas_start_stop_is_valid_when_no_glyphs_are_drawn() {
         let mut engine = TextEngine::new();
-        let atlas = engine.build_atlas(&[]);
+        let atlas = engine.build_atlas(&[], 0);
         assert_eq!(atlas.width, 1);
         assert_eq!(atlas.pixels.len(), 4);
         assert!(atlas.uvs.is_empty());
+        assert!(atlas.shadow_uvs.is_empty());
     }
 }

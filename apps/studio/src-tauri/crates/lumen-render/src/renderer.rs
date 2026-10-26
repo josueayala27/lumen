@@ -11,9 +11,11 @@ use bytemuck::{Pod, Zeroable};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use serde::{Deserialize, Serialize};
 
+use crate::asset::{AssetLoader, AssetSource};
+use crate::blur::{blur_rgba, box_radius_for_sigma};
 use crate::color::ClearColor;
 use crate::geometry::{easing_progress, fit_uv, rotate_point, rotate_vector, FrameRect, UvRect};
-use crate::text::{AtlasData, GlyphDraw, TextEngine};
+use crate::text::{AtlasData, DecorationDraw, GlyphDraw, TextEngine};
 use crate::{
     AssetKind, AssetState, Layer, PreviewResult, RenderError, Scene, SceneFont, SceneRole,
     TransitionKind, TransitionPlan, Viewport,
@@ -351,6 +353,57 @@ fn push_glyph_quad(
     );
 }
 
+/// Draws a glyph quad expanded by the atlas blur padding so the blurred shadow is not clipped.
+#[allow(clippy::too_many_arguments)]
+fn push_shadow_glyph_quad(
+    vertices: &mut Vec<Vertex>,
+    glyph: &GlyphDraw,
+    uv: [f32; 4],
+    color: [f32; 4],
+    offset: (f32, f32),
+    padding: f32,
+    width: f32,
+    height: f32,
+) {
+    let mut expanded = *glyph;
+    expanded.rect.x -= padding;
+    expanded.rect.y -= padding;
+    expanded.rect.w += padding * 2.0;
+    expanded.rect.h += padding * 2.0;
+    push_glyph_quad(vertices, &expanded, uv, color, offset, width, height);
+}
+
+/// Draws one underline rect with the shared white texture.
+fn push_decoration_quad(
+    vertices: &mut Vec<Vertex>,
+    decoration: &DecorationDraw,
+    width: f32,
+    height: f32,
+) {
+    push_quad(
+        vertices,
+        QuadSpec {
+            rect: decoration.rect,
+            uv: UvRect {
+                u0: 0.0,
+                v0: 0.0,
+                u1: 1.0,
+                v1: 1.0,
+                discard_outside: false,
+            },
+            color: decoration.color,
+            stroke_color: [0.0; 4],
+            radius: 0.0,
+            stroke_width: 0.0,
+            mode: 2.0,
+            rotation: decoration.rotation,
+            center: decoration.center,
+        },
+        width,
+        height,
+    );
+}
+
 struct GpuTexture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -362,6 +415,7 @@ struct GpuTexture {
 enum TextureKey {
     White,
     Atlas,
+    ShadowAtlas(u32),
     Image(String),
     Video(String),
 }
@@ -439,11 +493,16 @@ struct SceneRenderer {
     white: GpuTexture,
     atlas: GpuTexture,
     atlas_uvs: HashMap<cosmic_text::CacheKey, [f32; 4]>,
+    shadow_uvs: HashMap<cosmic_text::CacheKey, [f32; 4]>,
+    atlas_blur_padding: u32,
+    shadow_atlases: HashMap<u32, GpuTexture>,
     images: HashMap<String, GpuTexture>,
     videos: HashMap<String, GpuTexture>,
     text: TextEngine,
     glyphs: Vec<GlyphDraw>,
+    decorations: Vec<DecorationDraw>,
     layout: PreviewResult,
+    assets: AssetLoader,
     prepared: Option<(u64, u32, u32)>,
 }
 
@@ -535,11 +594,16 @@ impl SceneRenderer {
             white,
             atlas,
             atlas_uvs: HashMap::new(),
+            shadow_uvs: HashMap::new(),
+            atlas_blur_padding: 0,
+            shadow_atlases: HashMap::new(),
             images: HashMap::new(),
             videos: HashMap::new(),
             text: TextEngine::new(),
             glyphs: Vec::new(),
+            decorations: Vec::new(),
             layout: PreviewResult::default(),
+            assets: AssetLoader::new(),
             prepared: None,
         }
     }
@@ -610,10 +674,40 @@ impl SceneRenderer {
         }
         self.load_image_assets(scene);
         let layout = self.text.layout(scene, width, height);
-        let atlas = self.text.build_atlas(&layout.glyphs);
+        let scale = width as f32 / scene.viewport.width.max(1.0) as f32;
+        let radii = shadow_radii(scene, scale);
+        let max_radius = radii.iter().copied().max().unwrap_or(0);
+        let padding = if max_radius == 0 {
+            1
+        } else {
+            max_radius * 3 + 1
+        };
+        let atlas = self.text.build_atlas(&layout.glyphs, padding);
         self.upload_atlas(&atlas);
-        self.atlas_uvs = atlas.uvs;
+        self.atlas_uvs = atlas.uvs.clone();
+        self.shadow_uvs = atlas.shadow_uvs.clone();
+        self.atlas_blur_padding = atlas.blur_padding;
+        self.shadow_atlases.clear();
+        for radius in radii {
+            let blurred = blur_rgba(&atlas.pixels, atlas.width, atlas.height, radius);
+            if blurred.is_empty() {
+                continue;
+            }
+            self.shadow_atlases.insert(
+                radius,
+                upload_texture(
+                    &self.device,
+                    &self.queue,
+                    "lumen-shadow-atlas",
+                    atlas.width,
+                    atlas.height,
+                    &blurred,
+                    false,
+                ),
+            );
+        }
         self.glyphs = layout.glyphs;
+        self.decorations = layout.decorations;
         self.layout = PreviewResult {
             revision: scene.revision,
             bounds: layout.bounds,
@@ -666,10 +760,16 @@ impl SceneRenderer {
             if self.images.contains_key(&key) {
                 continue;
             }
-            let Some(path) = asset_path(asset) else {
+            let Some(raw) = asset.local_path.as_deref().or(asset.url.as_deref()) else {
                 continue;
             };
-            let Ok(image) = image::open(&path) else {
+            let Some(source) = AssetSource::parse(raw) else {
+                continue;
+            };
+            let Some(bytes) = self.assets.load(&source, &asset.hash) else {
+                continue;
+            };
+            let Ok(image) = image::load_from_memory(&bytes) else {
                 continue;
             };
             let rgba = image.to_rgba8();
@@ -759,6 +859,9 @@ impl SceneRenderer {
         match key {
             TextureKey::White => Some(&self.white.view),
             TextureKey::Atlas => Some(&self.atlas.view),
+            TextureKey::ShadowAtlas(radius) => {
+                self.shadow_atlases.get(radius).map(|texture| &texture.view)
+            }
             TextureKey::Image(key) => self.images.get(key).map(|texture| &texture.view),
             TextureKey::Video(key) => self.videos.get(key).map(|texture| &texture.view),
         }
@@ -941,10 +1044,33 @@ impl SceneRenderer {
                         (shadow.offset_y * f64::from(scale)) as f32,
                         rotation,
                     );
+                    let radius = box_radius_for_sigma(shadow.blur * f64::from(scale));
+                    let blurred = radius > 0 && self.shadow_atlases.contains_key(&radius);
+                    let padding = self.atlas_blur_padding as f32;
+                    let mut shadow_vertices = Vec::new();
                     for glyph in &glyphs {
-                        if let Some(uv) = self.atlas_uvs.get(&glyph.cache_key).copied() {
+                        let uv = if blurred {
+                            self.shadow_uvs.get(&glyph.cache_key).copied()
+                        } else {
+                            self.atlas_uvs.get(&glyph.cache_key).copied()
+                        };
+                        let Some(uv) = uv else {
+                            continue;
+                        };
+                        if blurred {
+                            push_shadow_glyph_quad(
+                                &mut shadow_vertices,
+                                glyph,
+                                uv,
+                                color.to_array(),
+                                offset,
+                                padding,
+                                width_f,
+                                height_f,
+                            );
+                        } else {
                             push_glyph_quad(
-                                &mut vertices,
+                                &mut shadow_vertices,
                                 glyph,
                                 uv,
                                 color.to_array(),
@@ -954,6 +1080,28 @@ impl SceneRenderer {
                             );
                         }
                     }
+                    calls.push(DrawCall {
+                        vertices: shadow_vertices,
+                        texture: if blurred {
+                            TextureKey::ShadowAtlas(radius)
+                        } else {
+                            TextureKey::Atlas
+                        },
+                    });
+                }
+                let mut decoration_vertices = Vec::new();
+                for decoration in self
+                    .decorations
+                    .iter()
+                    .filter(|decoration| decoration.layer_index as usize == layer_index)
+                {
+                    push_decoration_quad(&mut decoration_vertices, decoration, width_f, height_f);
+                }
+                if !decoration_vertices.is_empty() {
+                    calls.push(DrawCall {
+                        vertices: decoration_vertices,
+                        texture: TextureKey::White,
+                    });
                 }
                 if let Some(outline) = outline {
                     let color = ClearColor::parse_or_black(&outline.color).with_alpha(opacity);
@@ -1013,15 +1161,22 @@ fn asset_key(id: &str, hash: &str) -> String {
     format!("{id}:{hash}")
 }
 
-fn asset_path(asset: &crate::SceneAsset) -> Option<String> {
-    let raw = asset.local_path.as_deref().or(asset.url.as_deref())?;
-    if let Some(path) = raw.strip_prefix("file://") {
-        return Some(path.to_string());
+/// Unique non-zero box radii required by blurred shadows in this scene.
+fn shadow_radii(scene: &Scene, scale: f32) -> Vec<u32> {
+    let mut radii = Vec::new();
+    for layer in scene.background.iter().chain(scene.layers.iter()) {
+        if let Layer::Text {
+            shadow: Some(shadow),
+            ..
+        } = layer
+        {
+            let radius = box_radius_for_sigma(shadow.blur * f64::from(scale));
+            if radius > 0 && !radii.contains(&radius) {
+                radii.push(radius);
+            }
+        }
     }
-    if raw.starts_with("http://") || raw.starts_with("https://") {
-        return None;
-    }
-    Some(raw.to_string())
+    radii
 }
 
 struct TransitionState {
@@ -1735,25 +1890,50 @@ mod tests {
     }
 
     #[test]
-    fn asset_paths_handle_file_urls_and_remote_urls() {
-        let mut asset = crate::SceneAsset {
-            id: "a".into(),
-            hash: "h".into(),
-            kind: AssetKind::Image,
-            local_path: Some("file:///tmp/a.png".into()),
-            url: None,
-            intrinsic: crate::IntrinsicSize {
-                width: 1.0,
-                height: 1.0,
+    fn shadow_radii_are_unique_and_scale_aware() {
+        let text = |id: &str, blur: f64| Layer::Text {
+            id: id.into(),
+            frame: crate::Frame {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: 1.0,
+                rotation: 0.0,
             },
-            state: AssetState::Ready,
+            z: 0,
+            opacity: 1.0,
+            runs: vec![crate::TextRun {
+                text: "hello".into(),
+                ..crate::TextRun::default()
+            }],
+            font_id: "inter".into(),
+            font_size: 32.0,
+            weight: 400,
+            color: "#ffffff".into(),
+            align: crate::TextAlign::Left,
+            v_align: crate::TextVAlign::Top,
+            line_height: 1.2,
+            letter_spacing: 0.0,
+            fit: crate::TextFit::Wrap,
+            padding: 0.0,
+            max_lines: None,
+            shadow: Some(crate::TextShadow {
+                color: "#000000".into(),
+                blur,
+                offset_x: 0.0,
+                offset_y: 0.0,
+            }),
+            outline: None,
         };
-        assert_eq!(asset_path(&asset).as_deref(), Some("/tmp/a.png"));
-        asset.local_path = None;
-        asset.url = Some("https://example.test/a.png".into());
-        assert!(asset_path(&asset).is_none());
-        asset.url = Some("/tmp/b.png".into());
-        assert_eq!(asset_path(&asset).as_deref(), Some("/tmp/b.png"));
+        let scene = Scene {
+            layers: vec![text("a", 4.0), text("b", 4.0), text("c", 0.0)],
+            ..spike_scene()
+        };
+        let radii = shadow_radii(&scene, 1.0);
+        assert_eq!(radii.len(), 1);
+        assert!(radii[0] > 0);
+        let scaled = shadow_radii(&scene, 2.0);
+        assert!(scaled[0] > radii[0]);
     }
 
     #[test]

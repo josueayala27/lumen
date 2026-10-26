@@ -1,5 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { newId } from '@lumen/core'
+import {
+  isLocalMediaPath,
+  relinkedAsset,
+  type MediaMetadata,
+} from '~/media/paths'
 import { getDatabase, isTauri } from './db'
 
 export type MediaKind = 'image' | 'video' | 'audio'
@@ -21,18 +26,8 @@ export interface MediaAsset {
   missing: boolean
 }
 
-/** Metadata returned by the `import_media` command. */
-interface ImportedMedia {
-  kind: MediaKind
-  name: string
-  sha256: string
-  mime: string
-  size: number
-  durationMs: number | null
-  width: number | null
-  height: number | null
-  localPath: string
-}
+/** Metadata returned by the `import_media` and `relink_media` commands. */
+type ImportedMedia = MediaMetadata
 
 interface Row {
   id: string
@@ -186,6 +181,110 @@ export async function importMediaFile(sourcePath: string): Promise<MediaAsset> {
     ],
   )
   return asset
+}
+
+/**
+ * Copies a replacement file into the managed folder and updates the existing
+ * row. The asset id is never changed, so document references keep resolving.
+ */
+export async function relinkMediaAsset(id: string, sourcePath: string): Promise<MediaAsset> {
+  if (!isTauri()) throw new Error('Relinking media requires the desktop app.')
+  if (!isLocalMediaPath(sourcePath)) {
+    throw new Error('Choose a local file to relink this asset.')
+  }
+  const imported = await invoke<ImportedMedia>('relink_media', { path: sourcePath })
+  const db = await getDatabase()
+  const now = Date.now()
+  if (!db) {
+    const local = readLocal()
+    const existing = local.find((asset) => asset.id === id)
+    if (!existing) throw new Error('The media record no longer exists.')
+    thumbnails.delete(existing.localPath)
+    const next = relinkedAsset(existing, imported, now)
+    writeLocal(local.map((asset) => (asset.id === id ? next : asset)))
+    return next
+  }
+
+  const rows = await db.select<Row[]>('SELECT * FROM media_assets WHERE id = $1', [id])
+  const prior = rows[0]
+  if (prior) {
+    thumbnails.delete(prior.local_path)
+    await db.execute(
+      `UPDATE media_assets
+       SET kind = $1, name = $2, sha256 = $3, mime = $4, size = $5,
+           duration_ms = $6, width = $7, height = $8, local_path = $9,
+           updated_at = $10, deleted_at = NULL
+       WHERE id = $11`,
+      [
+        imported.kind,
+        imported.name,
+        imported.sha256,
+        imported.mime,
+        imported.size,
+        imported.durationMs,
+        imported.width,
+        imported.height,
+        imported.localPath,
+        now,
+        id,
+      ],
+    )
+    return relinkedAsset(
+      {
+        id,
+        kind: isMediaKind(prior.kind) ? prior.kind : imported.kind,
+        name: prior.name,
+        sha256: prior.sha256,
+        mime: prior.mime,
+        size: prior.size,
+        durationMs: prior.duration_ms,
+        width: prior.width,
+        height: prior.height,
+        localPath: prior.local_path,
+        createdAt: prior.created_at,
+        updatedAt: prior.updated_at,
+        missing: false,
+      },
+      imported,
+      now,
+    )
+  }
+
+  const createdAt = now
+  await db.execute(
+    `INSERT INTO media_assets
+       (id, kind, name, sha256, mime, size, duration_ms, width, height, local_path, created_at, updated_at, deleted_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NULL)`,
+    [
+      id,
+      imported.kind,
+      imported.name,
+      imported.sha256,
+      imported.mime,
+      imported.size,
+      imported.durationMs,
+      imported.width,
+      imported.height,
+      imported.localPath,
+      createdAt,
+      now,
+    ],
+  )
+  return {
+    id,
+    kind: imported.kind,
+    name: imported.name,
+    sha256: imported.sha256,
+    mime: imported.mime,
+    size: imported.size,
+    durationMs: imported.durationMs,
+    width: imported.width,
+    height: imported.height,
+    localPath: imported.localPath,
+    createdAt,
+    updatedAt: now,
+    missing: false,
+  }
 }
 
 /** Removes the managed file and soft-deletes the row. */

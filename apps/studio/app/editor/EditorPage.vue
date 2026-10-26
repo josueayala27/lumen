@@ -42,10 +42,26 @@ import type {
   PreviewResult,
   Slide,
 } from '@lumen/schema'
+import { open } from '@tauri-apps/plugin-dialog'
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import {
+  createMediaElement,
+  isMediaElement,
+  mediaAssetId,
+  replaceMediaSource,
+  setMediaFit,
+  slideHasVideo,
+  type MediaFit,
+} from '~/media/elements'
+import {
+  listMediaAssets,
+  relinkMediaAsset,
+  type MediaAsset,
+} from '~/data/media'
+import { assetsForDoc } from '~/live/liveScene'
 import { Button, ColorField, IconButton, Input, Select, Textarea } from '~/ui'
 import {
   boundsForElement,
@@ -78,9 +94,14 @@ const record = ref<PresentationRecord | null>(null)
 const editor = ref<EditorState | null>(null)
 const themes = ref<ThemeRecord[]>([])
 const themeId = ref('')
+const media = ref<MediaAsset[]>([])
+const pickerAssetId = ref('')
+const mediaFit = ref<MediaFit>('cover')
+const relinking = ref(false)
 const loading = ref(true)
 const saving = ref(false)
 const error = ref('')
+const mediaError = ref('')
 const savedAt = ref<number | null>(null)
 
 const titleDraft = ref('')
@@ -108,6 +129,8 @@ const dragging = ref<DragState | null>(null)
 let renderToken = 0
 let fullRenderTimer: ReturnType<typeof setTimeout> | null = null
 let dragRenderHandle = 0
+let videoLoopTimer: ReturnType<typeof setInterval> | null = null
+let videoRenderBusy = false
 
 const isSong = computed(() => record.value?.kind === 'song')
 const songSlides = computed(() => splitSongLyrics(song.value.lyrics))
@@ -155,6 +178,40 @@ const singleShapeLayer = computed<ShapeElement | null>(() => {
   const layer = singleLayer.value
   return layer && layer.kind === 'shape' ? layer : null
 })
+const selectedMediaLayer = computed(() => (isMediaElement(singleLayer.value) ? singleLayer.value : null))
+const mediaById = computed(() => new Map(media.value.map((asset) => [asset.id, asset])))
+const mediaOptions = computed(() => {
+  const usable = media.value.filter((asset) => asset.kind === 'image' || asset.kind === 'video')
+  const options = usable.map((asset) => ({
+    value: asset.id,
+    label: `${asset.name}${asset.missing ? ' (missing)' : ''}`,
+  }))
+  return [
+    {
+      value: '',
+      label: options.length ? 'Choose image or video' : 'No image or video imported',
+    },
+    ...options,
+  ]
+})
+const pickerAsset = computed<MediaAsset | null>(() => {
+  const found = media.value.find((asset) => asset.id === pickerAssetId.value)
+  return found && (found.kind === 'image' || found.kind === 'video') ? found : null
+})
+const selectedMediaAsset = computed<MediaAsset | null>(() => {
+  const id = mediaAssetId(selectedMediaLayer.value)
+  return id ? (mediaById.value.get(id) ?? null) : null
+})
+const selectedMediaMissing = computed(
+  () => selectedMediaLayer.value !== null && (!selectedMediaAsset.value || selectedMediaAsset.value.missing),
+)
+const previewHasVideo = computed(() => {
+  if (isSong.value || !nativePreview.value) return false
+  const doc = previewDoc.value
+  const index = sceneSlideIndex.value
+  const slide = doc && index >= 0 ? doc.slides[index] : null
+  return slideHasVideo(slide ?? null)
+})
 const singleTextValue = computed(() =>
   singleTextLayer.value ? singleTextLayer.value.runs.map((run) => run.text).join('\n') : '',
 )
@@ -172,6 +229,11 @@ const themeOptions = computed(() => {
   }
   return options
 })
+const fitOptions: Array<{ value: MediaFit; label: string }> = [
+  { value: 'cover', label: 'Cover' },
+  { value: 'contain', label: 'Contain' },
+  { value: 'stretch', label: 'Stretch' },
+]
 const frameFields = [
   { key: 'x', label: 'X' },
   { key: 'y', label: 'Y' },
@@ -257,7 +319,7 @@ async function renderAt(width: number, height: number): Promise<void> {
   if (!doc || index < 0) return
   const token = ++renderToken
   const scene = buildScene(doc, null, index, { width, height }, {
-    assets: [],
+    assets: assetsForDoc(doc, media.value),
     fonts: [],
     revision: previewRevision.value,
     role: 'preview',
@@ -295,6 +357,34 @@ function retryPreview(): void {
   previewError.value = ''
   scheduleFullRender(0)
 }
+
+function stopVideoLoop(): void {
+  if (videoLoopTimer) {
+    clearInterval(videoLoopTimer)
+    videoLoopTimer = null
+  }
+}
+
+function startVideoLoop(): void {
+  stopVideoLoop()
+  videoLoopTimer = setInterval(() => {
+    if (!previewHasVideo.value || !nativePreview.value || videoRenderBusy) return
+    videoRenderBusy = true
+    const size = fullSizeForDoc()
+    void renderAt(size.width, size.height).finally(() => {
+      videoRenderBusy = false
+    })
+  }, 33)
+}
+
+watch(
+  previewHasVideo,
+  (active) => {
+    if (active) startVideoLoop()
+    else stopVideoLoop()
+  },
+  { flush: 'post' },
+)
 
 watch(
   [() => editor.value?.doc, () => editor.value?.slideId, themeId, () => isSong.value],
@@ -444,15 +534,60 @@ const savedLabel = computed(() => {
   return 'Local draft'
 })
 
+const AUTOSAVE_DELAY_MS = 900
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+
+function cancelAutosave(): void {
+  if (autosaveTimer) {
+    clearTimeout(autosaveTimer)
+    autosaveTimer = null
+  }
+}
+
+function scheduleAutosave(delay = AUTOSAVE_DELAY_MS): void {
+  cancelAutosave()
+  if (loading.value || !record.value) return
+  autosaveTimer = setTimeout(() => {
+    autosaveTimer = null
+    if (!dirty.value) return
+    if (saving.value) {
+      scheduleAutosave(300)
+      return
+    }
+    void save()
+  }, delay)
+}
+
+watch(signature, () => {
+  if (!loading.value) scheduleAutosave()
+})
+
 watch(slideCount, (count) => {
   if (selected.value >= count) selected.value = Math.max(0, count - 1)
 })
+watch(
+  selectedMediaLayer,
+  (layer) => {
+    if (layer) mediaFit.value = layer.fit
+  },
+  { immediate: true },
+)
 
 async function loadThemes(): Promise<void> {
   try {
     themes.value = await listThemes()
   } catch {
     themes.value = []
+  }
+}
+
+async function loadMedia(): Promise<void> {
+  mediaError.value = ''
+  try {
+    media.value = await listMediaAssets()
+  } catch (reason) {
+    media.value = []
+    mediaError.value = reason instanceof Error ? reason.message : String(reason)
   }
 }
 
@@ -611,6 +746,70 @@ function addShapeLayer(): void {
   editor.value = addLayer(editor.value, createShapeLayer())
 }
 
+function addMediaLayer(): void {
+  const state = editor.value
+  const asset = pickerAsset.value
+  if (!state || !asset || asset.missing) return
+  const element = createMediaElement(asset, { fit: mediaFit.value })
+  if (!element) return
+  editor.value = addLayer(state, element)
+}
+
+function replaceSelectedMedia(): void {
+  const state = editor.value
+  const asset = pickerAsset.value
+  const layer = selectedMediaLayer.value
+  if (!state || !asset || asset.missing || !layer) return
+  editor.value = updateLayer(state, layer.id, (element) =>
+    replaceMediaSource(element, asset, mediaFit.value),
+  )
+}
+
+function applyMediaFit(value: MediaFit): void {
+  mediaFit.value = value
+  const state = editor.value
+  const layer = selectedMediaLayer.value
+  if (!state || !layer) return
+  editor.value = updateLayer(state, layer.id, (element) => setMediaFit(element, value))
+}
+
+function onMediaFit(value: MediaFit | undefined): void {
+  if (value) applyMediaFit(value)
+}
+
+async function relinkSelectedMedia(): Promise<void> {
+  const assetId = mediaAssetId(selectedMediaLayer.value)
+  if (!assetId) return
+  if (!isTauriRuntime()) {
+    mediaError.value = 'Relinking requires the desktop app.'
+    return
+  }
+  const selection = await open({
+    multiple: false,
+    directory: false,
+    title: 'Relink media',
+    filters: [
+      {
+        name: 'Media',
+        extensions: ['png', 'jpg', 'jpeg', 'webp', 'mp4', 'm4v', 'mov', 'webm'],
+      },
+    ],
+  })
+  if (!selection || Array.isArray(selection)) return
+  relinking.value = true
+  mediaError.value = ''
+  try {
+    await relinkMediaAsset(assetId, selection)
+    await loadMedia()
+    previewRevision.value += 1
+    scheduleFullRender(0)
+  } catch (reason) {
+    mediaError.value = reason instanceof Error ? reason.message : String(reason)
+  } finally {
+    relinking.value = false
+  }
+}
+
 function selectLayerRow(layer: string, event: MouseEvent): void {
   if (!editor.value) return
   const additive = event.shiftKey || event.metaKey || event.ctrlKey
@@ -737,8 +936,9 @@ function layerLabel(layer: Element): string {
     return text || 'Text'
   }
   if (layer.kind === 'shape') return 'Shape'
-  if (layer.kind === 'image') return 'Image'
-  return 'Video'
+  const assetId = mediaAssetId(layer)
+  const asset = assetId ? mediaById.value.get(assetId) : null
+  return asset?.name ?? 'Missing media'
 }
 
 function layerIcon(layer: Element): string {
@@ -860,12 +1060,16 @@ async function present(): Promise<void> {
 onMounted(() => {
   void load()
   void loadThemes()
+  void loadMedia()
   window.addEventListener('keydown', onKeydown)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   if (fullRenderTimer) clearTimeout(fullRenderTimer)
   if (dragRenderHandle) cancelAnimationFrame(dragRenderHandle)
+  cancelAutosave()
+  if (dirty.value && record.value) void save()
+  stopVideoLoop()
   renderToken += 1
 })
 
@@ -1126,6 +1330,52 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
               <Button variant="ghost" size="sm" icon="lucide:trash-2" @click="removeSlide(activeSlideIndex)">Delete</Button>
             </div>
           </div>
+
+          <h2 :class="sectionTitle">Media</h2>
+          <div :class="field">
+            <span :class="fieldLabel">Asset</span>
+            <Select v-model="pickerAssetId" :options="mediaOptions" aria-label="Media asset" />
+          </div>
+          <div :class="row">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon="lucide:image-plus"
+              :disabled="!pickerAsset || pickerAsset.missing"
+              @click="addMediaLayer"
+            >
+              {{ pickerAsset?.kind === 'video' ? 'Add video' : 'Add image' }}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon="lucide:replace"
+              :disabled="!pickerAsset || pickerAsset.missing || !selectedMediaLayer"
+              @click="replaceSelectedMedia"
+            >
+              Replace
+            </Button>
+          </div>
+          <template v-if="selectedMediaLayer">
+            <div :class="field">
+              <span :class="fieldLabel">Fit</span>
+              <Select v-model="mediaFit" :options="fitOptions" aria-label="Media fit" @update:model-value="onMediaFit" />
+            </div>
+            <div v-if="selectedMediaMissing" :class="row">
+              <span :class="hint">Media file is missing.</span>
+              <span :class="spacer" />
+              <Button
+                variant="secondary"
+                size="sm"
+                icon="lucide:link"
+                :loading="relinking"
+                @click="relinkSelectedMedia"
+              >
+                Relink
+              </Button>
+            </div>
+          </template>
+          <p v-if="mediaError" :class="hint">{{ mediaError }}</p>
 
           <h2 :class="sectionTitle">Layers</h2>
           <div :class="row">

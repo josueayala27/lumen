@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+mod asset;
+mod blur;
 mod color;
 mod geometry;
 mod renderer;
