@@ -42,7 +42,7 @@ The audience path stays native (invariant 1) and runs with no network (invariant
 
 Everything later depends on this wave.
 
-Status: Hap decode (all variants except HDR) with direct BC upload, CPU fallback, frame-accurate playback, 16 Hap decoders, shared frames across outputs and `-hwaccel auto` for ffmpeg are done. Open: native VideoToolbox/Media Foundation decode with zero-copy textures, NotchLC, ProRes, a seek/transport API on the show clock, decoder preload, and the 8-layer budget measurement on real media.
+Status: done — Hap decode (all variants except HDR) with direct BC upload and CPU fallback, frame-accurate playback, 16 Hap decoders, shared frames across outputs, `-hwaccel auto` for ffmpeg, per-video transport (play/pause/seek/rate) driven by the timeline, next-cue preload, per-caller decoder demand, and the 8-layer budget on synthetic Hap Q (4.7 ms GPU per frame). Open: native VideoToolbox/Media Foundation decode with zero-copy textures (H.264/HEVC/ProRes), NotchLC, and the budget check on real footage and disks.
 
 ### A1 Video engine
 
