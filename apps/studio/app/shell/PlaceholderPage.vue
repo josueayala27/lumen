@@ -13,7 +13,7 @@ const root = css({ display: 'grid', placeItems: 'center', h: 'full', p: '6' })
 const card = css({ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3', maxW: '[520px]', textAlign: 'center' })
 const well = css({ display: 'grid', placeItems: 'center', w: '[56px]', h: '[56px]', borderRadius: 'lg', bg: 'bg.panel', borderWidth: '1px', borderColor: 'border.default', color: 'accent.default' })
 const title = css({ textStyle: 'display.md', color: 'fg.default' })
-const text = css({ textStyle: 'ui.sm', color: 'fg.muted', lineHeight: '1.6' })
+const text = css({ textStyle: 'ui.sm', color: 'fg.muted', lineHeight: 'relaxed' })
 </script>
 
 <template>

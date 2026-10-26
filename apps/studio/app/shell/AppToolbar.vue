@@ -26,12 +26,12 @@ const mark = css({
   borderRadius: 'sm',
   background: '[token(gradients.sheen), token(colors.accent.default)]',
   color: 'fg.onAccent',
-  fontSize: '11px',
-  fontWeight: '700',
-  letterSpacing: '-0.02em',
+  textStyle: 'ui.xs',
+  fontWeight: 'bold',
+  letterSpacing: 'tight',
 })
 const wordmark = css({ textStyle: 'ui.title', color: 'fg.default' })
-const divider = css({ w: '1px', h: '5', bg: 'border.default', flexShrink: '0' })
+const divider = css({ w: '[1px]', h: '5', bg: 'border.default', flexShrink: '0' })
 const spacer = css({ flex: '1' })
 const searchBox = css({ w: '[320px]', maxW: '[34vw]' })
 const status = css({

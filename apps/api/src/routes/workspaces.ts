@@ -3,10 +3,10 @@ import { zValidator } from '@hono/zod-validator'
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { memberRole, requireRole } from './access'
-import { ApiError } from './errors'
-import { requireUser } from './auth'
-import type { AppEnv } from './types'
+import { memberRole, requireRole } from '../access'
+import { ApiError } from '../errors'
+import { requireUser } from '../auth'
+import type { AppEnv } from '../types'
 
 export const workspaceRoutes = new Hono<AppEnv>()
 

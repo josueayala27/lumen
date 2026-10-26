@@ -4,9 +4,9 @@ import { zValidator } from '@hono/zod-validator'
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { requireRole } from './access'
-import { ApiError } from './errors'
-import type { AppEnv } from './types'
+import { requireRole } from '../access'
+import { ApiError } from '../errors'
+import type { AppEnv } from '../types'
 
 export const liveRoutes = new Hono<AppEnv>()
 

@@ -3,6 +3,7 @@ import { definePreset } from '@pandacss/dev'
 // Lumen design system. Tokens copied from Malla Builder (apps/web/panda.config.ts).
 // Each app supplies `include`, `outdir`, `preflight` and `strictTokens` in its own config.
 export const lumenPreset = definePreset({
+  name: 'lumen',
   conditions: {
     extend: {
       light: '[data-theme=light] &',

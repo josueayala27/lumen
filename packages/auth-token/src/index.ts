@@ -35,7 +35,13 @@ export async function signToken(payload: TokenPayload, secret: string, ttlSecond
 export async function verifyToken(token: string, secret: string): Promise<TokenPayload | null> {
   const [encoded, signature] = token.split('.')
   if (!encoded || !signature) return null
-  const valid = await crypto.subtle.verify('HMAC', await key(secret), fromBase64url(signature), encoder.encode(encoded))
+  const signatureBytes = fromBase64url(signature)
+  const valid = await crypto.subtle.verify(
+    'HMAC',
+    await key(secret),
+    signatureBytes.buffer as ArrayBuffer,
+    encoder.encode(encoded),
+  )
   if (!valid) return null
   let payload: TokenPayload
   try {

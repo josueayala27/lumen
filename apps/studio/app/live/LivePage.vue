@@ -104,22 +104,22 @@ const cueIndex = css({ w: '5', textStyle: 'ui.mono', color: 'fg.subtle', flexShr
 const cueLabel = css({ flex: '1', textStyle: 'ui.sm', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
 const center = css({ flex: '1', minW: '0', display: 'flex', flexDirection: 'column', minH: '0', bg: 'bg.canvas' })
 const centerHead = css({ display: 'flex', alignItems: 'center', gap: '2', h: 'toolbar', px: '4', flexShrink: '0', borderBottomWidth: '1px', borderColor: 'border.default' })
-const livePill = css({ display: 'inline-flex', alignItems: 'center', gap: '1.5', h: 'control.sm', px: '2', borderRadius: 'full', bg: 'live.muted', color: 'live.default', textStyle: 'ui.xs', fontWeight: '600' })
+const livePill = css({ display: 'inline-flex', alignItems: 'center', gap: '1.5', h: 'control.sm', px: '2', borderRadius: 'full', bg: 'live.muted', color: 'live.default', textStyle: 'ui.xs', fontWeight: 'semibold' })
 const stage = css({ display: 'flex', gap: '3', p: '4', flex: '1', minH: '0' })
 const pane = css({ flex: '1', minW: '0', display: 'flex', flexDirection: 'column', gap: '2' })
 const paneLabel = css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', textStyle: 'ui.label', color: 'fg.muted', textTransform: 'uppercase' })
-const slide = css({ position: 'relative', aspectRatio: '16/9', borderRadius: 'md', overflow: 'hidden', borderWidth: '1px', borderColor: 'border.default', display: 'grid', placeItems: 'center', p: '8', textAlign: 'center' })
+const slide = css({ position: 'relative', aspectRatio: 'video', borderRadius: 'md', overflow: 'hidden', borderWidth: '1px', borderColor: 'border.default', display: 'grid', placeItems: 'center', p: '8', textAlign: 'center' })
 const liveSlide = css({ borderColor: 'live.default' })
-const slideText = css({ display: 'flex', flexDirection: 'column', gap: '2', textStyle: 'display.md', color: 'ink.0', textShadow: '0 2px 18px rgba(0,0,0,0.5)' })
-const slideLine = css({ lineHeight: '1.15' })
+const slideText = css({ display: 'flex', flexDirection: 'column', gap: '2', textStyle: 'display.md', color: 'ink.0', textShadow: '[0_2px_18px_rgba(0,0,0,0.5)]' })
+const slideLine = css({ lineHeight: '[1.15]' })
 const nextStrip = css({ display: 'flex', gap: '2', p: '4', pt: '0' })
-const nextCard = css({ flex: '1', aspectRatio: '16/9', maxW: '[180px]', borderRadius: 'sm', borderWidth: '1px', borderColor: 'border.default', display: 'grid', placeItems: 'center', p: '2', textStyle: 'ui.xs', color: 'fg.muted', bg: 'bg.panel' })
+const nextCard = css({ flex: '1', aspectRatio: 'video', maxW: '[180px]', borderRadius: 'sm', borderWidth: '1px', borderColor: 'border.default', display: 'grid', placeItems: 'center', p: '2', textStyle: 'ui.xs', color: 'fg.muted', bg: 'bg.panel' })
 const controls = css({ display: 'flex', alignItems: 'center', gap: '2', p: '3', borderTopWidth: '1px', borderColor: 'border.default', bg: 'bg.panel', flexShrink: '0' })
 const inspector = css({ w: 'inspector', flexShrink: '0', bg: 'bg.panel', borderLeftWidth: '1px', borderColor: 'border.default', p: '4', overflowY: 'auto' })
 const sectionTitle = css({ textStyle: 'ui.label', color: 'fg.subtle', textTransform: 'uppercase', mb: '2', mt: '4', _first: { mt: '0' } })
 const fieldLabel = css({ textStyle: 'ui.sm', color: 'fg.muted', mb: '1.5' })
 const timer = css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', p: '3', borderRadius: 'md', bg: 'bg.canvas', borderWidth: '1px', borderColor: 'border.default', mb: '2' })
-const timerValue = css({ textStyle: 'ui.mono', fontSize: '18px', color: 'fg.default' })
+const timerValue = css({ textStyle: 'ui.mono', fontSize: '[18px]', color: 'fg.default' })
 const shortcut = css({ display: 'flex', justifyContent: 'space-between', py: '1.5', textStyle: 'ui.xs', color: 'fg.muted' })
 const kbd = css({ px: '1.5', py: '0.5', borderRadius: 'xs', bg: 'bg.subtle', color: 'fg.default', textStyle: 'ui.mono' })
 const gradient = css({ background: '[token(gradients.ember)]' })
@@ -174,7 +174,7 @@ const gradientTwo = css({ background: '[token(gradients.graphite)]' })
             <div v-if="isLive" :class="slideText">
               <span v-for="line in currentCue.lines" :key="line" :class="slideLine">{{ line }}</span>
             </div>
-            <div v-else :class="css({ textStyle: 'display.lg', color: 'fg.muted', textTransform: 'uppercase', letterSpacing: '0.12em' })">{{ mode }}</div>
+            <div v-else :class="css({ textStyle: 'display.lg', color: 'fg.muted', textTransform: 'uppercase', letterSpacing: 'widest' })">{{ mode }}</div>
           </div>
         </div>
       </div>

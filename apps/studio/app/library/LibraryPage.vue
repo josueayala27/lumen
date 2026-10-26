@@ -33,7 +33,11 @@ const filters: { value: Filter; label: string }[] = [
   { value: 'presentations', label: 'Presentations' },
   { value: 'songs', label: 'Songs' },
 ]
-const visible = computed(() => (filter.value === 'all' ? items : items.filter((item) => item.kind === filter.value)))
+const visible = computed(() => {
+  if (filter.value === 'all') return items
+  const kind = filter.value === 'songs' ? 'song' : 'presentation'
+  return items.filter((item) => item.kind === kind)
+})
 
 const root = css({ display: 'flex', h: 'full', minH: '0' })
 const content = css({ flex: '1', minW: '0', h: 'full', overflowY: 'auto', px: '6', py: '5' })
@@ -60,7 +64,7 @@ const card = css({
   transitionTimingFunction: 'standard',
   _hover: { borderColor: 'accent.default', transform: 'translateY(-1px)' },
 })
-const thumb = css({ position: 'relative', aspectRatio: '16/9', borderBottomWidth: '1px', borderColor: 'border.default' })
+const thumb = css({ position: 'relative', aspectRatio: 'video', borderBottomWidth: '1px', borderColor: 'border.default' })
 const tone = {
   graphite: css({ background: '[token(gradients.graphite)]' }),
   ember: css({ background: '[token(gradients.ember)]' }),
@@ -80,7 +84,7 @@ const kindBadge = css({
   bg: 'bg.app/70',
   color: 'fg.default',
   textStyle: 'ui.xs',
-  backdropFilter: 'blur(8px)',
+  backdropFilter: '[blur(8px)]',
 })
 const slideCount = css({ position: 'absolute', right: '2', bottom: '2', textStyle: 'ui.mono', color: 'fg.muted' })
 const cardBody = css({ display: 'flex', flexDirection: 'column', gap: '1', p: '3' })
@@ -92,7 +96,7 @@ const statLabel = css({ textStyle: 'ui.sm', color: 'fg.muted' })
 const statValue = css({ textStyle: 'ui.title', color: 'fg.default' })
 const cardBox = css({ mt: '4', p: '3', borderRadius: 'md', bg: 'bg.canvas', borderWidth: '1px', borderColor: 'border.default' })
 const boxTitle = css({ display: 'flex', alignItems: 'center', gap: '2', textStyle: 'ui.sm', color: 'fg.default', mb: '2' })
-const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: '1.5' })
+const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal' })
 const liveDot = css({ w: '1.5', h: '1.5', borderRadius: 'full', bg: 'success.default' })
 </script>
 

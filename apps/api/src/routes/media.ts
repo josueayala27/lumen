@@ -4,9 +4,9 @@ import { AwsClient } from 'aws4fetch'
 import { eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { libraryWorkspace, requireRole } from './access'
-import { ApiError } from './errors'
-import type { AppEnv } from './types'
+import { libraryWorkspace, requireRole } from '../access'
+import { ApiError } from '../errors'
+import type { AppEnv } from '../types'
 
 export const mediaRoutes = new Hono<AppEnv>()
 

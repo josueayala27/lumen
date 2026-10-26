@@ -3,10 +3,10 @@ import { zValidator } from '@hono/zod-validator'
 import { and, eq, gt, inArray, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { requireRole } from './access'
-import { ApiError } from './errors'
-import { nextRev } from './rev'
-import type { AppEnv } from './types'
+import { requireRole } from '../access'
+import { ApiError } from '../errors'
+import { nextRev } from '../rev'
+import type { AppEnv } from '../types'
 
 export const syncRoutes = new Hono<AppEnv>()
 

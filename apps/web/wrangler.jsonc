@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "lumen-web",
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "env": {
+    "staging": {
+      "name": "lumen-web-staging",
+      "workers_dev": false,
+      "services": [{ "binding": "API", "service": "lumen-api-staging" }],
+      "vars": {
+        "NUXT_API_ORIGIN": "https://api.staging.lumen.example",
+        "NUXT_PUBLIC_REALTIME_URL": "wss://realtime.staging.lumen.example"
+      },
+      "observability": { "enabled": true }
+    },
+    "production": {
+      "name": "lumen-web",
+      "workers_dev": false,
+      "services": [{ "binding": "API", "service": "lumen-api" }],
+      "vars": {
+        "NUXT_API_ORIGIN": "https://api.lumen.example",
+        "NUXT_PUBLIC_REALTIME_URL": "wss://realtime.lumen.example"
+      },
+      "observability": { "enabled": true }
+    }
+  }
+}
