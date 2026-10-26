@@ -162,6 +162,7 @@ pub fn run() {
             list_displays,
             open_output,
             close_output,
+            list_outputs,
             apply_scene,
             apply_transition,
             update_output_video_frame,
