@@ -24,7 +24,13 @@ describe('normalizeBindings', () => {
   })
 
   it('keeps valid bindings and defaults a missing label', () => {
-    const { label: _label, ...withoutLabel } = binding()
+    const withoutLabel = {
+      id: 'binding-2',
+      kind: 'controlChange',
+      channel: null,
+      number: 7,
+      command: { type: 'next' },
+    }
     expect(normalizeBindings([binding(), withoutLabel])).toEqual([
       binding(),
       { ...withoutLabel, label: '' },

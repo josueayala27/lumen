@@ -348,8 +348,14 @@ mod tests {
             assert_eq!(polarity, Some(true));
         }
 
-        assert_eq!(update_polarity(Some(true), -threshold, threshold), Some(false));
-        assert_eq!(update_polarity(Some(false), threshold, threshold), Some(true));
+        assert_eq!(
+            update_polarity(Some(true), -threshold, threshold),
+            Some(false)
+        );
+        assert_eq!(
+            update_polarity(Some(false), threshold, threshold),
+            Some(true)
+        );
     }
 
     #[test]

@@ -259,7 +259,10 @@ impl LtcService {
     /// stop first.
     pub fn is_alive(&self) -> bool {
         !self.failed.load(Ordering::Relaxed)
-            && self.thread.as_ref().is_some_and(|thread| !thread.is_finished())
+            && self
+                .thread
+                .as_ref()
+                .is_some_and(|thread| !thread.is_finished())
     }
 }
 
@@ -270,6 +273,12 @@ impl Drop for LtcService {
             let _ = thread.join();
         }
     }
+}
+
+struct LtcStreamSettings {
+    sample_rate: f64,
+    rate: FrameRate,
+    channel: usize,
 }
 
 fn build_stream(
@@ -296,38 +305,15 @@ fn build_stream(
     let sample_format = supported.sample_format();
     let config: StreamConfig = supported.into();
     let channels = usize::from(config.channels);
-    let sample_rate = f64::from(config.sample_rate);
+    let settings = LtcStreamSettings {
+        sample_rate: f64::from(config.sample_rate),
+        rate,
+        channel,
+    };
     match sample_format {
-        SampleFormat::F32 => build_typed::<f32>(
-            &device,
-            config,
-            channels,
-            sample_rate,
-            rate,
-            channel,
-            core,
-            failed,
-        ),
-        SampleFormat::I16 => build_typed::<i16>(
-            &device,
-            config,
-            channels,
-            sample_rate,
-            rate,
-            channel,
-            core,
-            failed,
-        ),
-        SampleFormat::I32 => build_typed::<i32>(
-            &device,
-            config,
-            channels,
-            sample_rate,
-            rate,
-            channel,
-            core,
-            failed,
-        ),
+        SampleFormat::F32 => build_typed::<f32>(&device, config, channels, &settings, core, failed),
+        SampleFormat::I16 => build_typed::<i16>(&device, config, channels, &settings, core, failed),
+        SampleFormat::I32 => build_typed::<i32>(&device, config, channels, &settings, core, failed),
         other => Err(format!("unsupported LTC input sample format {other}")),
     }
 }
@@ -336,9 +322,7 @@ fn build_typed<T>(
     device: &cpal::Device,
     config: StreamConfig,
     channels: usize,
-    sample_rate: f64,
-    rate: FrameRate,
-    channel: usize,
+    settings: &LtcStreamSettings,
     core: &ControlCore,
     failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String>
@@ -346,7 +330,8 @@ where
     T: SizedSample + 'static,
     f32: FromSample<T>,
 {
-    let mut decoder = LtcSampleDecoder::new(sample_rate, rate);
+    let mut decoder = LtcSampleDecoder::new(settings.sample_rate, settings.rate);
+    let channel = settings.channel;
     let events = core.clone();
     let errors = core.clone();
     device

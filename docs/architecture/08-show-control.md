@@ -15,7 +15,8 @@ External control lives in `apps/studio/src-tauri/crates/lumen-control`. The crat
 `TimecodeSync` stores the last received frame and extrapolates with the real frame rate between updates. It reports `locked: false` after one second without a source. `snapshot()` never blocks the caller.
 
 - MTC: quarter-frame pieces 0–7 are assembled only when the piece sequence has no gap. Full-frame SysEx (`F0 7F … 01 01`) resets the assembly.
-- LTC: sign changes in the mono audio stream become biphase-mark intervals. A half interval followed by a half is a one; a full interval is a zero. The 80-bit window reports a frame when the `0x3FFD` sync word is present and the fields validate.
+- LTC: sign changes in the selected audio channel become biphase-mark intervals. A half interval followed by a half is a one; a full interval is a zero. The 80-bit window reports a frame when the `0x3FFD` sync word is present and the fields validate.
+- LTC input selects one channel from interleaved frames (`channel`, default `0`). An out-of-range channel falls back to channel 0. A Schmitt trigger with a default amplitude threshold of `0.02` (about -34 dBFS) keeps silence and low-level noise from producing transitions; the threshold is clamped to `0.0..=1.0`.
 
 ## MIDI
 
@@ -31,7 +32,7 @@ MidiBinding { id, kind: note | controlChange | programChange, channel: 0-15 | nu
 
 `list_midi_inputs`, `start_midi_input`, `stop_midi_input`, `get_midi_bindings`, `set_midi_bindings`, `begin_midi_learn`, `cancel_midi_learn`, `list_audio_inputs`, `start_ltc_input`, `stop_ltc_input`, `timecode_state`.
 
-`start_ltc_input` takes `{ device: string | null, rate: FrameRate }`; `start_midi_input` takes `{ port: string }` as a name or index.
+`start_ltc_input` takes `{ device: string | null, rate: FrameRate, channel?: number }`, where `channel` defaults to `0`; `start_midi_input` takes `{ port: string }` as a name or index.
 
 ## Events
 
@@ -50,3 +51,5 @@ One Tauri event, `control:event`, carries a tagged payload:
 ## Threads and teardown
 
 The MIDI connection and the audio stream each own a thread. Dropping `MidiService` or `LtcService` stops the thread and closes the device. Audio callbacks take a mutex around the timecode state; they do no allocation beyond event dispatch.
+
+A cpal stream error emits `ControlEvent::Error` with a message naming the failure and marks the LTC service dead. Lumen does not re-enumerate devices automatically: the user stops the dead input and starts it again, and `start_ltc_input` replaces a dead service without requiring `stop_ltc_input` first.

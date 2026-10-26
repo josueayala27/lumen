@@ -4,6 +4,7 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
+lumen-render = { path = "../lumen-render" }
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = ["unstable"] }
 
