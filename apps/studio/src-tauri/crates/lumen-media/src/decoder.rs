@@ -112,6 +112,10 @@ pub fn decode_args(request: &DecodeRequest) -> Vec<String> {
         args.push("-stream_loop".to_string());
         args.push("-1".to_string());
     }
+    // Hardware decode where the platform has it (VideoToolbox, D3D11); ffmpeg
+    // falls back to software when the codec or device is not supported.
+    args.push("-hwaccel".to_string());
+    args.push("auto".to_string());
     if request.start_ms > 0 {
         args.push("-ss".to_string());
         args.push(format!("{:.3}", request.start_ms as f64 / 1000.0));
@@ -310,6 +314,7 @@ mod tests {
     fn decode_args_stream_local_rgba() {
         let args = decode_args(&request("/tmp/Clip One.mp4"));
         assert!(args.windows(2).any(|pair| pair == ["-stream_loop", "-1"]));
+        assert!(args.windows(2).any(|pair| pair == ["-hwaccel", "auto"]));
         assert!(args.windows(2).any(|pair| pair == ["-an", "-sn"]));
         assert!(args.windows(2).any(|pair| pair == ["-pix_fmt", "rgba"]));
         assert!(args

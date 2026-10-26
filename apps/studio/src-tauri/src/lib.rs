@@ -11,28 +11,8 @@ use tauri::{Manager, State};
 pub(crate) struct PreviewState(Mutex<Option<PreviewRenderer>>);
 
 impl PreviewState {
-    /// Updates an already-created preview renderer from the decoder thread.
+    /// Updates an already-created preview renderer from a decoder thread.
     /// Frames that arrive before the first preview render are dropped.
-    pub(crate) fn push_video_frame(
-        &self,
-        asset_id: &str,
-        width: u32,
-        height: u32,
-        rgba: &[u8],
-    ) -> Result<(), String> {
-        let mut renderer = self
-            .0
-            .lock()
-            .map_err(|_| "preview renderer lock poisoned".to_string())?;
-        match renderer.as_mut() {
-            Some(renderer) => renderer
-                .update_video_frame(asset_id, width, height, rgba)
-                .map_err(|error| error.to_string()),
-            None => Ok(()),
-        }
-    }
-
-    /// Same as `push_video_frame` for any frame payload, including Hap.
     pub(crate) fn push_video(&self, asset_id: &str, frame: &VideoFrame) -> Result<(), String> {
         let mut renderer = self
             .0

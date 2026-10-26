@@ -344,6 +344,28 @@ mod tests {
     }
 
     #[test]
+    fn plays_a_hap_movie_frame_by_frame() {
+        // Three 8×8 Hap Q frames, Snappy-compressed, in a 25 fps QuickTime file.
+        let raws: Vec<Vec<u8>> = (0..3).map(|seed| blocks(HapTextureFormat::Bc3YCoCg, 8, 8, seed * 40)).collect();
+        let samples: Vec<Vec<u8>> = raws.iter().map(|raw| encode(0xBF, &compress(raw))).collect();
+        let movie = crate::mov::fixture::movie(b"HapY", 8, 8, 25, 1, &samples);
+        let path = std::env::temp_dir().join(format!("lumen-hap-{}.mov", std::process::id()));
+        std::fs::write(&path, &movie).expect("write movie");
+
+        let track = crate::mov::MovVideoTrack::open(&path).expect("track");
+        assert!(is_hap_codec(&track.codec));
+        let mut file = std::fs::File::open(&path).expect("open");
+        for (time_ms, expected) in [(0u64, 0usize), (40, 1), (79, 1), (80, 2)] {
+            let index = track.sample_index_at_ms(time_ms);
+            assert_eq!(index, expected, "frame at {time_ms} ms");
+            let frame = decode_frame(&track.read_sample(&mut file, index).expect("sample")).expect("frame");
+            validate_frame(&frame, track.width, track.height).expect("size");
+            assert_eq!(frame.textures[0].data, raws[expected]);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn block_sizes_round_up_to_whole_blocks() {
         assert_eq!(HapTextureFormat::Bc1.data_len(1920, 1080), 480 * 270 * 8);
         assert_eq!(HapTextureFormat::Bc3.data_len(5, 5), 4 * 16);

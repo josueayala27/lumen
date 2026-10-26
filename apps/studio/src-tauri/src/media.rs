@@ -642,3 +642,45 @@ pub async fn media_thumbnail(
     .await
     .map_err(|error| error.to_string())?
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lumen_media::HapTexture;
+
+    #[test]
+    fn hap_position_loops_or_ends() {
+        assert_eq!(hap_position_ms(0, 500, 1000, false), Some(500));
+        assert_eq!(hap_position_ms(250, 900, 1000, true), Some(150));
+        assert_eq!(hap_position_ms(0, 1000, 1000, false), None);
+        assert_eq!(hap_position_ms(0, 5, 0, true), Some(0));
+    }
+
+    #[test]
+    fn hap_frames_map_to_renderer_payloads() {
+        let texture = |format, len| HapTexture { format, data: vec![0u8; len] };
+        let single = HapFrame { textures: vec![texture(HapTextureFormat::Bc1, 8)] };
+        let frame = hap_video_frame(single, 4, 4).expect("bc1");
+        assert!(matches!(frame.pixels, VideoPixels::Bc1(_)));
+        assert_eq!((frame.width, frame.height), (4, 4));
+
+        let pair = HapFrame {
+            textures: vec![texture(HapTextureFormat::Bc3YCoCg, 16), texture(HapTextureFormat::Bc4, 8)],
+        };
+        assert!(matches!(
+            hap_video_frame(pair, 4, 4).expect("hap q alpha").pixels,
+            VideoPixels::Bc3YCoCgAlpha { .. }
+        ));
+
+        let wrong = HapFrame {
+            textures: vec![texture(HapTextureFormat::Bc1, 8), texture(HapTextureFormat::Bc1, 8)],
+        };
+        assert!(hap_video_frame(wrong, 4, 4).is_err());
+        assert!(hap_video_frame(HapFrame { textures: vec![] }, 4, 4).is_err());
+    }
+
+    #[test]
+    fn non_hap_files_use_ffmpeg() {
+        assert!(hap_track("/definitely/missing/clip.mov").is_none());
+    }
+}
