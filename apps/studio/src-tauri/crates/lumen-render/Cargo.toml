@@ -4,6 +4,9 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 pollster = "0.4"
 raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
