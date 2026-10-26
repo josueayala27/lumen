@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { newId, nominalFps } from '@lumen/core'
+import { advancePlayback, createPlaybackState, newId, nominalFps, sampleKeyframes } from '@lumen/core'
 import type {
-  ControlCommand,
   FrameRate,
   ShowTimeline,
+  PresentationDoc,
   TimelineClip,
+  TimelineEasing,
+  TimelineKeyframe,
   TimelineMarker,
+  TimelineProperty,
   TimelineTrack,
 } from '@lumen/schema'
 import { showTimelineSchema } from '@lumen/schema'
@@ -13,6 +16,8 @@ import { Icon } from '#components'
 import { css } from 'styled-system/css'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { newTrack, saveTimeline, type TimelineRecord } from '~/data/timelines'
+import { getPresentation, listPresentations, type PresentationSummary } from '~/data/presentations'
+import { listMediaAssets, type MediaAsset } from '~/data/media'
 import {
   Badge,
   Button,
@@ -51,7 +56,20 @@ import {
   trimClipFromEnd,
   trimClipFromStart,
   zoomBy,
+  KEYFRAME_PROPERTIES,
+  TIMELINE_ACTIONS,
+  actionKey,
+  commandForKey,
+  commitHistory,
+  createHistory,
+  exportTimelineJson,
+  keyframePropertySpec,
+  pastedClip,
+  redoHistory,
+  undoHistory,
   type ClipExtent,
+  type EditHistory,
+  type TimelineActionKey,
 } from './lib'
 
 const props = defineProps<{ record: TimelineRecord }>()
@@ -85,11 +103,46 @@ interface DragState {
 
 let drag: DragState | null = null
 
+// --- History, clipboard and playback state ---------------------------------
+
+const history = ref<EditHistory>(createHistory(JSON.stringify(props.record.doc)))
+let historyTimer: ReturnType<typeof setTimeout> | undefined
+const clipboard = ref<{ clip: TimelineClip; trackKind: TimelineTrack['kind'] } | null>(null)
+const playing = ref(false)
+let playHandle: number | null = null
+let lastPlayTick = 0
+
+const selectedTrackId = ref<string | null>(null)
+const selectedKeyframe = ref<{ trackId: string; propertyId: string; keyframeId: string } | null>(null)
+const newTrackKind = ref<TimelineTrack['kind']>('layer')
+const newPropertyName = ref<TimelineProperty['property']>('opacity')
+
+const presentations = ref<PresentationSummary[]>([])
+const mediaAssets = ref<MediaAsset[]>([])
+const presentationDocs = ref<Record<string, PresentationDoc | null>>({})
+
 function cloneDoc(doc: ShowTimeline): ShowTimeline {
   return JSON.parse(JSON.stringify(doc)) as ShowTimeline
 }
 
 const doc = state
+
+const trackKindOptions: SelectOption<TimelineTrack['kind']>[] = [
+  { value: 'slide', label: 'Slide track' },
+  { value: 'layer', label: 'Layer (keyframes)' },
+  { value: 'media', label: 'Media track' },
+  { value: 'audio', label: 'Audio track' },
+  { value: 'macro', label: 'Macro track' },
+]
+
+const actionOptions: SelectOption<TimelineActionKey>[] = TIMELINE_ACTIONS.map((entry) => ({ value: entry.value, label: entry.label }))
+const propertyOptions: SelectOption<TimelineProperty['property']>[] = KEYFRAME_PROPERTIES.map((entry) => ({ value: entry.value, label: entry.label }))
+const easingOptions: SelectOption<TimelineEasing['kind']>[] = [
+  { value: 'linear', label: 'Linear' },
+  { value: 'easeIn', label: 'Ease in' },
+  { value: 'easeOut', label: 'Ease out' },
+  { value: 'easeInOut', label: 'Ease in-out' },
+]
 
 const rateOptions: SelectOption<FrameRate>[] = [
   { value: '23.976', label: '23.976 fps' },
@@ -108,13 +161,6 @@ const clipKindOptions: SelectOption<TimelineClip['kind']>[] = [
 ]
 const newClipKind = ref<TimelineClip['kind']>('slide')
 
-type MacroAction = 'none' | 'next' | 'prev' | 'take'
-const macroActionOptions: SelectOption<MacroAction>[] = [
-  { value: 'none', label: 'No action' },
-  { value: 'next', label: 'Next slide' },
-  { value: 'prev', label: 'Previous slide' },
-  { value: 'take', label: 'Take preview' },
-]
 
 const unitless: Unit[] = ['']
 
@@ -228,16 +274,407 @@ const clipLoopField = computed({
 })
 
 const macroAction = computed({
-  get: (): MacroAction => {
-    const action = selectedClip.value?.clip.action
-    if (!action) return 'none'
-    if (action.type === 'next' || action.type === 'prev' || action.type === 'take') return action.type
-    return 'none'
-  },
-  set: (value: MacroAction) => {
-    patchSelectedClip({ action: commandForAction(value) })
+  get: (): TimelineActionKey => actionKey(selectedClip.value?.clip.action ?? null),
+  set: (value: TimelineActionKey) => patchSelectedClip({ action: commandForKey(value) }),
+})
+
+const markerAction = computed({
+  get: (): TimelineActionKey => actionKey(selectedMarker.value?.action ?? null),
+  set: (value: TimelineActionKey) => {
+    if (selectedMarker.value) selectedMarker.value.action = commandForKey(value)
   },
 })
+
+// --- Source linking -----------------------------------------------------------
+
+const presentationOptions = computed<SelectOption<string>[]>(() =>
+  presentations.value.map((entry) => ({ value: entry.id, label: entry.title })),
+)
+
+function slideOptionsFor(presentationId: string | null): SelectOption<string>[] {
+  const source = presentationId ? presentationDocs.value[presentationId] : null
+  if (!source) return []
+  return source.slides.map((slide, index) => ({
+    value: String(index),
+    label: `${index + 1}. ${slide.label || slide.id}`,
+  }))
+}
+
+function elementOptionsFor(presentationId: string | null, slideIndex: number | null): SelectOption<string>[] {
+  const source = presentationId ? presentationDocs.value[presentationId] : null
+  const slide = source && slideIndex !== null ? source.slides[slideIndex] : null
+  if (!slide) return []
+  return slide.elements.map((element, index) => ({
+    value: element.id,
+    label: `${index + 1}. ${element.kind}${element.kind === 'text' ? ` · ${element.runs.map((run) => run.text).join('').slice(0, 24)}` : ''}`,
+  }))
+}
+
+async function ensurePresentation(id: string | null): Promise<void> {
+  if (!id || id in presentationDocs.value) return
+  const record = await getPresentation(id).catch(() => null)
+  presentationDocs.value = { ...presentationDocs.value, [id]: record?.doc ?? null }
+}
+
+function assetOptionsFor(kind: TimelineClip['kind']): SelectOption<string>[] {
+  const wanted = kind === 'audio' ? ['audio'] : ['image', 'video']
+  return mediaAssets.value
+    .filter((asset) => wanted.includes(asset.kind))
+    .map((asset) => ({ value: asset.id, label: `${asset.name}${asset.missing ? ' (missing)' : ''}` }))
+}
+
+const clipPresentationField = computed({
+  get: () => selectedClip.value?.clip.presentationId ?? undefined,
+  set: (value: string | undefined) => {
+    patchSelectedClip({ presentationId: value ?? null, slideIndex: value ? 0 : null })
+    void ensurePresentation(value ?? null)
+    relabelSlideClip()
+  },
+})
+
+const clipSlideField = computed({
+  get: () => (selectedClip.value?.clip.slideIndex ?? null) === null ? undefined : String(selectedClip.value?.clip.slideIndex),
+  set: (value: string | undefined) => {
+    patchSelectedClip({ slideIndex: value === undefined ? null : Number(value) })
+    relabelSlideClip()
+  },
+})
+
+function relabelSlideClip(): void {
+  const current = selectedClip.value
+  if (!current || current.clip.kind !== 'slide' || !current.clip.presentationId) return
+  const title = presentations.value.find((entry) => entry.id === current.clip.presentationId)?.title ?? 'Slide'
+  const index = current.clip.slideIndex
+  patchSelectedClip({ label: index === null ? title : `${title} · ${index + 1}` })
+}
+
+const clipAssetField = computed({
+  get: () => selectedClip.value?.clip.assetId ?? undefined,
+  set: (value: string | undefined) => {
+    const asset = mediaAssets.value.find((entry) => entry.id === value)
+    const patch: Partial<TimelineClip> = { assetId: value ?? null }
+    if (asset) {
+      patch.label = asset.name
+      if (asset.durationMs && asset.kind !== 'image') {
+        const frames = Math.max(1, Math.round((asset.durationMs / 1000) * nominalFps(doc.value.frameRate)))
+        const current = selectedClip.value
+        if (current) patch.durationFrames = clampNumber(frames, 1, Math.max(1, doc.value.durationFrames - current.clip.startFrame))
+      }
+    }
+    patchSelectedClip(patch)
+  },
+})
+
+// --- Tracks and keyframes -------------------------------------------------------
+
+const selectedTrack = computed<TimelineTrack | null>(() =>
+  doc.value.tracks.find((track) => track.id === selectedTrackId.value) ?? null,
+)
+
+const selectedKeyframeEntry = computed<{ track: TimelineTrack; property: TimelineProperty; keyframe: TimelineKeyframe } | null>(() => {
+  const key = selectedKeyframe.value
+  if (!key) return null
+  const track = doc.value.tracks.find((entry) => entry.id === key.trackId)
+  const property = track?.properties.find((entry) => entry.id === key.propertyId)
+  const keyframe = property?.keyframes.find((entry) => entry.id === key.keyframeId)
+  return track && property && keyframe ? { track, property, keyframe } : null
+})
+
+const trackPresentationField = computed({
+  get: () => selectedTrack.value?.presentationId ?? undefined,
+  set: (value: string | undefined) => {
+    const track = selectedTrack.value
+    if (!track || track.locked) return
+    track.presentationId = value ?? null
+    track.slideIndex = value ? 0 : null
+    track.elementId = null
+    void ensurePresentation(value ?? null)
+  },
+})
+
+const trackSlideField = computed({
+  get: () => (selectedTrack.value?.slideIndex ?? null) === null ? undefined : String(selectedTrack.value?.slideIndex),
+  set: (value: string | undefined) => {
+    const track = selectedTrack.value
+    if (!track || track.locked) return
+    track.slideIndex = value === undefined ? null : Number(value)
+    track.elementId = null
+  },
+})
+
+const trackElementField = computed({
+  get: () => selectedTrack.value?.elementId ?? undefined,
+  set: (value: string | undefined) => {
+    const track = selectedTrack.value
+    if (!track || track.locked) return
+    track.elementId = value ?? null
+    const label = elementOptionsFor(track.presentationId, track.slideIndex).find((entry) => entry.value === value)?.label
+    if (label) track.name = label.replace(/^\d+\.\s*/, '')
+  },
+})
+
+function selectTrack(track: TimelineTrack): void {
+  selectedTrackId.value = track.id
+  selectedClipKey.value = null
+  selectedMarkerId.value = null
+  selectedKeyframe.value = null
+  void ensurePresentation(track.presentationId)
+}
+
+function addTrack(): void {
+  const track = newTrack(newTrackKind.value)
+  doc.value.tracks.push(track)
+  selectTrack(track)
+}
+
+function removeSelectedTrack(): void {
+  const track = selectedTrack.value
+  if (!track || track.locked) return
+  doc.value.tracks = doc.value.tracks.filter((entry) => entry.id !== track.id)
+  selectedTrackId.value = null
+}
+
+function addPropertyToTrack(): void {
+  const track = selectedTrack.value
+  if (!track || track.locked) return
+  if (track.properties.some((entry) => entry.property === newPropertyName.value)) return
+  track.properties.push({ id: newId('property'), property: newPropertyName.value, keyframes: [] })
+}
+
+function removeProperty(property: TimelineProperty): void {
+  const track = selectedTrack.value
+  if (!track || track.locked) return
+  track.properties = track.properties.filter((entry) => entry.id !== property.id)
+  selectedKeyframe.value = null
+}
+
+function keyAtPlayhead(track: TimelineTrack, property: TimelineProperty): void {
+  if (track.locked) return
+  const frame = Math.round(playhead.value)
+  const sampled = sampleKeyframes(property, frame)
+  const value = sampled ?? keyframePropertySpec(property.property).fallback
+  const existing = property.keyframes.find((entry) => entry.frame === frame)
+  if (existing) {
+    selectedKeyframe.value = { trackId: track.id, propertyId: property.id, keyframeId: existing.id }
+    return
+  }
+  const keyframe: TimelineKeyframe = {
+    id: newId('keyframe'),
+    frame,
+    value,
+    easing: { kind: 'linear', x1: 0.25, y1: 0, x2: 0.75, y2: 1 },
+  }
+  property.keyframes = [...property.keyframes, keyframe].sort((a, b) => a.frame - b.frame)
+  selectedKeyframe.value = { trackId: track.id, propertyId: property.id, keyframeId: keyframe.id }
+}
+
+function selectKeyframe(track: TimelineTrack, property: TimelineProperty, keyframe: TimelineKeyframe): void {
+  selectedTrackId.value = track.id
+  selectedClipKey.value = null
+  selectedMarkerId.value = null
+  selectedKeyframe.value = { trackId: track.id, propertyId: property.id, keyframeId: keyframe.id }
+  playhead.value = keyframe.frame
+}
+
+function removeSelectedKeyframe(): void {
+  const entry = selectedKeyframeEntry.value
+  if (!entry || entry.track.locked) return
+  entry.property.keyframes = entry.property.keyframes.filter((keyframe) => keyframe.id !== entry.keyframe.id)
+  selectedKeyframe.value = null
+}
+
+const keyframeValueField = computed({
+  get: () => String(selectedKeyframeEntry.value?.keyframe.value ?? ''),
+  set: (value: string) => {
+    const entry = selectedKeyframeEntry.value
+    if (!entry || entry.track.locked) return
+    if (entry.property.property === 'color') {
+      entry.keyframe.value = value
+      return
+    }
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) entry.keyframe.value = parsed
+  },
+})
+
+const keyframeFrameField = computed({
+  get: () => String(selectedKeyframeEntry.value?.keyframe.frame ?? 0),
+  set: (value: string) => {
+    const entry = selectedKeyframeEntry.value
+    const parsed = Math.round(Number(value))
+    if (!entry || entry.track.locked || !Number.isFinite(parsed)) return
+    const frame = clampNumber(parsed, 0, doc.value.durationFrames)
+    if (entry.property.keyframes.some((keyframe) => keyframe.frame === frame && keyframe.id !== entry.keyframe.id)) return
+    entry.keyframe.frame = frame
+    entry.property.keyframes.sort((a, b) => a.frame - b.frame)
+  },
+})
+
+const keyframeEasingField = computed({
+  get: () => selectedKeyframeEntry.value?.keyframe.easing.kind ?? 'linear',
+  set: (value: TimelineEasing['kind']) => {
+    const entry = selectedKeyframeEntry.value
+    if (entry && !entry.track.locked) entry.keyframe.easing = { ...entry.keyframe.easing, kind: value }
+  },
+})
+
+function trackKeyframes(track: TimelineTrack): { property: TimelineProperty; keyframe: TimelineKeyframe }[] {
+  return track.properties.flatMap((property) => property.keyframes.map((keyframe) => ({ property, keyframe })))
+}
+
+function propertyLabel(name: string): string {
+  return keyframePropertySpec(name).label
+}
+
+function sampledLabel(property: TimelineProperty): string {
+  const value = sampleKeyframes(property, Math.round(playhead.value))
+  if (value === null) return '—'
+  return typeof value === 'number' ? String(Math.round(value * 1000) / 1000) : value
+}
+
+// --- Undo / redo ----------------------------------------------------------------
+
+function commitNow(): void {
+  if (historyTimer) {
+    clearTimeout(historyTimer)
+    historyTimer = undefined
+  }
+  history.value = commitHistory(history.value, JSON.stringify(doc.value))
+}
+
+function scheduleHistory(): void {
+  if (historyTimer) clearTimeout(historyTimer)
+  // Coalesce a drag or a burst of typing into one undo step.
+  historyTimer = setTimeout(commitNow, 300)
+}
+
+async function restore(serialized: string): Promise<void> {
+  hydrating = true
+  state.value = JSON.parse(serialized) as ShowTimeline
+  await nextTick()
+  hydrating = false
+  scheduleSave()
+}
+
+const canUndo = computed(() => history.value.past.length > 0)
+const canRedo = computed(() => history.value.future.length > 0)
+
+function undo(): void {
+  commitNow()
+  if (!canUndo.value) return
+  history.value = undoHistory(history.value)
+  void restore(history.value.present)
+}
+
+function redo(): void {
+  commitNow()
+  if (!canRedo.value) return
+  history.value = redoHistory(history.value)
+  void restore(history.value.present)
+}
+
+// --- Clipboard --------------------------------------------------------------------
+
+function copySelection(): void {
+  const current = selectedClip.value
+  if (!current) return
+  clipboard.value = { clip: JSON.parse(JSON.stringify(current.clip)) as TimelineClip, trackKind: current.track.kind }
+}
+
+function cutSelection(): void {
+  copySelection()
+  deleteSelection()
+}
+
+function pasteClipboard(): void {
+  const copied = clipboard.value
+  if (!copied) return
+  let track = selectedClip.value?.track.kind === copied.trackKind && !selectedClip.value.track.locked
+    ? selectedClip.value.track
+    : doc.value.tracks.find((entry) => entry.kind === copied.trackKind && !entry.locked)
+  if (!track) {
+    track = newTrack(copied.trackKind)
+    doc.value.tracks.push(track)
+  }
+  const clip = pastedClip(copied.clip, Math.round(playhead.value), doc.value.durationFrames)
+  track.clips.push(clip)
+  selectClip(track, clip)
+}
+
+function duplicateSelection(): void {
+  const current = selectedClip.value
+  if (!current || current.track.locked) return
+  const clip = pastedClip(current.clip, clipEndFrame(current.clip), doc.value.durationFrames)
+  current.track.clips.push(clip)
+  selectClip(current.track, clip)
+}
+
+// --- Playback -------------------------------------------------------------------
+
+function playTick(time: number): void {
+  playHandle = null
+  if (!playing.value) return
+  const elapsed = lastPlayTick ? time - lastPlayTick : 0
+  lastPlayTick = time
+  const next = advancePlayback(doc.value, createPlaybackState({ frame: Math.round(playhead.value), playing: true }), elapsed)
+  playhead.value = Math.min(next.frame, doc.value.durationFrames)
+  if (!next.playing || playhead.value >= doc.value.durationFrames - 1) {
+    playing.value = false
+    return
+  }
+  followPlayhead()
+  playHandle = requestAnimationFrame(playTick)
+}
+
+function followPlayhead(): void {
+  const scroller = scrollEl.value
+  if (!scroller) return
+  const x = frameToPixel(playhead.value, pixelsPerFrame.value)
+  if (x > scroller.scrollLeft + scroller.clientWidth - 40 || x < scroller.scrollLeft) {
+    scroller.scrollLeft = Math.max(0, x - 80)
+  }
+}
+
+function togglePlay(): void {
+  if (playing.value) {
+    stopPlay()
+    return
+  }
+  if (playhead.value >= doc.value.durationFrames - 1) playhead.value = 0
+  playing.value = true
+  lastPlayTick = 0
+  playHandle = requestAnimationFrame(playTick)
+}
+
+function stopPlay(): void {
+  playing.value = false
+  if (playHandle !== null) cancelAnimationFrame(playHandle)
+  playHandle = null
+}
+
+async function exportJson(): Promise<void> {
+  const text = exportTimelineJson(doc.value)
+  const fileName = `${doc.value.name.replace(/[^\w\- ]+/g, '').trim() || 'timeline'}.lumen-timeline.json`
+  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+    try {
+      const { save: saveDialog } = await import('@tauri-apps/plugin-dialog')
+      const path = await saveDialog({ defaultPath: fileName, filters: [{ name: 'Lumen timeline', extensions: ['json'] }] })
+      if (!path) return
+      const { writeTextFile } = await import('@tauri-apps/plugin-fs')
+      await writeTextFile(path, text)
+      return
+    } catch (reason) {
+      error.value = reason instanceof Error ? reason.message : String(reason)
+      return
+    }
+  }
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = fileName
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
 
 const markerLabelField = computed({
   get: () => selectedMarker.value?.label ?? '',
@@ -261,19 +698,6 @@ const markerEnabledField = computed({
     if (selectedMarker.value) selectedMarker.value.enabled = value
   },
 })
-
-function commandForAction(value: MacroAction): ControlCommand | null {
-  switch (value) {
-    case 'next':
-      return { type: 'next' }
-    case 'prev':
-      return { type: 'prev' }
-    case 'take':
-      return { type: 'take' }
-    default:
-      return null
-  }
-}
 
 function setTimelineDuration(frames: number): void {
   const next = Math.max(1, Math.round(frames))
@@ -299,16 +723,23 @@ function patchSelectedClip(patch: Partial<TimelineClip>): void {
 function selectClip(track: TimelineTrack, clip: TimelineClip): void {
   selectedClipKey.value = { trackId: track.id, clipId: clip.id }
   selectedMarkerId.value = null
+  selectedTrackId.value = null
+  selectedKeyframe.value = null
+  if (clip.kind === 'slide') void ensurePresentation(clip.presentationId)
 }
 
 function selectMarker(marker: TimelineMarker): void {
   selectedMarkerId.value = marker.id
   selectedClipKey.value = null
+  selectedTrackId.value = null
+  selectedKeyframe.value = null
 }
 
 function clearSelection(): void {
   selectedClipKey.value = null
   selectedMarkerId.value = null
+  selectedTrackId.value = null
+  selectedKeyframe.value = null
 }
 
 function defaultClipDuration(): number {
@@ -374,6 +805,10 @@ function splitSelected(): void {
 }
 
 function deleteSelection(): void {
+  if (selectedKeyframeEntry.value) {
+    removeSelectedKeyframe()
+    return
+  }
   const marker = selectedMarker.value
   if (marker) {
     doc.value.markers = doc.value.markers.filter((entry) => entry.id !== marker.id)
@@ -489,6 +924,8 @@ async function reset(): Promise<void> {
   playhead.value = 0
   pixelsPerFrame.value = TIMELINE_DEFAULT_PX_PER_FRAME
   clearSelection()
+  stopPlay()
+  history.value = createHistory(JSON.stringify(state.value))
   error.value = ''
   dirty.value = false
   await nextTick()
@@ -507,6 +944,7 @@ watch(
     if (hydrating) return
     error.value = ''
     scheduleSave()
+    scheduleHistory()
   },
   { deep: true },
 )
@@ -735,8 +1173,39 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 function onKeydown(event: KeyboardEvent): void {
   if (isEditableTarget(event.target)) return
-  if (event.metaKey || event.ctrlKey || event.altKey) return
+  if (event.metaKey || event.ctrlKey) {
+    const key = event.key.toLowerCase()
+    const handled = (action: () => void): void => {
+      event.preventDefault()
+      action()
+    }
+    if (key === 'z' && event.shiftKey) handled(redo)
+    else if (key === 'z') handled(undo)
+    else if (key === 'y') handled(redo)
+    else if (key === 'c') handled(copySelection)
+    else if (key === 'x') handled(cutSelection)
+    else if (key === 'v') handled(pasteClipboard)
+    else if (key === 'd') handled(duplicateSelection)
+    else if (key === 's') handled(() => void save())
+    return
+  }
+  if (event.altKey) return
   switch (event.key) {
+    case ' ':
+      event.preventDefault()
+      togglePlay()
+      break
+    case 'Home':
+      event.preventDefault()
+      goToStart()
+      break
+    case 'End':
+      event.preventDefault()
+      goToEnd()
+      break
+    case 'Escape':
+      clearSelection()
+      break
     case 'ArrowLeft':
       event.preventDefault()
       stepPlayhead(event.shiftKey ? -10 : -1)
@@ -772,10 +1241,20 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
+onMounted(async () => {
+  window.addEventListener('keydown', onKeydown)
+  const [presentationList, media] = await Promise.all([
+    listPresentations().catch(() => [] as PresentationSummary[]),
+    listMediaAssets().catch(() => [] as MediaAsset[]),
+  ])
+  presentations.value = presentationList
+  mediaAssets.value = media
+})
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
+  stopPlay()
+  if (historyTimer) clearTimeout(historyTimer)
   if (saveTimer) clearTimeout(saveTimer)
   if (scrubCleanup) scrubCleanup()
   if (markerDrag) markerDrag.up()
@@ -788,7 +1267,8 @@ onBeforeUnmount(() => {
 const page = css({ display: 'flex', flexDirection: 'column', h: 'full', minH: '0', bg: 'bg.app', color: 'fg.default' })
 const header = css({ display: 'flex', alignItems: 'center', gap: '2.5', flexShrink: '0', h: '[52px]', px: '3', borderBottomWidth: '1px', borderColor: 'border.default', bg: 'bg.panel' })
 const heading = css({ flex: '1', minW: '0', display: 'flex', alignItems: 'center', gap: '2.5' })
-const nameInput = css({ w: '[240px]' })
+const nameInput = css({ w: '[240px]', minW: '[140px]', flexShrink: '1' })
+const headerField = css({ w: '[150px]', flexShrink: '0' })
 const eyebrow = css({ textStyle: 'ui.label', color: 'accent.default', textTransform: 'uppercase', flexShrink: '0' })
 const toolbar = css({ display: 'flex', alignItems: 'center', gap: '2', flexWrap: 'wrap', flexShrink: '0', px: '3', py: '1.5', borderBottomWidth: '1px', borderColor: 'border.default', bg: 'bg.panel' })
 const group = css({ display: 'flex', alignItems: 'center', gap: '1' })
@@ -863,6 +1343,24 @@ const playheadLine = css({ position: 'absolute', top: '0', bottom: '0', w: '[1px
 const playheadHandle = css({ position: 'absolute', top: '0', w: '[12px]', h: '[13px]', transform: 'translateX(-50%)', bg: 'accent.default', borderTopLeftRadius: 'xs', borderTopRightRadius: 'xs', cursor: 'ew-resize', zIndex: '[4]' })
 const snapGuideLine = css({ position: 'absolute', top: '0', bottom: '0', w: '[1px]', borderLeftWidth: '1px', borderStyle: 'dashed', borderColor: 'accent.default', pointerEvents: 'none', zIndex: '[2]' })
 const inspector = css({ w: 'inspector', flexShrink: '0' })
+const trackHeaderSelected = css({ bg: 'bg.subtle', boxShadow: '[inset 2px 0 0 token(colors.accent.default)]' })
+const keyframeDiamond = css({
+  position: 'absolute',
+  top: '[20px]',
+  w: '[11px]',
+  h: '[11px]',
+  transform: 'translateX(-50%) rotate(45deg)',
+  bg: 'track.violet',
+  borderWidth: '1px',
+  borderColor: 'fg.default',
+  cursor: 'pointer',
+  zIndex: '[2]',
+  _focusVisible: { outlineWidth: '2px', outlineStyle: 'solid', outlineColor: 'accent.default' },
+})
+const keyframeSelected = css({ bg: 'accent.default' })
+const propertyAddRow = css({ display: 'flex', alignItems: 'center', gap: '2', mb: '2' })
+const propertyRow = css({ display: 'flex', alignItems: 'center', gap: '1.5', py: '1', borderBottomWidth: '1px', borderColor: 'border.default', _last: { borderBottomWidth: '0' } })
+const propertyName = css({ flex: '1', minW: '0', textStyle: 'ui.sm', color: 'fg.default' })
 const inspectorNote = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
 const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', textAlign: 'center' })
 </script>
@@ -876,22 +1374,29 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
         <Input v-model="nameField" live size="sm" :class="nameInput" aria-label="Timeline name" />
         <Badge :tone="dirty ? 'warning' : 'success'" dot :label="dirty ? 'Unsaved' : 'Saved'" />
       </div>
-      <Select
-        v-model="frameRateField"
-        :options="rateOptions"
-        size="sm"
-        aria-label="Frame rate"
-      />
-      <NumberField
-        v-model="durationField"
-        :units="unitless"
-        :min="1"
-        :decimals="0"
-        label="Dur"
-        size="sm"
-        aria-label="Timeline duration in frames"
-      />
+      <div :class="headerField">
+        <Select
+          v-model="frameRateField"
+          :options="rateOptions"
+          size="sm"
+          aria-label="Frame rate"
+        />
+      </div>
+      <div :class="headerField">
+        <NumberField
+          v-model="durationField"
+          :units="unitless"
+          :min="1"
+          :decimals="0"
+          label="Dur"
+          size="sm"
+          aria-label="Timeline duration in frames"
+        />
+      </div>
       <span :class="frameLabel">{{ durationLabel }}</span>
+      <IconButton icon="lucide:undo-2" label="Undo (⌘Z)" :disabled="!canUndo" @click="undo" />
+      <IconButton icon="lucide:redo-2" label="Redo (⇧⌘Z)" :disabled="!canRedo" @click="redo" />
+      <IconButton icon="lucide:download" label="Export timeline JSON" @click="exportJson" />
       <Button variant="primary" icon="lucide:save" size="sm" :loading="saving" @click="save">
         Save
       </Button>
@@ -901,7 +1406,7 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
       <div :class="group">
         <IconButton icon="lucide:skip-back" label="Go to start" @click="goToStart" />
         <IconButton icon="lucide:step-back" label="Previous frame" @click="stepPlayhead(-1)" />
-        <IconButton icon="lucide:play" label="Playback is not available yet" disabled />
+        <IconButton :icon="playing ? 'lucide:pause' : 'lucide:play'" :label="playing ? 'Pause (Space)' : 'Play (Space)'" :active="playing" @click="togglePlay" />
         <IconButton icon="lucide:step-forward" label="Next frame" @click="stepPlayhead(1)" />
         <IconButton icon="lucide:skip-forward" label="Go to end" @click="goToEnd" />
         <span :class="timecode">{{ playheadTimecode }}</span>
@@ -915,6 +1420,12 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
         <Button variant="secondary" size="sm" icon="lucide:scissors" @click="splitSelected">Split</Button>
         <Button variant="secondary" size="sm" icon="lucide:flag" @click="addMarker">Marker</Button>
         <Button variant="ghost" size="sm" icon="lucide:trash-2" @click="deleteSelection">Delete</Button>
+      </div>
+
+      <div :class="separated">
+        <span :class="fieldLabel">Track</span>
+        <Select v-model="newTrackKind" :options="trackKindOptions" size="sm" aria-label="New track kind" />
+        <Button variant="secondary" size="sm" icon="lucide:plus" @click="addTrack">Add track</Button>
       </div>
 
       <div :class="separated">
@@ -934,7 +1445,16 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
         <div :class="rulerSpacer">
           <span>{{ clipCount }} clips · {{ doc.markers.length }} markers</span>
         </div>
-        <div v-for="track in doc.tracks" :key="track.id" :class="trackHeader">
+        <div
+          v-for="track in doc.tracks"
+          :key="track.id"
+          :class="[trackHeader, track.id === selectedTrackId ? trackHeaderSelected : '']"
+          role="button"
+          tabindex="0"
+          :aria-pressed="track.id === selectedTrackId"
+          @click="selectTrack(track)"
+          @keydown.enter="selectTrack(track)"
+        >
           <div :class="trackTitle">
             <Icon :name="trackIcon(track.kind)" :size="13" aria-hidden="true" />
             <span :class="trackName">{{ track.name }}</span>
@@ -943,17 +1463,21 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
               :label="track.muted ? `Unmute ${track.name}` : `Mute ${track.name}`"
               :active="track.muted"
               size="sm"
-              @click="toggleTrackMuted(track)"
+              @click.stop="toggleTrackMuted(track)"
             />
             <IconButton
               :icon="track.locked ? 'lucide:lock' : 'lucide:unlock'"
               :label="track.locked ? `Unlock ${track.name}` : `Lock ${track.name}`"
               :active="track.locked"
               size="sm"
-              @click="toggleTrackLocked(track)"
+              @click.stop="toggleTrackLocked(track)"
             />
           </div>
-          <span :class="trackMeta">{{ trackKindLabel(track.kind) }} · {{ track.clips.length }} clips</span>
+          <span :class="trackMeta">
+            {{ trackKindLabel(track.kind) }} ·
+            <template v-if="track.kind === 'layer'">{{ track.properties.length }} animated · {{ track.elementId ? 'bound' : 'unbound' }}</template>
+            <template v-else>{{ track.clips.length }} clips</template>
+          </span>
         </div>
       </div>
 
@@ -1021,6 +1545,16 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
                 @pointerdown.stop="beginClipDrag($event, track, entry, 'trim-end')"
               />
             </div>
+            <button
+              v-for="entry in trackKeyframes(track)"
+              :key="entry.keyframe.id"
+              type="button"
+              :class="[keyframeDiamond, selectedKeyframe?.keyframeId === entry.keyframe.id ? keyframeSelected : '']"
+              :style="{ left: `${frameToPixel(entry.keyframe.frame, pixelsPerFrame)}px` }"
+              :title="`${propertyLabel(entry.property.property)} = ${entry.keyframe.value} @ ${entry.keyframe.frame}`"
+              :aria-label="`${propertyLabel(entry.property.property)} keyframe at frame ${entry.keyframe.frame}`"
+              @pointerdown.stop="selectKeyframe(track, entry.property, entry.keyframe)"
+            />
           </div>
 
           <div :class="playheadLine" :style="playheadStyle()" aria-hidden="true" />
@@ -1030,10 +1564,10 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
 
       <Panel title="Inspector" bordered="left" :class="inspector">
         <EmptyState
-          v-if="!selectedClip && !selectedMarker"
+          v-if="!selectedClip && !selectedMarker && !selectedTrack"
           icon="lucide:mouse-pointer-2"
           title="Nothing selected"
-          description="Select a clip or a marker to edit it."
+          description="Select a clip, marker or track header to edit it. Space plays, ⌘Z undoes, ⌘C/⌘V copy and paste clips."
           size="sm"
         />
 
@@ -1081,7 +1615,7 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
             <PropertyRow label="End">
               <span :class="inspectorNote">{{ clipEndFrame(selectedClip.clip) }} frames</span>
             </PropertyRow>
-            <PropertyRow v-if="selectedClip.clip.kind === 'audio'" label="Gain">
+            <PropertyRow v-if="selectedClip.clip.kind === 'audio' || selectedClip.clip.kind === 'media'" label="Gain">
               <Slider
                 :model-value="selectedClip.clip.gain"
                 :min="0"
@@ -1091,20 +1625,48 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
                 @update:model-value="clipGainField = String($event)"
               />
             </PropertyRow>
-            <PropertyRow v-if="selectedClip.clip.kind === 'audio'" label="Loop">
-              <Switch v-model="clipLoopField" size="sm" aria-label="Loop audio clip" />
+            <PropertyRow v-if="selectedClip.clip.kind === 'audio' || selectedClip.clip.kind === 'media'" label="Loop">
+              <Switch v-model="clipLoopField" size="sm" aria-label="Loop clip source" />
             </PropertyRow>
             <PropertyRow v-if="selectedClip.clip.kind === 'macro'" label="Action">
-              <Select v-model="macroAction" :options="macroActionOptions" size="sm" aria-label="Macro action" />
+              <Select v-model="macroAction" :options="actionOptions" size="sm" aria-label="Macro action" />
             </PropertyRow>
-            <PropertyRow v-if="selectedClip.clip.kind === 'slide'" label="Slide">
-              <span :class="inspectorNote">
-                {{ selectedClip.clip.presentationId ?? 'No presentation linked' }}
-              </span>
-            </PropertyRow>
-            <PropertyRow v-if="selectedClip.clip.kind === 'media'" label="Asset">
-              <span :class="inspectorNote">{{ selectedClip.clip.assetId ?? 'No asset linked' }}</span>
-            </PropertyRow>
+            <template v-if="selectedClip.clip.kind === 'slide'">
+              <PropertyRow label="Source">
+                <Select
+                  v-model="clipPresentationField"
+                  :options="presentationOptions"
+                  placeholder="Choose presentation…"
+                  size="sm"
+                  aria-label="Slide clip presentation"
+                />
+              </PropertyRow>
+              <PropertyRow label="Slide">
+                <Select
+                  v-model="clipSlideField"
+                  :options="slideOptionsFor(selectedClip.clip.presentationId)"
+                  :disabled="!selectedClip.clip.presentationId"
+                  placeholder="Choose slide…"
+                  size="sm"
+                  aria-label="Slide clip slide"
+                />
+              </PropertyRow>
+              <p :class="inspectorNote">At its start the live view takes this slide. The presentation must be in the running playlist.</p>
+            </template>
+            <template v-if="selectedClip.clip.kind === 'media' || selectedClip.clip.kind === 'audio'">
+              <PropertyRow label="Asset">
+                <Select
+                  v-model="clipAssetField"
+                  :options="assetOptionsFor(selectedClip.clip.kind)"
+                  :placeholder="assetOptionsFor(selectedClip.clip.kind).length ? 'Choose asset…' : 'Import media first'"
+                  size="sm"
+                  aria-label="Clip media asset"
+                />
+              </PropertyRow>
+              <p :class="inspectorNote">
+                {{ selectedClip.clip.kind === 'audio' ? 'Plays in the control window and becomes the master clock while it runs.' : 'Shown full-frame behind slide content on the audience output.' }}
+              </p>
+            </template>
             <p v-if="selectedClip.track.locked" :class="inspectorNote">This track is locked.</p>
           </PanelSection>
         </template>
@@ -1132,12 +1694,100 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
               <Switch v-model="markerEnabledField" size="sm" aria-label="Marker enabled" />
             </PropertyRow>
             <PropertyRow label="Action">
-              <span :class="inspectorNote">{{ selectedMarker.action?.type ?? 'No action' }}</span>
+              <Select v-model="markerAction" :options="actionOptions" size="sm" aria-label="Marker action" />
             </PropertyRow>
           </PanelSection>
         </template>
 
-        <template v-if="selectedClip || selectedMarker" #footer>
+        <template v-else-if="selectedTrack">
+          <PanelSection title="Track">
+            <PropertyRow label="Name">
+              <Input v-model="selectedTrack.name" live size="sm" aria-label="Track name" />
+            </PropertyRow>
+            <PropertyRow label="Kind">
+              <Badge :label="trackKindLabel(selectedTrack.kind)" />
+            </PropertyRow>
+            <p v-if="selectedTrack.locked" :class="inspectorNote">This track is locked.</p>
+          </PanelSection>
+
+          <template v-if="selectedTrack.kind === 'layer'">
+            <PanelSection title="Target">
+              <PropertyRow label="Source">
+                <Select v-model="trackPresentationField" :options="presentationOptions" placeholder="Choose presentation…" size="sm" aria-label="Layer track presentation" />
+              </PropertyRow>
+              <PropertyRow label="Slide">
+                <Select
+                  v-model="trackSlideField"
+                  :options="slideOptionsFor(selectedTrack.presentationId)"
+                  :disabled="!selectedTrack.presentationId"
+                  placeholder="Choose slide…"
+                  size="sm"
+                  aria-label="Layer track slide"
+                />
+              </PropertyRow>
+              <PropertyRow label="Element">
+                <Select
+                  v-model="trackElementField"
+                  :options="elementOptionsFor(selectedTrack.presentationId, selectedTrack.slideIndex)"
+                  :disabled="selectedTrack.slideIndex === null"
+                  placeholder="Choose element…"
+                  size="sm"
+                  aria-label="Layer track element"
+                />
+              </PropertyRow>
+              <p :class="inspectorNote">Keyframes animate this element whenever its slide is live and the timeline is armed.</p>
+            </PanelSection>
+
+            <PanelSection title="Animated properties">
+              <div :class="propertyAddRow">
+                <Select v-model="newPropertyName" :options="propertyOptions" size="sm" aria-label="Property to animate" />
+                <Button variant="secondary" size="sm" icon="lucide:plus" :disabled="selectedTrack.locked" @click="addPropertyToTrack">Add</Button>
+              </div>
+              <p v-if="selectedTrack.properties.length === 0" :class="inspectorNote">No animated properties yet.</p>
+              <div v-for="property in selectedTrack.properties" :key="property.id" :class="propertyRow">
+                <span :class="propertyName">{{ propertyLabel(property.property) }}</span>
+                <span :class="inspectorNote">{{ property.keyframes.length }} keys · {{ sampledLabel(property) }}</span>
+                <IconButton icon="lucide:diamond-plus" label="Keyframe at playhead" size="sm" :disabled="selectedTrack.locked" @click="keyAtPlayhead(selectedTrack, property)" />
+                <IconButton icon="lucide:x" :label="`Remove ${propertyLabel(property.property)}`" size="sm" :disabled="selectedTrack.locked" @click="removeProperty(property)" />
+              </div>
+            </PanelSection>
+
+            <PanelSection v-if="selectedKeyframeEntry" title="Keyframe">
+              <PropertyRow label="Property">
+                <span :class="inspectorNote">{{ propertyLabel(selectedKeyframeEntry.property.property) }}</span>
+              </PropertyRow>
+              <PropertyRow label="Frame">
+                <NumberField v-model="keyframeFrameField" :units="unitless" :min="0" :decimals="0" size="sm" aria-label="Keyframe frame" />
+              </PropertyRow>
+              <PropertyRow label="Value">
+                <Input
+                  v-if="selectedKeyframeEntry.property.property === 'color'"
+                  v-model="keyframeValueField"
+                  live
+                  size="sm"
+                  aria-label="Keyframe color"
+                />
+                <NumberField
+                  v-else
+                  v-model="keyframeValueField"
+                  :units="unitless"
+                  :min="keyframePropertySpec(selectedKeyframeEntry.property.property).min"
+                  :max="keyframePropertySpec(selectedKeyframeEntry.property.property).max"
+                  :step="keyframePropertySpec(selectedKeyframeEntry.property.property).step"
+                  :decimals="3"
+                  size="sm"
+                  aria-label="Keyframe value"
+                />
+              </PropertyRow>
+              <PropertyRow label="Easing">
+                <Select v-model="keyframeEasingField" :options="easingOptions" size="sm" aria-label="Keyframe easing" />
+              </PropertyRow>
+              <Button variant="ghost" size="sm" icon="lucide:trash-2" :disabled="selectedTrack.locked" @click="removeSelectedKeyframe">Delete keyframe</Button>
+            </PanelSection>
+          </template>
+        </template>
+
+        <template v-if="selectedClip || selectedMarker || selectedTrack" #footer>
           <Button
             v-if="selectedClip"
             variant="danger"
@@ -1158,6 +1808,17 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
             @click="deleteSelection"
           >
             Delete marker
+          </Button>
+          <Button
+            v-else-if="selectedTrack"
+            variant="danger"
+            size="sm"
+            block
+            icon="lucide:trash-2"
+            :disabled="selectedTrack.locked"
+            @click="removeSelectedTrack"
+          >
+            Delete track
           </Button>
         </template>
       </Panel>

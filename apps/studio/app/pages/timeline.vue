@@ -2,17 +2,19 @@
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
 import { onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { updatedLabel } from '~/data/presentations'
 import {
   createTimeline,
   deleteTimeline,
   getTimeline,
   listTimelines,
+  saveTimeline,
   type TimelineRecord,
   type TimelineSummary,
 } from '~/data/timelines'
 import TimelineEditor from '~/timeline/TimelineEditor.vue'
-import { timecodeLabel } from '~/timeline/lib'
+import { importTimelineJson, timecodeLabel } from '~/timeline/lib'
 import { Badge, Button, EmptyState, IconButton, Input } from '~/ui'
 import ErrorNotice from '~/library/ErrorNotice.vue'
 import PageHeader from '~/library/PageHeader.vue'
@@ -97,7 +99,35 @@ function metaLine(item: TimelineSummary): string {
   return `${item.frameRate} fps · ${timecodeLabel(item.durationFrames, item.frameRate)} · ${item.trackCount} tracks · ${item.clipCount} clips`
 }
 
-onMounted(() => void load())
+const route = useRoute()
+const fileInput = ref<HTMLInputElement | null>(null)
+
+async function importFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  busy.value = true
+  error.value = ''
+  try {
+    const doc = importTimelineJson(await file.text())
+    const now = Date.now()
+    const record: TimelineRecord = { id: doc.id, doc, createdAt: now, updatedAt: now }
+    await saveTimeline(record)
+    active.value = record
+    await load()
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : String(reason)
+  } finally {
+    busy.value = false
+  }
+}
+
+onMounted(async () => {
+  await load()
+  const id = typeof route.query.id === 'string' ? route.query.id : ''
+  if (id) await open(id)
+})
 
 const page = css({ display: 'flex', flexDirection: 'column', h: 'full', minH: '0', px: '6', py: '5' })
 const toolbar = css({ display: 'flex', alignItems: 'center', gap: '2', mb: '4' })
@@ -151,9 +181,19 @@ const updated = css({ flex: '1', textStyle: 'ui.xs', color: 'fg.subtle' })
     >
       <template #badges><Badge tone="neutral">{{ items.length }}</Badge></template>
       <template #actions>
+        <Button variant="secondary" icon="lucide:upload" :disabled="busy" @click="fileInput?.click()">Import JSON</Button>
         <Button variant="primary" icon="lucide:plus" :loading="busy" @click="create">New timeline</Button>
       </template>
     </PageHeader>
+    <input
+      ref="fileInput"
+      type="file"
+      accept="application/json,.json"
+      hidden
+      aria-hidden="true"
+      tabindex="-1"
+      @change="importFile"
+    />
 
     <div v-if="items.length" :class="toolbar">
       <Input v-model="query" live type="search" size="md" placeholder="Search timelines" aria-label="Search timelines" :class="searchBox">
