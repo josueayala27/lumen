@@ -100,11 +100,14 @@ pub fn mime_from_magic(bytes: &[u8]) -> Option<&'static str> {
         return Some("image/webp");
     }
     if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
-        return Some(match &bytes[8..12] {
-            b"qt  " => "video/quicktime",
-            b"M4A " | b"M4B " | b"M4P " => "audio/mp4",
-            _ => "video/mp4",
-        });
+        let brand = &bytes[8..12];
+        if brand == b"qt  " {
+            return Some("video/quicktime");
+        }
+        if brand == b"M4A " || brand == b"M4B " || brand == b"M4P " {
+            return Some("audio/mp4");
+        }
+        return Some("video/mp4");
     }
     if bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
         return Some("video/webm");
