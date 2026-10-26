@@ -16,6 +16,7 @@ use crate::blur::{blur_rgba, box_radius_for_sigma};
 use crate::color::ClearColor;
 use crate::geometry::{easing_progress, fit_uv, rotate_point, rotate_vector, FrameRect, UvRect};
 use crate::text::{AtlasData, DecorationDraw, GlyphDraw, TextEngine};
+use crate::video::{bc_len, VideoFrame, VideoPixels};
 use crate::{
     AssetKind, AssetState, Layer, PreviewResult, RenderError, Scene, SceneFont, SceneRole,
     TransitionKind, TransitionPlan, Viewport,
@@ -411,6 +412,60 @@ struct GpuTexture {
     height: u32,
 }
 
+/// Shader modes in `scene.wgsl` (`params.w`).
+const MODE_TEXTURE: f32 = 1.0;
+const MODE_YCOCG: f32 = 3.0;
+const MODE_OPAQUE: f32 = 4.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VideoUpload {
+    Rgba,
+    Compressed(wgpu::TextureFormat),
+}
+
+/// A video asset's current frame on the GPU.
+struct VideoTexture {
+    gpu: GpuTexture,
+    upload: VideoUpload,
+    /// Real frame size; block-compressed textures are padded to multiples of four.
+    frame_width: u32,
+    frame_height: u32,
+    mode: f32,
+}
+
+impl VideoTexture {
+    /// UV scale that hides block padding.
+    fn uv_scale(&self) -> (f32, f32) {
+        (
+            self.frame_width as f32 / self.gpu.width.max(1) as f32,
+            self.frame_height as f32 / self.gpu.height.max(1) as f32,
+        )
+    }
+}
+
+/// Creates an empty texture for a block-compressed format, padded to whole blocks.
+fn compressed_texture(device: &wgpu::Device, format: wgpu::TextureFormat, width: u32, height: u32) -> GpuTexture {
+    let width = width.max(1).div_ceil(4) * 4;
+    let height = height.max(1).div_ceil(4) * 4;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("lumen-video-bc"),
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    GpuTexture { texture, view, width, height }
+}
+
+/// Requests BC texture support when the adapter has it; Hap frames then upload without CPU work.
+fn device_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TextureKey {
     White,
@@ -497,7 +552,8 @@ struct SceneRenderer {
     atlas_blur_padding: u32,
     shadow_atlases: HashMap<u32, GpuTexture>,
     images: HashMap<String, GpuTexture>,
-    videos: HashMap<String, GpuTexture>,
+    videos: HashMap<String, VideoTexture>,
+    bc_supported: bool,
     text: TextEngine,
     glyphs: Vec<GlyphDraw>,
     decorations: Vec<DecorationDraw>,
@@ -583,6 +639,7 @@ impl SceneRenderer {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let bc_supported = device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC);
         let white = upload_texture(&device, &queue, "lumen-white", 1, 1, &[255; 4], false);
         let atlas = upload_texture(&device, &queue, "lumen-atlas", 1, 1, &[0; 4], false);
         Self {
@@ -599,6 +656,7 @@ impl SceneRenderer {
             shadow_atlases: HashMap::new(),
             images: HashMap::new(),
             videos: HashMap::new(),
+            bc_supported,
             text: TextEngine::new(),
             glyphs: Vec::new(),
             decorations: Vec::new(),
@@ -626,45 +684,165 @@ impl SceneRenderer {
                 rgba.len()
             )));
         }
-        let recreate = self
-            .videos
-            .get(asset_id)
-            .is_none_or(|texture| texture.width != width || texture.height != height);
-        if recreate {
+        self.write_rgba_video(asset_id, width, height, &rgba[..expected], MODE_TEXTURE);
+        Ok(())
+    }
+
+    /// Uploads one decoded frame. Block-compressed frames go to the GPU as-is when
+    /// the device supports BC textures and are decoded on the CPU otherwise.
+    fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
+        let (width, height) = (frame.width, frame.height);
+        if width == 0 || height == 0 {
+            return Err(RenderError::Backend(format!("video frame for {asset_id} is empty")));
+        }
+        let short = |bytes: usize, expected: usize| {
+            RenderError::Backend(format!(
+                "video frame for {asset_id} has {bytes} bytes, expected {expected}"
+            ))
+        };
+        let check = |data: &[u8], block_bytes: usize| -> Result<(), RenderError> {
+            let expected = bc_len(width, height, block_bytes);
+            if data.len() < expected {
+                return Err(short(data.len(), expected));
+            }
+            Ok(())
+        };
+        match &frame.pixels {
+            VideoPixels::Rgba(rgba) => self.update_video_frame(asset_id, width, height, rgba),
+            VideoPixels::Bc1(data) => {
+                check(data, 8)?;
+                if self.bc_supported {
+                    self.write_compressed_video(asset_id, wgpu::TextureFormat::Bc1RgbaUnormSrgb, width, height, data, 8, MODE_OPAQUE);
+                } else {
+                    self.write_rgba_video(asset_id, width, height, &crate::bc::decode_bc1(width, height, data), MODE_TEXTURE);
+                }
+                Ok(())
+            }
+            VideoPixels::Bc3(data) => {
+                check(data, 16)?;
+                if self.bc_supported {
+                    self.write_compressed_video(asset_id, wgpu::TextureFormat::Bc3RgbaUnormSrgb, width, height, data, 16, MODE_TEXTURE);
+                } else {
+                    self.write_rgba_video(asset_id, width, height, &crate::bc::decode_bc3(width, height, data), MODE_TEXTURE);
+                }
+                Ok(())
+            }
+            VideoPixels::Bc3YCoCg(data) => {
+                check(data, 16)?;
+                if self.bc_supported {
+                    // YCoCg values are not colours: sample them linearly and convert in the shader.
+                    self.write_compressed_video(asset_id, wgpu::TextureFormat::Bc3RgbaUnorm, width, height, data, 16, MODE_YCOCG);
+                } else {
+                    self.write_rgba_video(asset_id, width, height, &crate::bc::decode_ycocg(width, height, data, None), MODE_TEXTURE);
+                }
+                Ok(())
+            }
+            VideoPixels::Bc3YCoCgAlpha { color, alpha } => {
+                check(color, 16)?;
+                check(alpha, 8)?;
+                let rgba = crate::bc::decode_ycocg(width, height, color, Some(alpha));
+                self.write_rgba_video(asset_id, width, height, &rgba, MODE_TEXTURE);
+                Ok(())
+            }
+            VideoPixels::Bc4(data) => {
+                check(data, 8)?;
+                self.write_rgba_video(asset_id, width, height, &crate::bc::decode_bc4(width, height, data), MODE_TEXTURE);
+                Ok(())
+            }
+            VideoPixels::Bc7(data) => {
+                check(data, 16)?;
+                if !self.bc_supported {
+                    return Err(RenderError::Backend(
+                        "Hap R (BC7) needs a GPU with BC texture support".to_string(),
+                    ));
+                }
+                self.write_compressed_video(asset_id, wgpu::TextureFormat::Bc7RgbaUnormSrgb, width, height, data, 16, MODE_TEXTURE);
+                Ok(())
+            }
+        }
+    }
+
+    fn write_rgba_video(&mut self, asset_id: &str, width: u32, height: u32, rgba: &[u8], mode: f32) {
+        let reuse = self.videos.get(asset_id).is_some_and(|video| {
+            video.upload == VideoUpload::Rgba && video.gpu.width == width && video.gpu.height == height
+        });
+        if !reuse {
+            let gpu = upload_texture(&self.device, &self.queue, "lumen-video-frame", width, height, rgba, true);
             self.videos.insert(
                 asset_id.to_string(),
-                upload_texture(
-                    &self.device,
-                    &self.queue,
-                    "lumen-video-frame",
-                    width,
-                    height,
-                    &rgba[..expected],
-                    true,
-                ),
+                VideoTexture { gpu, upload: VideoUpload::Rgba, frame_width: width, frame_height: height, mode },
             );
-        } else if let Some(texture) = self.videos.get(asset_id) {
+            return;
+        }
+        if let Some(video) = self.videos.get_mut(asset_id) {
+            video.mode = mode;
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
-                    texture: &texture.texture,
+                    texture: &video.gpu.texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                &rgba[..expected],
+                rgba,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(width * 4),
                     rows_per_image: Some(height),
                 },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
+                wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             );
         }
-        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn write_compressed_video(
+        &mut self,
+        asset_id: &str,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        data: &[u8],
+        block_bytes: u32,
+        mode: f32,
+    ) {
+        let upload = VideoUpload::Compressed(format);
+        let reuse = self.videos.get(asset_id).is_some_and(|video| {
+            video.upload == upload && video.frame_width == width && video.frame_height == height
+        });
+        if !reuse {
+            let gpu = compressed_texture(&self.device, format, width, height);
+            self.videos.insert(
+                asset_id.to_string(),
+                VideoTexture { gpu, upload, frame_width: width, frame_height: height, mode },
+            );
+        }
+        let Some(video) = self.videos.get_mut(asset_id) else {
+            return;
+        };
+        video.mode = mode;
+        let blocks_x = video.gpu.width / 4;
+        let blocks_y = video.gpu.height / 4;
+        let expected = (blocks_x * blocks_y * block_bytes) as usize;
+        // Frames sized to the real dimensions already cover every padded block.
+        let bytes = &data[..expected.min(data.len())];
+        if bytes.len() < expected {
+            return;
+        }
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &video.gpu.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(blocks_x * block_bytes),
+                rows_per_image: Some(blocks_y),
+            },
+            wgpu::Extent3d { width: video.gpu.width, height: video.gpu.height, depth_or_array_layers: 1 },
+        );
     }
 
     fn prepare(&mut self, scene: &Scene, width: u32, height: u32) -> Result<(), RenderError> {
@@ -863,7 +1041,7 @@ impl SceneRenderer {
                 self.shadow_atlases.get(radius).map(|texture| &texture.view)
             }
             TextureKey::Image(key) => self.images.get(key).map(|texture| &texture.view),
-            TextureKey::Video(key) => self.videos.get(key).map(|texture| &texture.view),
+            TextureKey::Video(key) => self.videos.get(key).map(|video| &video.gpu.view),
         }
     }
 
@@ -997,26 +1175,32 @@ impl SceneRenderer {
                 else {
                     return;
                 };
-                if !self.videos.contains_key(&asset.id) {
+                let Some(video) = self.videos.get(&asset.id) else {
                     return;
-                }
+                };
+                let (scale_u, scale_v) = video.uv_scale();
+                let mut uv = fit_uv(
+                    *fit,
+                    frame.w,
+                    frame.h,
+                    asset.intrinsic.width as f32,
+                    asset.intrinsic.height as f32,
+                );
+                uv.u0 *= scale_u;
+                uv.u1 *= scale_u;
+                uv.v0 *= scale_v;
+                uv.v1 *= scale_v;
                 let mut vertices = Vec::new();
                 push_quad(
                     &mut vertices,
                     QuadSpec {
                         rect: frame,
-                        uv: fit_uv(
-                            *fit,
-                            frame.w,
-                            frame.h,
-                            asset.intrinsic.width as f32,
-                            asset.intrinsic.height as f32,
-                        ),
+                        uv,
                         color: [1.0, 1.0, 1.0, opacity as f32],
                         stroke_color: [0.0; 4],
                         radius: 0.0,
                         stroke_width: 0.0,
-                        mode: 1.0,
+                        mode: video.mode,
                         rotation,
                         center,
                     },
@@ -1326,7 +1510,7 @@ impl SurfaceRenderer {
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("lumen-output"),
-            required_features: wgpu::Features::empty(),
+            required_features: device_features(&adapter),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::Performance,
@@ -1418,6 +1602,11 @@ impl SurfaceRenderer {
     ) -> Result<(), RenderError> {
         self.scene_renderer
             .update_video_frame(asset_id, width, height, rgba)
+    }
+
+    /// Uploads a decoded frame, block compressed or RGBA.
+    pub fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
+        self.scene_renderer.update_video(asset_id, frame)
     }
 
     pub fn start_transition(&mut self, plan: &TransitionPlan) -> Result<(), RenderError> {
@@ -1652,7 +1841,7 @@ impl PreviewRenderer {
         .map_err(|error| RenderError::Backend(format!("request preview adapter: {error}")))?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("lumen-preview"),
-            required_features: wgpu::Features::empty(),
+            required_features: device_features(&adapter),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
             memory_hints: wgpu::MemoryHints::Performance,
@@ -1678,6 +1867,11 @@ impl PreviewRenderer {
     ) -> Result<(), RenderError> {
         self.scene_renderer
             .update_video_frame(asset_id, width, height, rgba)
+    }
+
+    /// Uploads a decoded frame, block compressed or RGBA.
+    pub fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
+        self.scene_renderer.update_video(asset_id, frame)
     }
 
     pub fn render(

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use lumen_render::{
     PendingSurface, RenderError, RenderStats, Scene, SurfaceFactory, SurfaceRenderer,
-    TransitionPlan,
+    TransitionPlan, VideoFrame,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -159,9 +159,7 @@ enum OutputCommand {
     Transition(Box<TransitionPlan>),
     VideoFrame {
         asset_id: String,
-        width: u32,
-        height: u32,
-        rgba: Vec<u8>,
+        frame: VideoFrame,
     },
     Resize(u32, u32),
     Stop,
@@ -205,13 +203,10 @@ impl RenderThread {
             .send(OutputCommand::Transition(Box::new(plan)));
     }
 
-    fn video_frame(&self, asset_id: String, width: u32, height: u32, rgba: Vec<u8>) {
-        let _ = self.commands.send(OutputCommand::VideoFrame {
-            asset_id,
-            width,
-            height,
-            rgba,
-        });
+    fn video_frame(&self, asset_id: String, frame: VideoFrame) {
+        let _ = self
+            .commands
+            .send(OutputCommand::VideoFrame { asset_id, frame });
     }
 
     fn resize(&self, width: u32, height: u32) {
@@ -292,15 +287,8 @@ fn spawn_renderer(
                         }
                         continue;
                     }
-                    Ok(OutputCommand::VideoFrame {
-                        asset_id,
-                        width,
-                        height,
-                        rgba,
-                    }) => {
-                        if let Err(error) =
-                            renderer.update_video_frame(&asset_id, width, height, &rgba)
-                        {
+                    Ok(OutputCommand::VideoFrame { asset_id, frame }) => {
+                        if let Err(error) = renderer.update_video(&asset_id, &frame) {
                             eprintln!("lumen-output: video frame failed: {error}");
                         }
                         continue;
@@ -575,22 +563,31 @@ impl OutputManager {
         height: u32,
         rgba: Vec<u8>,
     ) -> Result<(), String> {
+        self.update_video(label, asset_id, VideoFrame::rgba(width, height, rgba))
+    }
+
+    /// Sends one frame to an output, or to every output. Frames are reference
+    /// counted, so fanning out to several outputs does not copy pixels.
+    pub fn update_video(
+        &self,
+        label: Option<&str>,
+        asset_id: String,
+        frame: VideoFrame,
+    ) -> Result<(), String> {
         let outputs = self.outputs();
         match label {
             Some(label) => {
                 let output = outputs
                     .get(label)
                     .ok_or_else(|| format!("no output named {label}"))?;
-                output.renderer.video_frame(asset_id, width, height, rgba);
+                output.renderer.video_frame(asset_id, frame);
             }
             None => {
                 if outputs.is_empty() {
                     return Err("no audience output is open".into());
                 }
                 for output in outputs.values() {
-                    output
-                        .renderer
-                        .video_frame(asset_id.clone(), width, height, rgba.clone());
+                    output.renderer.video_frame(asset_id.clone(), frame.clone());
                 }
             }
         }

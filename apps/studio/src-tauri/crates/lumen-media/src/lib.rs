@@ -6,11 +6,15 @@
 use serde::{Deserialize, Serialize};
 
 pub mod decoder;
+pub mod hap;
+pub mod mov;
 pub mod probe;
 pub mod thumbnail;
 pub mod util;
 
 pub use decoder::{DecodeRequest, DecoderConfig, FfmpegVideo};
+pub use hap::{HapFrame, HapTexture, HapTextureFormat};
+pub use mov::{MovSample, MovVideoTrack};
 pub use probe::{FileProbe, VideoProbe};
 pub use util::{MediaKind, MAX_IMPORT_BYTES};
 

@@ -34,9 +34,9 @@ cd apps/studio/src-tauri && cargo check && cargo test -p lumen-output -p lumen-r
 
 ## Current phase
 
-Lumen is a general live presentation and graphics engine, not a worship-only presenter. First markets: events/corporate and streaming/broadcast. Worship is an optional pack. See `docs/architecture/07-roadmap.md`.
+Lumen is a live visuals system: media, lyrics and slides on many screens, per-screen layouts and mapping, live visual layers and effects, sync with lighting, timecode and music (ProPresenter + Resolume + Millumin + QLab). Not church-only; market integrations are packs. See `docs/architecture/07-roadmap.md`.
 
-Presenter core and timeline (T1–T6) are code complete; desktop acceptance is open. The next milestone is **A1 Core and pack boundary**: songs move behind the Worship pack, playlists become rundowns. Then **B1 Command bus and API**. Do not add church-specific wording or defaults to the core.
+Presenter core, songs and timeline (T1–T6) are code complete; desktop acceptance is open. The next milestone is **A1 Video engine** (hardware decode, HAP, many layers), then **A2 Compositor and scene contract v2**. Do not add church-specific wording or defaults to the core.
 
 ## graphify
 
