@@ -34,7 +34,9 @@ cd apps/studio/src-tauri && cargo check && cargo test -p lumen-output -p lumen-r
 
 ## Current phase
 
-Wave 1 — Core presenter. M0.1 and M0.2 are partial; the local text editor exists, but the native renderer is clear-pass only. The next engineering milestone is **M1 Scene renderer v1**, then **M2 Editor v1**. MIDI/LTC/timeline work is frozen as a parallel track until Wave 1 ships.
+Lumen is a general live presentation and graphics engine, not a worship-only presenter. First markets: events/corporate and streaming/broadcast. Worship is an optional pack. See `docs/architecture/07-roadmap.md`.
+
+Presenter core and timeline (T1–T6) are code complete; desktop acceptance is open. The next milestone is **A1 Core and pack boundary**: songs move behind the Worship pack, playlists become rundowns. Then **B1 Command bus and API**. Do not add church-specific wording or defaults to the core.
 
 ## graphify
 

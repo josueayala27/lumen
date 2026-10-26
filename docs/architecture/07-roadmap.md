@@ -1,314 +1,245 @@
 # 07 — Roadmap
 
-Supersedes the old Phase 0–4 list. Organised as waves of shippable milestones. The ProPresenter feature baseline is [all-features](https://www.renewedvision.com/pt/propresenter/all-features).
+Supersedes the worship-only roadmap (Waves 0–4, M0–M18). Organised as waves of shippable milestones.
 
 ## Product target
 
-A local-first worship presenter that can create a service, style it, run it live on audience and stage outputs, and survive a full service offline. ProPresenter parity is a later target; MVP parity is Wave 1.
+Lumen is one engine for everything shown live on screens: slides, graphics, media and cues, run by one operator or a team, on one machine or many.
 
-## Wave 0 — Foundation and render proof
+First markets:
 
-### M0.1 Local foundation — partial
+1. **Events and corporate** — conferences, keynotes, town halls, launches. Replaces PowerPoint/Keynote presenter view, confidence-monitor timers and ProPresenter at events.
+2. **Streaming and broadcast** — lower thirds, titles, scoreboards, tickers. Competes with vMix titles, H2R Graphics, Singular and CasparCG.
 
-Done: monorepo, design system, API skeleton, Drizzle schema, Tauri shell, CI, local SQLite library, song split, text editor, text-only live page.
+Worship is a supported market through an optional pack, not the product definition. Theatre and show control follow through the timeline and control bus.
 
-Remaining:
+## Product structure
 
-- Desktop auth handoff and keychain (moved to Wave 4; not a blocker for local MVP).
-- Signed dev builds and updater keys (release gate for Wave 2).
-- Finish the renderer spike before editor work continues.
+**Core** — every workspace:
 
-### M0.2 Renderer spike — partial
+- Content: scenes, layers, templates, media, themes, timeline.
+- Running: rundowns (formerly playlists), live state, cue engine, timers, macros.
+- Outputs: multiple outputs with per-output Looks, stage and confidence displays, NDI, alpha key, web output.
+- Control: one command bus behind MIDI, OSC, HTTP/WebSocket, Stream Deck/Companion, web remote and macros.
+- Cloud: accounts, workspaces, sync, collaboration.
 
-Done: borderless `wgpu` window, clear pass, frame timing, monitor polling, surface-state handling.
+**Packs** — enabled per workspace. A pack adds content types, importers, rundown item kinds and integrations. It never changes the scene contract or the renderer.
 
-Exit: a hardcoded text/image scene renders in the audience window at 1080p60 with recovery after surface loss.
+| Pack | Adds |
+|---|---|
+| Events | PPTX/Keynote/PDF import, agenda rundowns, speaker timers and messages, presenter clickers |
+| Broadcast | Data-bound templates, data sources, lower thirds, tickers, scoreboards, playout queue |
+| Worship | Songs and arrangements, lyric split, Bible, CCLI/SongSelect, Planning Center, MultiTracks |
+| Show control | OSC out, DMX, projection surfaces, MIDI feedback |
 
-## Wave 1 — Core presenter (MVP-1)
+## Done
 
-Ship this before any more control features.
+- **Foundation:** monorepo, design system, Drizzle schema, Tauri shell, CI, local SQLite library, native `wgpu` audience window with surface recovery.
+- **Presenter core (former Wave 1):** scene renderer, editor (layers, undo/redo, snapping, autosave), themes, playlists with real live state and crash resume, stage window, media import/probe/relink and ffmpeg video playback. Code complete; manual acceptance still required on a second display, stage window and video playback.
+- **Timeline (former Wave 1.5, T1–T6):** `ShowTimeline` model and edit helpers, pure playback engine, live runner with internal clock or LTC/MTC follow, marker and clip cues, keyframes applied to the audience scene, media clips as scene layers, audio clips with audio-master clock, timeline editor with undo/redo, copy/paste, playback and JSON import/export. Desktop acceptance (audience keyframes, audio, real LTC) still required.
+- **Show control:** MIDI input bindings, MTC and LTC decode.
 
-### M1 Scene renderer v1
+## Wave A — Generalize the core
 
-- cosmic-text shaping, line boxes, caret stops, `PreviewResult`.
-- Layers: text, shape, image, video background, group.
-- Layer compositing with z, opacity, rotation, fit, radius.
-- Transitions: cut/fade/dissolve/slide/zoom in shader.
-- `preview_render` returns image plus real layout; native output draws the same scene.
+### A1 Core and pack boundary
 
-Exit: text + image + video-background slide renders identically in editor and audience; 1080p60; surface loss recovers.
+- `PresentationDoc.kind` becomes a content-type registry; `song` registers from the Worship pack.
+- Move `song.ts`, the lyric split and the Songs page behind the Worship pack.
+- Workspace setting for enabled packs; new workspaces default to Events and Broadcast.
+- "Playlist" becomes "Rundown" in UI, docs and new code; storage keeps the existing tables with a migration alias.
+- Neutral sample content, onboarding and empty states (no church defaults).
 
-### M2 Editor v1
+Exit: a fresh install with no Worship pack shows no song or church wording; enabling the pack restores songs with existing documents intact.
 
-- Slide rail, Rust-rendered canvas, layer inspector.
-- Add/edit/reorder/delete text, shape, image, video layers.
-- Undo/redo, copy/paste, multi-select, keyboard shortcuts, autosave.
-- Snapping and selection from Rust layout data.
-- Reflow view for all text and slide breaks.
+### A2 Presenter acceptance
 
-Exit: create a presentation, add text and an image, edit, save, reopen, undo/redo.
+- Run the open manual acceptance from Done on real hardware: second display, stage, video, timeline keyframes, audio, LTC.
 
-### M3 Themes and typography
+Exit: a 30-minute rundown runs on a second display, survives a restart, and a timeline drives slides, media and keyframes on the audience output.
 
-- Theme editor: background, title/body styles, transition.
-- Apply theme to a presentation; theme changes update every slide.
-- Font import, missing-font detection, fallback selection, license flag.
-- Safe-area and letterbox controls.
+## Wave B — Outputs and control
 
-Exit: two presentations share a theme; changing it updates both.
+### B1 Command bus and API
 
-### M4 Playlists and live v1
+- One `Command` type for every input; MIDI, timeline, macros and UI dispatch through it (former M14 move-up).
+- Local HTTP and WebSocket API: state, commands, rundown, timers. Token-protected, LAN-only by default.
+- OSC input mapped to commands.
+- Bitfocus Companion module and Stream Deck support on top of the API.
 
-- Playlist editor: presentations, media, headers; reorder.
-- Real `LiveState` store, not page-local mock.
-- Preview/take, next/prev item, output modes, transitions.
-- Next-slide preload and crash resume.
-- Live loads a playlist, not one presentation.
+Exit: Companion, MIDI, OSC and HTTP all drive the same live state with identical results.
 
-Exit: run a 30-minute playlist on a second display with no webview in the audience path; restart resumes position.
+### B2 Multiple outputs and Looks
 
-### M5 Stage v1
+- Any number of outputs, each with a Look: layer visibility (slides, media, graphics, props), mask, safe area.
+- Output assignment by stable display identity.
+- Props and announcement layers independent of the slide.
 
-- Stage window with Rust current/next images.
-- Notes, clock, countdown/elapsed timers, stage message, safe area.
-- Per-performer layouts.
+Exit: two projectors and a confidence monitor show different Looks of one rundown.
 
-Exit: stage display runs beside audience output with current/next and notes.
+### B3 Network outputs
 
-### M6 Media v1
+- NDI output per output, with alpha.
+- Alpha key (key/fill) on two physical outputs.
+- Web output: a read-only HTML scene view for OBS/vMix browser sources and remote screens.
 
-- Import images and video into an app-managed folder.
-- Media bin, thumbnails, probe metadata, missing-media relink.
-- Image/video backgrounds and foreground layers.
-- Media path validation and decoder budget.
+Exit: a lower third with alpha reaches a switcher over NDI and an OBS browser source at the same time.
 
-Exit: import a video, set it as a background, play it live, recover from a moved file.
+### B4 Web remote and confidence monitor
 
-### Wave 1 exit — MVP-1
+- Phone/tablet remote served by the desktop app over LAN: next/prev, rundown, timers, messages.
+- Confidence monitor: current/next slide, notes, speaker countdown with warning colours, operator messages.
 
-Create a song and a presentation, style both with a theme, put them in a playlist, run live on audience and stage, offline, and reopen after restart. Wave 1 code is complete; manual acceptance is the remaining gate.
+Exit: a speaker runs a session from a clicker while the operator controls timers from a phone.
 
-## Wave 1.5 — Timeline and automation
+### B5 Network Link
 
-Priority changed: timestamp automation and an After Effects-style timeline come before audio and imports. One timeline model, delivered in two phases.
+- Several Lumen machines on one LAN: one controller, any number of render nodes.
+- Nodes follow live state and timeline clock from the controller and render their own outputs locally.
+- Controller failover: a node can take over control without stopping its outputs.
 
-### T1 Timeline model v1
+Exit: three machines drive five outputs from one rundown; unplugging the controller leaves every output running.
 
-- `TimelineDoc`: frame rate, duration, tracks, clips, markers, keyframes.
-- Tracks: slide, layer, media, audio, macro.
-- Clips: start, duration, trim, source reference, z.
-- Markers: timestamp, action, enabled.
-- Keyframes: property, frame, value, easing.
-- Migrate the existing cue timeline to markers; keep LTC/MTC frame counts.
+## Wave C — Events pack
 
-Exit: schema + pure edit helpers (add/move/trim/split/delete/keyframe) with tests.
+### C1 Import
 
-### T2 Playback engine
+- PPTX import as native editable slides (text, images, notes, simple builds).
+- Keynote via PDF/PPTX export; PDF as image slides with notes.
+- Re-import that updates an existing deck and keeps rundown cues.
 
-- Internal clock, play/pause/stop/seek, loop, frame-accurate stepping.
-- External clock: LTC/MTC lock, offset and drift handling.
-- Evaluate timeline at frame: visible clips, marker firing, sampled keyframe values.
-- Emit scene snapshots and commands to live/output.
+Exit: a 40-slide corporate deck imports, edits and runs with notes on the confidence monitor.
 
-Exit: a timeline plays forward/back and follows LTC without duplicate cue fires.
+### C2 Agenda rundowns
 
-### T3 Timeline editor
+- Rundown items with planned start and duration, over/under tracking, session countdowns.
+- Speaker timers tied to rundown items; walk-in loops and holding slides.
+- Presenter clicker and HID keyboard mapping.
+- Calendar scheduling: start rundowns, loops and announcements at set times for venues, lobbies and classrooms (signage mode).
 
-- After Effects-style panel: ruler, playhead, zoom/pan, multi-track rows.
-- Drag clips, trim edges, split, delete, snap to frames/markers/clip edges.
-- Marker editor, track mute/lock, inspector for selected clip/keyframe.
-- Undo/redo, copy/paste, keyboard shortcuts.
-- Persist per presentation/playlist.
+Exit: a half-day agenda runs on time with automatic countdowns and walk-in loops between sessions, and a lobby screen switches loops on a schedule.
 
-Exit: build and edit a 10-minute timeline without touching JSON.
+### C3 Importers from other presenters
 
-### T4 Cue automation
+- ProPresenter (`.pro`, playlists), EasyWorship, OpenSong/OpenLP and FreeShow libraries.
+- Slides, media references, themes and notes map to core content; songs map to the Worship pack when it is enabled, otherwise to plain presentations.
+- Import report listing anything that could not be mapped.
 
-- Slide changes, output modes, media play/stop, macros and stage messages at timestamps.
-- Auto-advance slides; transition at marker; loop ranges.
-- Arm/disarm, skip missed cues policy, live status.
+Exit: a ProPresenter library and an EasyWorship library import, and a converted show runs unchanged.
 
-Exit: a service timeline drives slides, media and macros by timestamp.
+## Wave D — Broadcast pack
 
-### T5 Keyframes and curves
+### D1 Data-bound templates
 
-- Animate layer position, scale, rotation, opacity, color and text properties.
-- Easing curves, linear/bezier, per-property keyframes.
-- Preview and audience render from sampled values, not duplicated scenes.
-- Text builds/animations reuse the same keyframe engine.
+- Template fields bound to layer properties (text, colour, image, visibility).
+- Field values per rundown item or per cue; quick edit while live.
+- Template library: lower thirds, titles, full-screen cards, bugs.
 
-Exit: a text layer animates in/out on the timeline with correct easing in preview and audience.
+Exit: one lower-third template shows twenty different speakers without duplicating slides.
 
-### T6 Timeline audio and integration
+### D2 Data sources
 
-- Audio clips and waveform track in the timeline model.
-- Audio-master clock; video/LTC follows audio within tolerance.
-- Markers can trigger audio actions and macros.
-- Import/export timeline JSON.
+- CSV, Google Sheets, JSON over HTTP, and push via the local API.
+- Polling with change detection; values flow into bound fields live.
+- Scoreboards, clocks and tickers built from fields.
 
-Exit: timeline with video, audio, slide cues, macros and keyframes runs offline.
+Exit: a scoreboard updates from a spreadsheet and a ticker from a JSON feed during a stream.
 
-### Wave 1.5 exit
+### D3 Playout
 
-A 10-minute service timeline with slide cues, macros, video, text keyframes and audio follows an external LTC clock, survives restart, and renders the same in editor, audience and stage.
+- Graphics queue independent of the slide rundown: cue, take, clear per layer.
+- Animated in/out from timeline keyframes.
+- NDI input as a layer source.
 
-## Wave 2 — Service-ready (MVP-2)
+Exit: an operator stacks, takes and clears lower thirds over NDI video while slides run on another output.
 
-### M7 Audio
+## Wave E — Cloud and collaboration
 
-- Audio bin, audio tracks and sound effects.
-- Device selection, per-track routing, up to 16 internal channels.
-- Audio-master clock; video seeks within 40 ms.
-- Preload and decoder limits.
+### E1 Accounts, workspaces and sync
 
-Exit: playlist with a backing track and sound effects runs in sync with slides.
+- Better Auth desktop handoff, keychain, workspaces, members, roles, invites.
+- Pull/push sync, revisions, conflict copies and conflict UI; R2 media.
 
-### M8 Automation
+Exit: edit on two machines, resolve a conflict, run offline.
 
-- Slide actions: clear media, switch input, fire macro.
-- Macros: chain slide, media, audio, output and timer actions.
-- Playback markers: fire macros or stage messages at time/frame.
-- Timers and dynamic text.
-- Calendar scheduling for announcements.
+### E2 Collaboration and browser apps
 
-Exit: a macro fired by a marker changes media, starts audio and updates the stage message.
+- Several editors on one rundown with presence; live updates while a show runs.
+- Browser editor and browser remote from `apps/web`.
+- Shared template and media libraries across workspaces.
 
-### M9 Song workflow
+Exit: a producer edits the rundown in a browser while the operator runs it on desktop without data loss.
 
-- Arrangements: reorder, repeat, skip sections.
-- Quick Edit and Reflow Editor parity.
-- Section-aware live navigation and arrangement save.
+### E3 Multi-site and billing
 
-Exit: build two arrangements of one song and run both.
+- One show sent to several sites, each with a local engine.
+- Plans, seats, entitlements, per-pack billing.
 
-### M10 Outputs v2
+Exit: two venues run the same show with local outputs and shared cues.
 
-- Multiple simultaneous outputs with per-output Looks.
-- Alpha key, edge blending, announcements screen.
-- Output assignment persisted by stable display identity.
-- Power assertions and display-sleep prevention.
+### E4 Platform
 
-Exit: two projectors plus a stage screen with different Looks.
+- Pack SDK: third-party packs register content types, rundown items, importers, data sources and commands through the A1 boundary.
+- Template and pack marketplace inside workspaces.
+- Public cloud API and webhooks for rundowns, templates and data sources.
 
-### M11 Import and content
+Exit: an external pack adds a new data source and template type without changes to the core.
 
-- SongSelect by CCLI.
-- MultiTracks import.
-- Planning Center order of service and Services Live.
-- PowerPoint import (no backgrounds first).
-- ProPresenter import.
-- Bible, public-domain translations first.
+## Wave F — More packs
+
+### F1 Worship pack
+
+- Arrangements, Quick Edit and Reflow, section-aware navigation.
+- Bible (public-domain translations first), CCLI/SongSelect, Planning Center, MultiTracks.
 
 Exit: import a Planning Center service and a SongSelect song; run it unchanged.
 
-### Wave 2 exit — MVP-2
+### F2 Show control pack
 
-Run a complete service from a playlist with audio, macros, arrangements, multiple outputs, stage display and imported content.
+- OSC and MIDI output, LED/fader feedback, DMX.
+- Projection surfaces and edge blending.
 
-## Wave 3 — Production
+Exit: a timeline drives lights over DMX and video over two blended projectors.
 
-### M12 Advanced content
+### F3 Audio
 
-- Props, masks, builds, text animations, custom objects.
-- Live video inputs and overlays.
-- ProContent asset browser (licence-dependent).
+- Audio bin, tracks, device routing up to 16 channels, sound effects.
 
-Exit: lower third, mask and build run live.
+Exit: a rundown with backing tracks and stingers stays in sync with slides.
 
-### M13 Broadcast outputs
+## Wave G — Production and GA
 
-- NDI, SDI (DeckLink/UltraStudio), Syphon/Spout.
-- Alpha key and edge blend under load.
-- ProDisplay export, Resi/stream actions.
-- Announcements and secondary presentation at production quality.
-
-Exit: send key/fill to a switcher over NDI and SDI simultaneously.
-
-### M14 Control surfaces and API
-
-- MIDI out and LED/fader feedback.
-- DMX, Stream Deck, Remote, HTTP API.
-- Network Link for multiple local machines.
-- Existing LTC/MTC and MIDI input move onto the shared command bus.
-
-Exit: Stream Deck, MIDI controller, DMX and remote all drive the same live state.
-
-### M15 Timeline v2
-
-- Timeline with slides, media, audio, actions and macros.
-- LTC/MTC lock drives the whole timeline, not just commands.
-- Playback markers and timecode offset.
-
-Exit: a 10-minute timeline with video and macros follows external LTC without drift.
-
-## Wave 4 — Cloud, scale and launch
-
-### M16 Accounts, workspaces and sync
-
-- Better Auth desktop handoff, keychain.
-- Workspaces, members, roles, invites, libraries.
-- Pull/push sync, revisions, conflict copies and conflict UI.
-- R2 media upload, missing-media states across devices.
-
-Exit: edit on two machines, resolve a conflict, reopen offline.
-
-### M17 Collaboration and billing
-
-- Cloud collaboration and realtime remote.
-- Plans, seats, entitlements, billing.
-- Shared themes/media libraries.
-
-Exit: two editors in one workspace without data loss.
-
-### M18 Hardening and GA
-
-- Soak tests, GPU matrix, low disk, sleep/wake, decoder crash.
-- Data migrations, backfills, rollback.
-- Sentry/Workers Logs, crash triage, support.
-- Signed installers, updater channels, staged rollout.
-- Security and privacy review; licence compliance.
-- Linux/web-output decision; 4K60 measurement.
+- SDI (DeckLink/UltraStudio), Syphon/Spout.
+- Soak tests, GPU matrix, sleep/wake, decoder crash, low disk.
+- Data migrations, backfills, rollback; Sentry/Workers Logs.
+- Signed installers, updater channels, staged rollout; security, privacy and licence review.
+- Linux decision; 4K60 measurement.
 
 Exit: signed macOS and Windows GA builds with rollback and telemetry.
 
-## Feature coverage map
+## Coverage map
 
-| ProPresenter area | Milestones |
-|---|---|
-| Editor, custom objects, effects | M1, M2, M12 |
-| Themes, Quick Edit, Reflow | M2, M3, M9 |
-| Lyrics, arrangements, SongSelect | M9, M11 |
-| Playlists | M4 |
-| Media, video inputs, ProContent | M6, M12 |
-| Audio | M7 |
-| Stage display | M5 |
-| Outputs, Looks, alpha, blending | M10, M13 |
-| MIDI, DMX, Stream Deck, API, Remote | M14 |
-| Macros, markers, calendar, timeline, timecode | M8, T1–T6, M15 |
-| Planning Center, MultiTracks, Bible | M11 |
-| NDI, SDI, Syphon/Spout, Resi, ProDisplay | M13 |
-| Cloud, Network Link, collaboration | M14, M16, M17 |
-| Import/export | M11 |
+| Area | Reference products | Waves |
+|---|---|---|
+| Slides, editor, themes | PowerPoint, Keynote, ProPresenter | Done, C1 |
+| Rundowns and timers | ProPresenter, StageTimer-style tools | Done, C2 |
+| Confidence monitor | ProPresenter Stage, Watchout | Done, B4 |
+| Outputs, Looks, alpha, NDI | ProPresenter, vMix | B2, B3, G |
+| Data-driven graphics | Singular, H2R Graphics, vMix titles, CasparCG | D1–D3 |
+| Control surfaces and API | Companion, Stream Deck, QLab OSC | B1, F2 |
+| Timeline and timecode | QLab, Millumin, ProPresenter | Done, F2 |
+| Collaboration and cloud | Proclaim, Singular | E1–E3 |
+| Multi-machine shows | ProPresenter Network Link, Watchout | B5, E3 |
+| Importers from other presenters | FreeShow, ProPresenter | C3 |
+| Scheduling and signage | ProPresenter calendar, signage tools | C2 |
+| Plugins and marketplace | Companion modules, Singular apps | E4 |
+| Worship content | ProPresenter, EasyWorship, FreeShow | F1 |
 
 ## Sequencing rules
 
-1. M1 blocks M2 and audience output. Do not build editor UI on a fake renderer.
-2. M2 blocks M3 and M4. Do not build playlists on text-only slides.
-3. M4 blocks M5, M7, M8. Live state must be real before automation.
-4. Wave 1.5 starts after Wave 1 acceptance. T1/T2 block T3/T4/T5.
-5. MIDI/LTC/timeline work is a parallel track and does not gate MVP-1.
-6. Cloud and auth stay in Wave 4 until local service flow is solid.
+1. A1 before any new content type: packs register through the boundary, never by editing the core.
+2. B1 before B4, C2 and D3: every control path goes through the command bus.
+3. B2 before B3: network outputs are outputs with a Look.
+4. D1 before D2: data sources only feed bound fields.
+5. A1 before C3 and E4: importers and external packs use the pack boundary.
+6. Cloud stays out of the live path: a show runs with no network (invariant 2).
 7. Every milestone needs an offline test and a restart test.
-
-## Current state
-
-- M0.1: partial.
-- M0.2: renderer spike complete.
-- M1: scene renderer done; remote video decode and group layers remain blocked (no schema variant).
-- M2: editor layer inspector, undo/redo, copy/paste, Rust canvas, snapping and debounced autosave done.
-- M3: themes model, store and editor page done; editor applies theme on save.
-- M4: playlists, real live session, crash resume and persisted timers done.
-- M5: stage window, current/next, notes, timers and safe area done; stage capability added.
-- M6: media import, probe, thumbnails, relink, video playback via ffmpeg and editor media picker done.
-- Wave 1 code complete. Manual acceptance still required: second display, stage window, MIDI/LTC, video playback with `LUMEN_FFMPEG` or `ffmpeg` on PATH.
-- Frozen: MIDI/LTC/timeline track.

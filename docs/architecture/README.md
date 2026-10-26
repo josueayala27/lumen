@@ -10,7 +10,7 @@ Read these before changing a subsystem. The approved implementation plan is `~/.
 | 04 | [Sync](04-sync.md) | Pull/push, revisions, conflicts, media |
 | 05 | [Desktop output](05-desktop-output.md) | Native windows, render threads, power, media |
 | 06 | [Deploy](06-deploy.md) | Cloudflare resources, secrets, migrations, releases |
-| 07 | [Roadmap](07-roadmap.md) | Waves 0–4, milestones and feature coverage |
+| 07 | [Roadmap](07-roadmap.md) | Product target, core and packs, Waves A–G |
 | 08 | [Show control](08-show-control.md) | MIDI bindings, MTC, LTC, timecode, cue timeline |
 | 09 | [Local editor](09-local-editor.md) | SQLite library, songs, lyrics split, editor routes |
 

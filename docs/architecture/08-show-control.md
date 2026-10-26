@@ -20,11 +20,15 @@ External control lives in `apps/studio/src-tauri/crates/lumen-control`. The crat
 
 ## Timeline
 
-A timeline stores cue positions as absolute frame numbers, not labels, so drop-frame labels cannot drift. `timelineSchema` holds `id`, `name`, `frameRate` and `cues[]`; each cue has `atFrames`, a `ControlCommand`, `enabled` and a label.
+The show timeline (`showTimelineSchema`) stores tracks, clips, markers and keyframes at absolute frame numbers, not labels, so drop-frame labels cannot drift.
 
-`advanceTimeline(state, timeline, frame)` fires only enabled cues crossed by the current frame. It resynchronizes without firing on the first lock, a backward jump, or a gap larger than two seconds of frames. Cues at or before the first lock are skipped. A timeline rate that differs from the incoming timecode rate blocks firing instead of guessing.
+- `evaluateTimeline(timeline, frame, previousFrame)` (`packages/core/src/timelinePlayback.ts`) returns active clips, crossed markers and sampled keyframes. It resynchronizes without firing on the first evaluation, a backward jump, or a gap larger than two seconds of frames.
+- `timelineActions` (`timelineRuntime.ts`) turns an evaluation into live actions: marker commands, macro clips and slide clips crossed since the last frame. A resync fires nothing and chases the active slide and media instead.
+- `applyKeyframeSamples` overrides layer properties on the audience scene for layer tracks bound to an element on the live slide.
 
-`useTimeline` drives the runner from `control:event` timecode updates and applies commands through the live reducer. The editor lives in the Live inspector (`TimelinePanel.vue`), persists to `timeline.json` through the Tauri store, and shows the playhead, armed state and last fired cue. The panel only runs while the Live workspace is open; a future global runtime can move the listener out of the page.
+`useShowTimeline` (`apps/studio/app/live/`) runs the timeline in the Live view. The clock is internal (anchored to `requestAnimationFrame`, audio clips become master while playing) or external: LTC/MTC frames minus `offsetFrames`. A timeline rate that differs from the incoming timecode rate blocks firing instead of guessing. Actions dispatch only while armed. Media clips and keyframes reach the output through the `sceneTransform` hook of `useLiveOutput`; audio clips play in the control window through the asset protocol (scope `$APPDATA/media/*`).
+
+The legacy cue list (`timelineSchema`, `advanceTimeline`, `timeline.json`) is read only for import: `showTimelineFromCueDoc` converts its cues to markers with identical frame counts.
 
 ## MIDI
 
