@@ -86,7 +86,71 @@ Exit: import a video, set it as a background, play it live, recover from a moved
 
 ### Wave 1 exit — MVP-1
 
-Create a song and a presentation, style both with a theme, put them in a playlist, run live on audience and stage, offline, and reopen after restart.
+Create a song and a presentation, style both with a theme, put them in a playlist, run live on audience and stage, offline, and reopen after restart. Wave 1 code is complete; manual acceptance is the remaining gate.
+
+## Wave 1.5 — Timeline and automation
+
+Priority changed: timestamp automation and an After Effects-style timeline come before audio and imports. One timeline model, delivered in two phases.
+
+### T1 Timeline model v1
+
+- `TimelineDoc`: frame rate, duration, tracks, clips, markers, keyframes.
+- Tracks: slide, layer, media, audio, macro.
+- Clips: start, duration, trim, source reference, z.
+- Markers: timestamp, action, enabled.
+- Keyframes: property, frame, value, easing.
+- Migrate the existing cue timeline to markers; keep LTC/MTC frame counts.
+
+Exit: schema + pure edit helpers (add/move/trim/split/delete/keyframe) with tests.
+
+### T2 Playback engine
+
+- Internal clock, play/pause/stop/seek, loop, frame-accurate stepping.
+- External clock: LTC/MTC lock, offset and drift handling.
+- Evaluate timeline at frame: visible clips, marker firing, sampled keyframe values.
+- Emit scene snapshots and commands to live/output.
+
+Exit: a timeline plays forward/back and follows LTC without duplicate cue fires.
+
+### T3 Timeline editor
+
+- After Effects-style panel: ruler, playhead, zoom/pan, multi-track rows.
+- Drag clips, trim edges, split, delete, snap to frames/markers/clip edges.
+- Marker editor, track mute/lock, inspector for selected clip/keyframe.
+- Undo/redo, copy/paste, keyboard shortcuts.
+- Persist per presentation/playlist.
+
+Exit: build and edit a 10-minute timeline without touching JSON.
+
+### T4 Cue automation
+
+- Slide changes, output modes, media play/stop, macros and stage messages at timestamps.
+- Auto-advance slides; transition at marker; loop ranges.
+- Arm/disarm, skip missed cues policy, live status.
+
+Exit: a service timeline drives slides, media and macros by timestamp.
+
+### T5 Keyframes and curves
+
+- Animate layer position, scale, rotation, opacity, color and text properties.
+- Easing curves, linear/bezier, per-property keyframes.
+- Preview and audience render from sampled values, not duplicated scenes.
+- Text builds/animations reuse the same keyframe engine.
+
+Exit: a text layer animates in/out on the timeline with correct easing in preview and audience.
+
+### T6 Timeline audio and integration
+
+- Audio clips and waveform track in the timeline model.
+- Audio-master clock; video/LTC follows audio within tolerance.
+- Markers can trigger audio actions and macros.
+- Import/export timeline JSON.
+
+Exit: timeline with video, audio, slide cues, macros and keyframes runs offline.
+
+### Wave 1.5 exit
+
+A 10-minute service timeline with slide cues, macros, video, text keyframes and audio follows an external LTC clock, survives restart, and renders the same in editor, audience and stage.
 
 ## Wave 2 — Service-ready (MVP-2)
 
@@ -220,7 +284,7 @@ Exit: signed macOS and Windows GA builds with rollback and telemetry.
 | Stage display | M5 |
 | Outputs, Looks, alpha, blending | M10, M13 |
 | MIDI, DMX, Stream Deck, API, Remote | M14 |
-| Macros, markers, calendar, timeline, timecode | M8, M15 |
+| Macros, markers, calendar, timeline, timecode | M8, T1–T6, M15 |
 | Planning Center, MultiTracks, Bible | M11 |
 | NDI, SDI, Syphon/Spout, Resi, ProDisplay | M13 |
 | Cloud, Network Link, collaboration | M14, M16, M17 |
@@ -231,9 +295,10 @@ Exit: signed macOS and Windows GA builds with rollback and telemetry.
 1. M1 blocks M2 and audience output. Do not build editor UI on a fake renderer.
 2. M2 blocks M3 and M4. Do not build playlists on text-only slides.
 3. M4 blocks M5, M7, M8. Live state must be real before automation.
-4. MIDI/LTC/timeline work is a parallel track and does not gate MVP-1.
-5. Cloud and auth stay in Wave 4 until local service flow is solid.
-6. Every milestone needs an offline test and a restart test.
+4. Wave 1.5 starts after Wave 1 acceptance. T1/T2 block T3/T4/T5.
+5. MIDI/LTC/timeline work is a parallel track and does not gate MVP-1.
+6. Cloud and auth stay in Wave 4 until local service flow is solid.
+7. Every milestone needs an offline test and a restart test.
 
 ## Current state
 
