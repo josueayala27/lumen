@@ -4,7 +4,7 @@ import { css } from 'styled-system/css'
 import { Icon } from '#components'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Button, IconButton, Tabs } from '~/ui'
+import { Button, EmptyState, IconButton, Tabs } from '~/ui'
 import {
   createPresentation,
   listPresentations,
@@ -145,6 +145,7 @@ const boxTitle = css({ display: 'flex', alignItems: 'center', gap: '2', textStyl
 const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal' })
 const liveDot = css({ w: '1.5', h: '1.5', borderRadius: 'full', bg: 'success.default' })
 const empty = css({ gridColumn: '1 / -1', py: '16', textAlign: 'center', textStyle: 'ui.sm', color: 'fg.muted' })
+const emptyWrap = css({ gridColumn: '1 / -1', py: '12' })
 </script>
 
 <template>
@@ -190,9 +191,18 @@ const empty = css({ gridColumn: '1 / -1', py: '16', textAlign: 'center', textSty
             <p :class="cardMeta">Default theme · {{ updatedLabel(item.updatedAt) }}</p>
           </div>
         </button>
-        <p v-if="visible.length === 0" :class="empty">
-          No {{ filter === 'all' ? 'items' : filter }} yet. Create one.
-        </p>
+        <EmptyState
+          v-if="visible.length === 0"
+          :class="emptyWrap"
+          :icon="filter === 'songs' ? 'lucide:music' : 'lucide:presentation'"
+          :title="filter === 'songs' ? 'No songs yet' : filter === 'presentations' ? 'No presentations yet' : 'Your library is empty'"
+          :description="filter === 'songs' ? 'Paste lyrics and Lumen splits them into slides.' : 'Start a song from lyrics or a blank presentation. Everything is saved on this machine.'"
+        >
+          <template #actions>
+            <Button v-if="filter !== 'presentations'" variant="secondary" icon="lucide:music" @click="newSong">New song</Button>
+            <Button v-if="filter !== 'songs'" variant="primary" icon="lucide:plus" @click="newPresentation">New presentation</Button>
+          </template>
+        </EmptyState>
       </div>
     </section>
 

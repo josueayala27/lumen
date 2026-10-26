@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
-import { Button, IconButton, Input, Select } from '~/ui'
+import { Button, EmptyState, IconButton, Input, Select } from '~/ui'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -256,7 +256,7 @@ const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal
           <span :class="playlistName">{{ entry.name }}</span>
           <span :class="playlistMeta">{{ entry.itemCount }} items · {{ updatedLabel(entry.updatedAt) }}</span>
         </button>
-        <p v-if="!loading && playlists.length === 0" :class="notice">No playlists yet.</p>
+        <p v-if="!loading && playlists.length === 0" :class="notice">Playlists you create appear here.</p>
       </div>
     </aside>
 
@@ -276,7 +276,16 @@ const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal
 
       <p v-if="error" :class="errorText">{{ error }}</p>
       <p v-if="loading" :class="notice">Loading playlists…</p>
-      <p v-else-if="!draft" :class="notice">Create a playlist to order the service.</p>
+      <EmptyState
+        v-else-if="!draft"
+        icon="lucide:list-music"
+        title="Build your order of service"
+        description="A playlist holds the presentations and songs you run live, in order."
+      >
+        <template #actions>
+          <Button variant="primary" icon="lucide:plus" @click="newPlaylist">New playlist</Button>
+        </template>
+      </EmptyState>
       <div v-else :class="card">
         <label :class="fieldLabel" for="playlist-name">Playlist name</label>
         <Input id="playlist-name" v-model="draft.doc.name" live placeholder="Sunday service" size="md" />

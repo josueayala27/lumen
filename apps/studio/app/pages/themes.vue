@@ -16,6 +16,7 @@ import {
   Badge,
   Button,
   ColorField,
+  EmptyState,
   Input,
   PropertyRow,
   SegmentedControl,
@@ -296,9 +297,17 @@ const swatchRow = css({ display: 'flex', alignItems: 'center', gap: '2', textSty
               <span :class="listItemMeta">{{ updatedLabel(item.updatedAt) }}</span>
             </span>
           </button>
-          <p v-if="items.length === 0" :class="empty">
-            No themes saved yet. Create one from the default dark theme.
-          </p>
+          <EmptyState
+            v-if="items.length === 0"
+            size="sm"
+            icon="lucide:palette"
+            title="No themes yet"
+            description="Themes style backgrounds, titles and transitions across every slide."
+          >
+            <template #actions>
+              <Button variant="primary" size="sm" icon="lucide:plus" @click="create">New theme</Button>
+            </template>
+          </EmptyState>
         </template>
       </div>
     </aside>

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
-import { Button, Dialog, IconButton, Input } from '~/ui'
+import { Button, Dialog, EmptyState, IconButton, Input } from '~/ui'
 import { useShowControl } from '~/control/useShowControl'
 import { useOutputScreens } from '~/output/useOutputScreens'
 import OutputPanel from '~/output/OutputPanel.vue'
 import type { LiveCommand } from '@lumen/schema'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import TimelinePanel from './TimelinePanel.vue'
 import { useLiveSession } from './useLiveSession'
 import { useLiveOutput } from './useLiveOutput'
@@ -16,6 +16,7 @@ import { saveLiveSession } from './liveSessionStore'
 import { liveTimerViews } from './liveTimers'
 
 const route = useRoute()
+const router = useRouter()
 const {
   state,
   items,
@@ -322,9 +323,17 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
             <Icon v-if="state.itemIndex === itemIndex && state.slideIndex === slideIndex" name="lucide:radio" :size="12" />
           </button>
         </template>
-        <p v-if="emptyRail" :class="notice">
-          Create a playlist to go live.
-        </p>
+        <EmptyState
+          v-if="emptyRail"
+          size="sm"
+          icon="lucide:list-music"
+          title="Nothing to run yet"
+          description="Build a playlist, then open it live."
+        >
+          <template #actions>
+            <Button variant="primary" size="sm" icon="lucide:plus" @click="router.push('/playlists')">Create playlist</Button>
+          </template>
+        </EmptyState>
       </div>
     </aside>
 
