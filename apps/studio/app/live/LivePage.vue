@@ -1,87 +1,90 @@
 <script setup lang="ts">
-import { slideText } from '@lumen/core'
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
 import { Button, IconButton, Input } from '~/ui'
 import { useShowControl } from '~/control/useShowControl'
-import { getPresentation, listPresentations } from '~/data/presentations'
-import type { LiveCommand, PresentationDoc } from '@lumen/schema'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import type { LiveCommand } from '@lumen/schema'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import TimelinePanel from './TimelinePanel.vue'
-
-interface LiveSlide {
-  id: string
-  label: string
-  lines: string[]
-}
+import { useLiveSession } from './useLiveSession'
+import type { LiveItem } from './liveSession'
 
 const route = useRoute()
-const current = ref(0)
-const preview = ref(0)
-const mode = ref<'live' | 'black' | 'clear' | 'logo' | 'freeze'>('live')
-const stageMessage = ref('')
-const slides = ref<LiveSlide[]>([])
-const presentationTitle = ref('No presentation')
-const presentationKind = ref<PresentationDoc['kind']>('presentation')
-const loading = ref(true)
+const {
+  state,
+  items,
+  playlist,
+  presentation,
+  loading,
+  error,
+  currentItem,
+  currentSlide,
+  previewItem,
+  previewSlide,
+  nextSlide,
+  slideCount,
+  load,
+  dispatch,
+  next,
+  prev,
+  nextItem,
+  prevItem,
+  take,
+  goTo,
+  setMode,
+  setStageMessage,
+} = useLiveSession()
 
-const currentSlide = computed(() => slides.value[current.value])
-const previewSlide = computed(() => slides.value[preview.value])
-const nextSlide = computed(() => slides.value[Math.min(slides.value.length - 1, current.value + 1)])
+const mode = computed(() => state.value.mode)
 const isLive = computed(() => mode.value === 'live')
-
-function toLiveSlides(doc: PresentationDoc): LiveSlide[] {
-  return doc.slides.map((slide, index) => {
-    const text = slideText(slide)
-    return {
-      id: slide.id,
-      label: slide.label || `Slide ${index + 1}`,
-      lines: text.split('\n').filter((line) => line.length > 0),
-    }
-  })
-}
-
-async function loadLive(): Promise<void> {
-  loading.value = true
-  try {
-    const requested = (route.query.presentation as string | undefined) ?? ''
-    let id = requested
-    if (!id) {
-      const list = await listPresentations()
-      id = list[0]?.id ?? ''
-    }
-    if (!id) return
-    const record = await getPresentation(id)
-    if (!record) return
-    presentationTitle.value = record.doc.title
-    presentationKind.value = record.doc.kind
-    slides.value = toLiveSlides(record.doc)
-    current.value = 0
-    preview.value = 0
-  } finally {
-    loading.value = false
+const stageMessage = computed({
+  get: () => state.value.stageMessage,
+  set: (value: string) => setStageMessage(value),
+})
+const headerEyebrow = computed(() => {
+  if (playlist.value) return 'Playlist'
+  if (presentation.value?.kind === 'song') return 'Song'
+  if (presentation.value) return 'Presentation'
+  return 'Live'
+})
+const headerTitle = computed(
+  () => playlist.value?.doc.name ?? presentation.value?.doc.title ?? 'No playlist',
+)
+const headerMeta = computed(() => {
+  if (loading.value) return 'Loading…'
+  if (playlist.value) {
+    return `${items.value.length} items · ${slideCount.value} slides`
   }
+  return `${slideCount.value} slides`
+})
+const previewLabel = computed(() => {
+  const slide = previewSlide.value?.label ?? '—'
+  return previewItem.value && items.value.length > 1
+    ? `${previewItem.value.label} · ${slide}`
+    : slide
+})
+const liveLabel = computed(() => {
+  const slide = currentSlide.value?.label ?? '—'
+  return currentItem.value && items.value.length > 1
+    ? `${currentItem.value.label} · ${slide}`
+    : slide
+})
+const nextItemLabel = computed(() => {
+  const next = items.value[state.value.itemIndex + 1]
+  if (!next) return 'End of playlist'
+  return next.label
+})
+const emptyRail = computed(
+  () => !loading.value && items.value.length === 0,
+)
+
+function iconFor(item: LiveItem): string {
+  if (item.kind === 'media') return 'lucide:film'
+  if (item.kind === 'header') return 'lucide:heading'
+  return item.presentationKind === 'song' ? 'lucide:music' : 'lucide:presentation'
 }
 
-function next(): void {
-  if (slides.value.length === 0) return
-  current.value = Math.min(slides.value.length - 1, current.value + 1)
-  preview.value = current.value
-}
-function prev(): void {
-  if (slides.value.length === 0) return
-  current.value = Math.max(0, current.value - 1)
-  preview.value = current.value
-}
-function take(): void {
-  if (slides.value.length === 0) return
-  current.value = preview.value
-  mode.value = 'live'
-}
-function goTo(index: number): void {
-  preview.value = Math.max(0, Math.min(slides.value.length - 1, index))
-}
 function onKey(event: KeyboardEvent): void {
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
   switch (event.key) {
@@ -96,42 +99,34 @@ function onKey(event: KeyboardEvent): void {
     case 'Enter':
       take()
       break
+    case ']':
+      nextItem()
+      break
+    case '[':
+      prevItem()
+      break
     case 'b':
     case 'B':
-      mode.value = 'black'
+      setMode('black')
       break
     case 'c':
     case 'C':
-      mode.value = 'clear'
+      setMode('clear')
       break
     case 'l':
     case 'L':
-      mode.value = 'logo'
+      setMode('logo')
       break
     case 'f':
     case 'F':
-      mode.value = mode.value === 'freeze' ? 'live' : 'freeze'
+      setMode(mode.value === 'freeze' ? 'live' : 'freeze')
       break
   }
 }
 function applyLiveCommand(command: LiveCommand): void {
-  switch (command.type) {
-    case 'next':
-    case 'nextItem':
-      next()
-      break
-    case 'prev':
-    case 'prevItem':
-      prev()
-      break
-    case 'take':
-      take()
-      break
-    case 'setMode':
-      mode.value = command.mode
-      break
-  }
+  dispatch(command)
 }
+
 const { timecode: showTimecode } = useShowControl(applyLiveCommand)
 const timecodeLabel = computed(() => {
   const value = showTimecode.value?.timecode
@@ -142,7 +137,10 @@ const timecodeLabel = computed(() => {
 })
 onMounted(() => {
   window.addEventListener('keydown', onKey)
-  void loadLive()
+  void load({
+    playlistId: (route.query.playlist as string | undefined) ?? undefined,
+    presentationId: (route.query.presentation as string | undefined) ?? undefined,
+  })
 })
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
@@ -153,6 +151,7 @@ const railEyebrow = css({ textStyle: 'ui.label', color: 'accent.default', textTr
 const railTitle = css({ textStyle: 'ui.title', color: 'fg.default' })
 const railMeta = css({ textStyle: 'ui.xs', color: 'fg.subtle', mt: '1' })
 const railList = css({ flex: '1', minH: '0', overflowY: 'auto', p: '2', display: 'flex', flexDirection: 'column', gap: '1' })
+const cueGroup = css({ mt: '2', px: '2', py: '1', textStyle: 'ui.label', color: 'fg.subtle', textTransform: 'uppercase', _first: { mt: '0' } })
 const cue = css({
   display: 'flex',
   alignItems: 'center',
@@ -181,7 +180,7 @@ const liveSlide = css({ borderColor: 'live.default' })
 const slideTextStyle = css({ display: 'flex', flexDirection: 'column', gap: '2', fontSize: '[clamp(16px, 1.6vw, 26px)]', fontWeight: 'semibold', lineHeight: '[1.15]', color: 'ink.0', textShadow: '[0_2px_18px_rgba(0,0,0,0.5)]', textAlign: 'center' })
 const slideLine = css({ lineHeight: '[1.15]' })
 const nextStrip = css({ display: 'flex', gap: '2', p: '4', pt: '0' })
-const nextCard = css({ flex: '1', aspectRatio: 'video', maxW: '[180px]', borderRadius: 'sm', borderWidth: '1px', borderColor: 'border.default', display: 'grid', placeItems: 'center', p: '2', textStyle: 'ui.xs', color: 'fg.muted', bg: 'bg.panel' })
+const nextCard = css({ flex: '1', aspectRatio: 'video', maxW: '[180px]', borderRadius: 'sm', borderWidth: '1px', borderColor: 'border.default', display: 'grid', placeItems: 'center', p: '2', textStyle: 'ui.xs', color: 'fg.muted', bg: 'bg.panel', textAlign: 'center' })
 const controls = css({ display: 'flex', alignItems: 'center', gap: '2', p: '3', borderTopWidth: '1px', borderColor: 'border.default', bg: 'bg.panel', flexShrink: '0' })
 const inspector = css({ w: 'inspector', flexShrink: '0', bg: 'bg.panel', borderLeftWidth: '1px', borderColor: 'border.default', p: '4', overflowY: 'auto' })
 const sectionTitle = css({ textStyle: 'ui.label', color: 'fg.subtle', textTransform: 'uppercase', mb: '2', mt: '4', _first: { mt: '0' } })
@@ -192,31 +191,43 @@ const shortcut = css({ display: 'flex', justifyContent: 'space-between', py: '1.
 const kbd = css({ px: '1.5', py: '0.5', borderRadius: 'xs', bg: 'bg.subtle', color: 'fg.default', textStyle: 'ui.mono' })
 const gradient = css({ background: '[token(gradients.ember)]' })
 const gradientTwo = css({ background: '[token(gradients.graphite)]' })
+const notice = css({ p: '3', textStyle: 'ui.xs', color: 'fg.subtle' })
+const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.default' })
 </script>
 
 <template>
   <div :class="root">
     <aside :class="rail" aria-label="Service playlist">
       <div :class="railHead">
-        <p :class="railEyebrow">{{ presentationKind === 'song' ? 'Song' : 'Presentation' }}</p>
-        <h1 :class="railTitle">{{ presentationTitle }}</h1>
-        <p :class="railMeta">{{ loading ? 'Loading…' : `${slides.length} slides` }}</p>
+        <p :class="railEyebrow">{{ headerEyebrow }}</p>
+        <h1 :class="railTitle">{{ headerTitle }}</h1>
+        <p :class="railMeta">{{ headerMeta }}</p>
       </div>
       <div :class="railList">
-        <button
-          v-for="(item, index) in slides"
-          :key="item.id"
-          type="button"
-          :class="[cue, index === current ? cueLive : index === preview ? cueActive : '']"
-          @click="goTo(index)"
-        >
-          <span :class="cueIndex">{{ String(index + 1).padStart(2, '0') }}</span>
-          <Icon :name="presentationKind === 'song' ? 'lucide:music' : 'lucide:presentation'" :size="14" />
-          <span :class="cueLabel">{{ item.label }}</span>
-          <Icon v-if="index === current" name="lucide:radio" :size="12" />
-        </button>
-        <p v-if="!loading && slides.length === 0" :class="css({ p: '3', textStyle: 'ui.xs', color: 'fg.subtle' })">
-          Open a presentation from the library to go live.
+        <template v-for="(item, itemIndex) in items" :key="item.id">
+          <p v-if="playlist" :class="cueGroup">{{ item.label }}</p>
+          <button
+            v-for="(itemSlide, slideIndex) in item.slides"
+            :key="`${item.id}-${itemSlide.id}`"
+            type="button"
+            :class="[
+              cue,
+              state.itemIndex === itemIndex && state.slideIndex === slideIndex
+                ? cueLive
+                : state.previewItemIndex === itemIndex && state.previewSlideIndex === slideIndex
+                  ? cueActive
+                  : '',
+            ]"
+            @click="goTo(itemIndex, slideIndex)"
+          >
+            <span :class="cueIndex">{{ String(slideIndex + 1).padStart(2, '0') }}</span>
+            <Icon :name="iconFor(item)" :size="14" />
+            <span :class="cueLabel">{{ itemSlide.label }}</span>
+            <Icon v-if="state.itemIndex === itemIndex && state.slideIndex === slideIndex" name="lucide:radio" :size="12" />
+          </button>
+        </template>
+        <p v-if="emptyRail" :class="notice">
+          Create a playlist to go live.
         </p>
       </div>
     </aside>
@@ -233,20 +244,22 @@ const gradientTwo = css({ background: '[token(gradients.graphite)]' })
         <Button variant="ghost" size="sm" icon="lucide:settings-2">Output</Button>
       </div>
 
+      <p v-if="error" :class="errorText">{{ error }}</p>
+
       <div :class="stage">
         <div :class="pane">
-          <p :class="paneLabel">Preview <span>{{ previewSlide?.label ?? '—' }}</span></p>
+          <p :class="paneLabel">Preview <span>{{ previewLabel }}</span></p>
           <div :class="[slide, gradientTwo]">
             <div :class="slideTextStyle">
-              <span v-for="line in previewSlide?.lines ?? []" :key="line" :class="slideLine">{{ line }}</span>
+              <span v-for="(line, lineIndex) in previewSlide?.lines ?? []" :key="lineIndex" :class="slideLine">{{ line }}</span>
             </div>
           </div>
         </div>
         <div :class="pane">
-          <p :class="paneLabel">Live <span>{{ currentSlide?.label ?? '—' }}</span></p>
+          <p :class="paneLabel">Live <span>{{ liveLabel }}</span></p>
           <div :class="[slide, liveSlide, gradient]">
             <div v-if="isLive" :class="slideTextStyle">
-              <span v-for="line in currentSlide?.lines ?? []" :key="line" :class="slideLine">{{ line }}</span>
+              <span v-for="(line, lineIndex) in currentSlide?.lines ?? []" :key="lineIndex" :class="slideLine">{{ line }}</span>
             </div>
             <div v-else :class="css({ textStyle: 'display.lg', color: 'fg.muted', textTransform: 'uppercase', letterSpacing: 'widest' })">{{ mode }}</div>
           </div>
@@ -258,7 +271,7 @@ const gradientTwo = css({ background: '[token(gradients.graphite)]' })
           <span>Next · {{ nextSlide?.label ?? '—' }}</span>
         </div>
         <div :class="nextCard">
-          <span>Stage · notes ready</span>
+          <span>Next item · {{ nextItemLabel }}</span>
         </div>
       </div>
 
@@ -267,11 +280,13 @@ const gradientTwo = css({ background: '[token(gradients.graphite)]' })
         <Button variant="primary" size="md" icon="lucide:skip-forward" @click="next">Next slide</Button>
         <Button variant="secondary" size="md" icon="lucide:arrow-up-right" @click="take">Take</Button>
         <span :class="css({ flex: '1' })" />
-        <IconButton icon="lucide:square" label="Black" :active="mode === 'black'" @click="mode = 'black'" />
-        <IconButton icon="lucide:eraser" label="Clear" :active="mode === 'clear'" @click="mode = 'clear'" />
-        <IconButton icon="lucide:badge" label="Logo" :active="mode === 'logo'" @click="mode = 'logo'" />
-        <IconButton icon="lucide:pause" label="Freeze" :active="mode === 'freeze'" @click="mode = mode === 'freeze' ? 'live' : 'freeze'" />
-        <Button variant="danger" size="md" icon="lucide:radio" @click="mode = 'live'">Live</Button>
+        <IconButton icon="lucide:chevrons-left" label="Previous item" @click="prevItem" />
+        <IconButton icon="lucide:chevrons-right" label="Next item" @click="nextItem" />
+        <IconButton icon="lucide:square" label="Black" :active="mode === 'black'" @click="setMode('black')" />
+        <IconButton icon="lucide:eraser" label="Clear" :active="mode === 'clear'" @click="setMode('clear')" />
+        <IconButton icon="lucide:badge" label="Logo" :active="mode === 'logo'" @click="setMode('logo')" />
+        <IconButton icon="lucide:pause" label="Freeze" :active="mode === 'freeze'" @click="setMode(mode === 'freeze' ? 'live' : 'freeze')" />
+        <Button variant="danger" size="md" icon="lucide:radio" @click="setMode('live')">Live</Button>
       </div>
     </section>
 
@@ -302,6 +317,8 @@ const gradientTwo = css({ background: '[token(gradients.graphite)]' })
       <div :class="shortcut"><span>Next slide</span><span :class="kbd">Space</span></div>
       <div :class="shortcut"><span>Previous</span><span :class="kbd">←</span></div>
       <div :class="shortcut"><span>Take preview</span><span :class="kbd">Enter</span></div>
+      <div :class="shortcut"><span>Previous item</span><span :class="kbd">[</span></div>
+      <div :class="shortcut"><span>Next item</span><span :class="kbd">]</span></div>
       <div :class="shortcut"><span>Black</span><span :class="kbd">B</span></div>
       <div :class="shortcut"><span>Clear</span><span :class="kbd">C</span></div>
       <div :class="shortcut"><span>Logo</span><span :class="kbd">L</span></div>

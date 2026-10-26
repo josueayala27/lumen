@@ -24,6 +24,20 @@ async function migrate(db: Database): Promise<void> {
     CREATE INDEX IF NOT EXISTS presentations_kind_updated_idx
     ON presentations (kind, updated_at DESC)
   `)
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS playlists (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      doc TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    )
+  `)
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS playlists_updated_idx
+    ON playlists (updated_at DESC)
+  `)
 }
 
 export async function getDatabase(): Promise<Database | null> {
