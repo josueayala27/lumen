@@ -3,7 +3,7 @@ mod control;
 use std::sync::Mutex;
 
 use lumen_output::{DisplayInfo, OutputManager, OutputWindow};
-use lumen_render::{PreviewFrame, PreviewRenderer, RenderStats, Scene, TransitionPlan};
+use lumen_render::{PreviewRenderer, RenderStats, Scene, TransitionPlan};
 use tauri::{Manager, State};
 
 #[derive(Default)]
@@ -95,14 +95,18 @@ fn update_preview_video_frame(
         .map_err(|error| error.to_string())
 }
 
-/// Renders the scene offscreen and returns raw RGBA plus the Rust text layout.
+/// Renders the scene offscreen and returns a binary IPC response.
+///
+/// Layout: `width: u32 le`, `height: u32 le`, `layoutJsonLength: u32 le`, the UTF-8
+/// `PreviewResult` JSON, then raw row-major RGBA bytes. This avoids serializing several
+/// megabytes of pixels as a JSON number array.
 #[tauri::command]
 fn preview_render(
     preview: State<'_, PreviewState>,
     scene: Scene,
     width: u32,
     height: u32,
-) -> Result<PreviewFrame, String> {
+) -> Result<tauri::ipc::Response, String> {
     let mut renderer = preview
         .0
         .lock()
@@ -110,11 +114,20 @@ fn preview_render(
     if renderer.is_none() {
         *renderer = Some(PreviewRenderer::new().map_err(|error| error.to_string())?);
     }
-    renderer
+    let frame = renderer
         .as_mut()
         .ok_or_else(|| "preview renderer missing".to_string())?
         .render(&scene, width, height)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    let layout = serde_json::to_vec(&frame.layout).map_err(|error| error.to_string())?;
+    let layout_length = u32::try_from(layout.len()).map_err(|_| "layout is too large")?;
+    let mut payload = Vec::with_capacity(12 + layout.len() + frame.rgba.len());
+    payload.extend_from_slice(&frame.width.to_le_bytes());
+    payload.extend_from_slice(&frame.height.to_le_bytes());
+    payload.extend_from_slice(&layout_length.to_le_bytes());
+    payload.extend_from_slice(&layout);
+    payload.extend_from_slice(&frame.rgba);
+    Ok(tauri::ipc::Response::new(payload))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
