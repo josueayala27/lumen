@@ -18,3 +18,4 @@ apps/studio/src-tauri/gen
 apps/studio/src-tauri/target
 apps/*/.wrangler
 apps/*/dist
+.claude/worktrees/
