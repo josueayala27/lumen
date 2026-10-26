@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 mod renderer;
 
 pub use renderer::{
-    create_window_surface, scene_clear_color, spike_scene, ClearColor, FrameTiming, PendingSurface,
-    RenderStats, SurfaceRenderer,
+    create_window_surface, scene_clear_color, spike_scene, surface_action, ClearColor, FrameTiming,
+    PendingSurface, RenderStats, SurfaceAction, SurfaceRenderer,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

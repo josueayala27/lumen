@@ -1,7 +1,17 @@
 mod control;
 
-use lumen_output::{DisplayInfo, OutputWindow};
-use tauri::Manager;
+use lumen_output::{DisplayInfo, OutputManager, OutputWindow};
+use lumen_render::{PreviewResult, RenderStats, Scene};
+use tauri::{Manager, State};
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewFrame {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+    layout: PreviewResult,
+}
 
 #[tauri::command]
 fn list_displays(app: tauri::AppHandle) -> Result<Vec<DisplayInfo>, String> {
@@ -9,8 +19,43 @@ fn list_displays(app: tauri::AppHandle) -> Result<Vec<DisplayInfo>, String> {
 }
 
 #[tauri::command]
-fn open_output(app: tauri::AppHandle, display_index: usize) -> Result<OutputWindow, String> {
-    lumen_output::open_audience_window(&app, display_index)
+fn open_output(
+    outputs: State<'_, OutputManager>,
+    display_index: usize,
+) -> Result<OutputWindow, String> {
+    outputs.open(display_index)
+}
+
+#[tauri::command]
+fn close_output(outputs: State<'_, OutputManager>, label: String) -> Result<(), String> {
+    outputs.close(&label)
+}
+
+#[tauri::command]
+fn apply_hardcoded_scene(
+    outputs: State<'_, OutputManager>,
+    label: Option<String>,
+) -> Result<(), String> {
+    outputs.apply_scene(label.as_deref(), lumen_render::spike_scene())
+}
+
+#[tauri::command]
+fn output_stats(
+    outputs: State<'_, OutputManager>,
+    label: Option<String>,
+) -> Result<RenderStats, String> {
+    outputs.stats(label.as_deref())
+}
+
+/// Clear-only preview. Layout is empty until Rust text shaping lands.
+#[tauri::command]
+fn preview_render(scene: Scene, width: u32, height: u32) -> Result<PreviewFrame, String> {
+    Ok(PreviewFrame {
+        width,
+        height,
+        rgba: lumen_render::render_preview_rgba(&scene, width, height),
+        layout: lumen_render::empty_preview_result(&scene),
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -29,11 +74,18 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
             app.manage(control::ControlState::new(app.handle().clone()));
+            let outputs = OutputManager::new(app.handle().clone());
+            outputs.start_monitor_poll();
+            app.manage(outputs);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             list_displays,
             open_output,
+            close_output,
+            apply_hardcoded_scene,
+            output_stats,
+            preview_render,
             control::list_midi_inputs,
             control::start_midi_input,
             control::stop_midi_input,

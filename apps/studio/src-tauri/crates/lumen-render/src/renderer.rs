@@ -124,12 +124,7 @@ impl ClearColor {
                 expand(hex.as_bytes()[2])?,
                 expand(hex.as_bytes()[3])?,
             ),
-            6 => (
-                pair(&hex[0..2])?,
-                pair(&hex[2..4])?,
-                pair(&hex[4..6])?,
-                255,
-            ),
+            6 => (pair(&hex[0..2])?, pair(&hex[2..4])?, pair(&hex[4..6])?, 255),
             8 => (
                 pair(&hex[0..2])?,
                 pair(&hex[2..4])?,
@@ -211,6 +206,31 @@ pub fn spike_scene() -> Scene {
             bottom: 0.05,
             left: 0.05,
         },
+    }
+}
+
+/// What the render loop should do with an acquired surface state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceAction {
+    Draw,
+    Reconfigure,
+    SkipFrame,
+    Fatal,
+}
+
+/// Pure surface-state classifier, testable without a GPU.
+pub fn surface_action(state: &wgpu::CurrentSurfaceTexture) -> SurfaceAction {
+    match state {
+        wgpu::CurrentSurfaceTexture::Success(_) | wgpu::CurrentSurfaceTexture::Suboptimal(_) => {
+            SurfaceAction::Draw
+        }
+        wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+            SurfaceAction::Reconfigure
+        }
+        wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+            SurfaceAction::SkipFrame
+        }
+        wgpu::CurrentSurfaceTexture::Validation => SurfaceAction::Fatal,
     }
 }
 
@@ -385,8 +405,7 @@ impl SurfaceRenderer {
         self.queue.submit([encoder.finish()]);
         self.queue.present(texture);
 
-        self.timing
-            .record(start.elapsed().as_secs_f64() * 1_000.0);
+        self.timing.record(start.elapsed().as_secs_f64() * 1_000.0);
         Ok(())
     }
 }
@@ -425,8 +444,35 @@ mod tests {
             ClearColor::parse("#0f08"),
             Some(ClearColor::from_rgba8(0, 255, 0, 136))
         );
-        assert_eq!(ClearColor::parse("white"), Some(ClearColor::from_rgba8(255, 255, 255, 255)));
+        assert_eq!(
+            ClearColor::parse("white"),
+            Some(ClearColor::from_rgba8(255, 255, 255, 255))
+        );
         assert_eq!(ClearColor::parse("not-a-color"), None);
+    }
+
+    #[test]
+    fn classifies_surface_states() {
+        assert_eq!(
+            surface_action(&wgpu::CurrentSurfaceTexture::Lost),
+            SurfaceAction::Reconfigure
+        );
+        assert_eq!(
+            surface_action(&wgpu::CurrentSurfaceTexture::Outdated),
+            SurfaceAction::Reconfigure
+        );
+        assert_eq!(
+            surface_action(&wgpu::CurrentSurfaceTexture::Timeout),
+            SurfaceAction::SkipFrame
+        );
+        assert_eq!(
+            surface_action(&wgpu::CurrentSurfaceTexture::Occluded),
+            SurfaceAction::SkipFrame
+        );
+        assert_eq!(
+            surface_action(&wgpu::CurrentSurfaceTexture::Validation),
+            SurfaceAction::Fatal
+        );
     }
 
     #[test]
@@ -434,6 +480,9 @@ mod tests {
         let mut scene = spike_scene();
         scene.background = None;
         assert_eq!(scene_clear_color(&scene), ClearColor::BLACK);
-        assert_eq!(scene_clear_color(&spike_scene()), ClearColor::parse("#101828").unwrap());
+        assert_eq!(
+            scene_clear_color(&spike_scene()),
+            ClearColor::parse("#101828").unwrap()
+        );
     }
 }
