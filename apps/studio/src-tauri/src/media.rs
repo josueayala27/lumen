@@ -7,15 +7,18 @@
 //! not open competing SQLite handles.
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use lumen_media::decoder::{DecodeRequest, DecoderConfig, FfmpegVideo, MAX_DECODE_EDGE};
+use lumen_media::hap::{self, HapFrame, HapTextureFormat};
+use lumen_media::mov::MovVideoTrack;
 use lumen_media::probe::probe_file;
 use lumen_media::thumbnail::{thumbnail_file, DEFAULT_THUMBNAIL_EDGE};
 use lumen_media::util::{
@@ -24,12 +27,14 @@ use lumen_media::util::{
 };
 use lumen_media::{FileProbe, MediaBackend};
 use lumen_output::OutputManager;
-use lumen_render::{AssetKind, AssetState, Layer, Scene};
+use lumen_render::{AssetKind, AssetState, Layer, Scene, VideoFrame, VideoPixels};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
-/// Decoder budget from the architecture contract.
-pub const MAX_CONCURRENT_DECODERS: usize = 2;
+/// ffmpeg decoders run as separate processes and copy every frame through the CPU.
+pub const MAX_CONCURRENT_DECODERS: usize = 4;
+/// Hap decoding is a file read plus Snappy, so many layers can play at once.
+pub const MAX_HAP_DECODERS: usize = 16;
 
 /// Metadata returned by an import; the frontend persists it as a row.
 #[derive(Debug, Serialize)]
@@ -234,8 +239,15 @@ pub fn scene_video_sources(scene: &Scene) -> Vec<VideoSource> {
         .collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Backend {
+    Ffmpeg,
+    Hap,
+}
+
 struct Playback {
     stop: Arc<AtomicBool>,
+    backend: Backend,
 }
 
 /// Owns decoder threads for every scene sent to a preview or an output.
@@ -284,10 +296,6 @@ impl VideoPlaybackManager {
             self.stop_referenced(&HashSet::new());
             return;
         }
-        let config = match self.decoder_config() {
-            Ok(config) => config,
-            Err(_) => return,
-        };
         let wanted = desired
             .iter()
             .map(|source| source.asset_id.clone())
@@ -298,19 +306,48 @@ impl VideoPlaybackManager {
             .playbacks
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for source in desired.into_iter().take(MAX_CONCURRENT_DECODERS) {
+        let running = |backend: Backend| {
+            playbacks
+                .values()
+                .filter(|playback| playback.backend == backend)
+                .count()
+        };
+        let mut ffmpeg_running = running(Backend::Ffmpeg);
+        let mut hap_running = running(Backend::Hap);
+        for source in desired {
             if playbacks.contains_key(&source.asset_id) {
                 continue;
             }
             let stop = Arc::new(AtomicBool::new(false));
             let thread_stop = Arc::clone(&stop);
             let thread_app = app.clone();
-            let thread_config = config.clone();
             let asset_id = source.asset_id.clone();
-            thread::spawn(move || {
-                run_decoder(&thread_app, &source, &thread_config, &thread_stop);
-            });
-            playbacks.insert(asset_id, Playback { stop });
+            let backend = match hap_track(&source.local_path) {
+                Some(track) => {
+                    if hap_running >= MAX_HAP_DECODERS {
+                        continue;
+                    }
+                    hap_running += 1;
+                    thread::spawn(move || {
+                        run_hap_decoder(&thread_app, &source, &track, &thread_stop);
+                    });
+                    Backend::Hap
+                }
+                None => {
+                    if ffmpeg_running >= MAX_CONCURRENT_DECODERS {
+                        continue;
+                    }
+                    let Ok(config) = self.decoder_config() else {
+                        continue;
+                    };
+                    ffmpeg_running += 1;
+                    thread::spawn(move || {
+                        run_decoder(&thread_app, &source, &config, &thread_stop);
+                    });
+                    Backend::Ffmpeg
+                }
+            };
+            playbacks.insert(asset_id, Playback { stop, backend });
         }
     }
 
@@ -370,20 +407,8 @@ fn run_decoder(app: &AppHandle, source: &VideoSource, config: &DecoderConfig, st
         }
         match decoder.read_frame() {
             Ok(Some(rgba)) => {
-                let width = decoder.width();
-                let height = decoder.height();
-                if let Some(preview) = app.try_state::<crate::PreviewState>() {
-                    let _ = preview.push_video_frame(&source.asset_id, width, height, &rgba);
-                }
-                if let Some(outputs) = app.try_state::<OutputManager>() {
-                    let _ = outputs.update_video_frame(
-                        None,
-                        source.asset_id.clone(),
-                        width,
-                        height,
-                        rgba,
-                    );
-                }
+                let frame = VideoFrame::rgba(decoder.width(), decoder.height(), rgba);
+                push_frame(app, &source.asset_id, frame);
             }
             Ok(None) => return,
             Err(error) => {
@@ -396,6 +421,118 @@ fn run_decoder(app: &AppHandle, source: &VideoSource, config: &DecoderConfig, st
                 return;
             }
         }
+    }
+}
+
+/// Sends one frame to the preview and every output. The frame is shared, not copied.
+fn push_frame(app: &AppHandle, asset_id: &str, frame: VideoFrame) {
+    if let Some(preview) = app.try_state::<crate::PreviewState>() {
+        let _ = preview.push_video(asset_id, &frame);
+    }
+    if let Some(outputs) = app.try_state::<OutputManager>() {
+        let _ = outputs.update_video(None, asset_id.to_string(), frame);
+    }
+}
+
+/// The video track of a QuickTime file when it carries Hap frames.
+fn hap_track(path: &str) -> Option<MovVideoTrack> {
+    let track = MovVideoTrack::open(Path::new(path)).ok()?;
+    (hap::is_hap_codec(&track.codec) && !track.samples.is_empty()).then_some(track)
+}
+
+/// Maps decoded Hap textures to the renderer's frame payload.
+fn hap_video_frame(frame: HapFrame, width: u32, height: u32) -> Result<VideoFrame, String> {
+    let mut textures = frame.textures.into_iter();
+    let first = textures.next().ok_or("hap frame has no texture")?;
+    let pixels = match (first.format, textures.next()) {
+        (HapTextureFormat::Bc3YCoCg, Some(alpha)) if alpha.format == HapTextureFormat::Bc4 => {
+            VideoPixels::Bc3YCoCgAlpha {
+                color: Arc::from(first.data),
+                alpha: Arc::from(alpha.data),
+            }
+        }
+        (format, None) => {
+            let data: Arc<[u8]> = Arc::from(first.data);
+            match format {
+                HapTextureFormat::Bc1 => VideoPixels::Bc1(data),
+                HapTextureFormat::Bc3 => VideoPixels::Bc3(data),
+                HapTextureFormat::Bc3YCoCg => VideoPixels::Bc3YCoCg(data),
+                HapTextureFormat::Bc4 => VideoPixels::Bc4(data),
+                HapTextureFormat::Bc7 => VideoPixels::Bc7(data),
+            }
+        }
+        _ => return Err("unsupported hap texture combination".to_string()),
+    };
+    Ok(VideoFrame {
+        width,
+        height,
+        pixels,
+    })
+}
+
+/// Position in the clip for `elapsed_ms` of playback, or `None` once a
+/// non-looping clip has finished.
+fn hap_position_ms(start_ms: u64, elapsed_ms: u64, duration_ms: u64, looping: bool) -> Option<u64> {
+    let duration = duration_ms.max(1);
+    let position = start_ms.saturating_add(elapsed_ms);
+    if position < duration {
+        Some(position)
+    } else if looping {
+        Some(position % duration)
+    } else {
+        None
+    }
+}
+
+/// Plays a Hap file on its own clock. Each sample is an intra frame, so the
+/// frame shown is always the one at the clip position: no drift, no decoder
+/// warm-up, and a late thread skips frames instead of falling behind.
+fn run_hap_decoder(app: &AppHandle, source: &VideoSource, track: &MovVideoTrack, stop: &AtomicBool) {
+    let mut file = match File::open(&source.local_path) {
+        Ok(file) => file,
+        Err(error) => {
+            eprintln!("lumen-media: hap {} failed to open: {error}", source.asset_id);
+            return;
+        }
+    };
+    let duration_ms = track.duration_ms();
+    let started = Instant::now();
+    let mut shown: Option<usize> = None;
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+        let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let Some(position) = hap_position_ms(source.start_ms, elapsed, duration_ms, source.loop_playback) else {
+            // A finished clip holds its last frame on screen.
+            return;
+        };
+        let index = track.sample_index_at_ms(position);
+        if shown != Some(index) {
+            let decoded = track
+                .read_sample(&mut file, index)
+                .and_then(|bytes| hap::decode_frame(&bytes))
+                .and_then(|frame| hap::validate_frame(&frame, track.width, track.height).map(|_| frame))
+                .map_err(|error| error.to_string())
+                .and_then(|frame| hap_video_frame(frame, track.width, track.height));
+            match decoded {
+                Ok(frame) => push_frame(app, &source.asset_id, frame),
+                Err(error) => {
+                    if !stop.load(Ordering::Relaxed) {
+                        eprintln!("lumen-media: hap {} stopped: {error}", source.asset_id);
+                    }
+                    return;
+                }
+            }
+            shown = Some(index);
+        }
+        let next_ms = if index + 1 < track.samples.len() {
+            track.sample_time_ms(index + 1)
+        } else {
+            duration_ms
+        };
+        let wait = next_ms.saturating_sub(position).clamp(1, 50);
+        thread::sleep(Duration::from_millis(wait));
     }
 }
 

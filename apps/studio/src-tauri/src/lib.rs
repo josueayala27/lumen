@@ -4,7 +4,7 @@ mod media;
 use std::sync::Mutex;
 
 use lumen_output::{DisplayInfo, OutputManager, OutputWindow};
-use lumen_render::{PreviewRenderer, RenderStats, Scene, TransitionPlan};
+use lumen_render::{PreviewRenderer, RenderStats, Scene, TransitionPlan, VideoFrame};
 use tauri::{Manager, State};
 
 #[derive(Default)]
@@ -27,6 +27,20 @@ impl PreviewState {
         match renderer.as_mut() {
             Some(renderer) => renderer
                 .update_video_frame(asset_id, width, height, rgba)
+                .map_err(|error| error.to_string()),
+            None => Ok(()),
+        }
+    }
+
+    /// Same as `push_video_frame` for any frame payload, including Hap.
+    pub(crate) fn push_video(&self, asset_id: &str, frame: &VideoFrame) -> Result<(), String> {
+        let mut renderer = self
+            .0
+            .lock()
+            .map_err(|_| "preview renderer lock poisoned".to_string())?;
+        match renderer.as_mut() {
+            Some(renderer) => renderer
+                .update_video(asset_id, frame)
                 .map_err(|error| error.to_string()),
             None => Ok(()),
         }
