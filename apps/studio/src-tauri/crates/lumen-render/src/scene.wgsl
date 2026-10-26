@@ -56,8 +56,8 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         color = color * texel;
     }
 
-    let half = input.size * 0.5;
-    let distance = rounded_rect_distance(input.local - half, half, input.params.x);
+    let half_size = input.size * 0.5;
+    let distance = rounded_rect_distance(input.local - half_size, half_size, input.params.x);
     let outer = clamp(0.5 - distance, 0.0, 1.0);
     if (input.params.y > 0.0) {
         let inner = clamp(0.5 - (distance + input.params.y), 0.0, 1.0);

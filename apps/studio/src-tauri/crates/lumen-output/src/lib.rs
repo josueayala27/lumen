@@ -11,7 +11,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 
-use lumen_render::{PendingSurface, RenderError, RenderStats, Scene, SurfaceRenderer};
+use lumen_render::{
+    PendingSurface, RenderError, RenderStats, Scene, SurfaceFactory, SurfaceRenderer,
+    TransitionPlan,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
@@ -153,6 +156,13 @@ pub fn open_audience_window(app: &AppHandle, display_index: usize) -> Result<Out
 
 enum OutputCommand {
     Scene(Box<Scene>),
+    Transition(Box<TransitionPlan>),
+    VideoFrame {
+        asset_id: String,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    },
     Resize(u32, u32),
     Stop,
 }
@@ -189,6 +199,21 @@ impl RenderThread {
         let _ = self.commands.send(OutputCommand::Scene(Box::new(scene)));
     }
 
+    fn apply_transition(&self, plan: TransitionPlan) {
+        let _ = self
+            .commands
+            .send(OutputCommand::Transition(Box::new(plan)));
+    }
+
+    fn video_frame(&self, asset_id: String, width: u32, height: u32, rgba: Vec<u8>) {
+        let _ = self.commands.send(OutputCommand::VideoFrame {
+            asset_id,
+            width,
+            height,
+            rgba,
+        });
+    }
+
     fn resize(&self, width: u32, height: u32) {
         let _ = self.commands.send(OutputCommand::Resize(width, height));
     }
@@ -210,8 +235,27 @@ impl Drop for RenderThread {
     }
 }
 
+/// Recreates the wgpu surface on the Tauri main thread after `Lost` or `Outdated`.
+fn recreate_surface_on_main(
+    app: &AppHandle,
+    factory: &SurfaceFactory,
+) -> Result<PendingSurface, String> {
+    let (sender, receiver) = mpsc::channel();
+    let factory = factory.clone();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(factory.create_surface());
+    })
+    .map_err(|error| error.to_string())?;
+    receiver
+        .recv_timeout(RENDERER_START_TIMEOUT)
+        .map_err(|error| format!("main thread did not recreate the surface: {error}"))?
+        .map_err(|error| error.to_string())
+}
+
 /// Spawns the per-window render thread and waits for its device to be ready.
 fn spawn_renderer(
+    app: AppHandle,
+    factory: SurfaceFactory,
     pending: PendingSurface,
     scene: Scene,
     width: u32,
@@ -242,6 +286,25 @@ fn spawn_renderer(
                         renderer.set_scene(&scene);
                         continue;
                     }
+                    Ok(OutputCommand::Transition(plan)) => {
+                        if let Err(error) = renderer.start_transition(&plan) {
+                            eprintln!("lumen-output: transition failed: {error}");
+                        }
+                        continue;
+                    }
+                    Ok(OutputCommand::VideoFrame {
+                        asset_id,
+                        width,
+                        height,
+                        rgba,
+                    }) => {
+                        if let Err(error) =
+                            renderer.update_video_frame(&asset_id, width, height, &rgba)
+                        {
+                            eprintln!("lumen-output: video frame failed: {error}");
+                        }
+                        continue;
+                    }
                     Ok(OutputCommand::Resize(width, height)) => {
                         renderer.resize(width, height);
                         continue;
@@ -259,9 +322,17 @@ fn spawn_renderer(
                             .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot;
                     }
                     Err(RenderError::SurfaceLost | RenderError::SurfaceOutdated) => {
-                        if let Err(error) = renderer.recreate_surface() {
-                            eprintln!("lumen-output: surface recreation failed: {error}");
-                            return;
+                        thread::sleep(Duration::from_millis(100));
+                        match recreate_surface_on_main(&app, &factory) {
+                            Ok(pending) => {
+                                if let Err(error) = renderer.replace_surface(pending) {
+                                    eprintln!("lumen-output: surface recreation failed: {error}");
+                                    return;
+                                }
+                            }
+                            Err(error) => {
+                                eprintln!("lumen-output: surface recovery failed: {error}");
+                            }
                         }
                     }
                     Err(RenderError::SurfaceTimeout | RenderError::SurfaceOccluded) => {}
@@ -373,7 +444,8 @@ impl OutputManager {
             .get_window(&output.label)
             .ok_or_else(|| "audience window disappeared".to_string())?;
 
-        let pending = match lumen_render::create_window_surface(window.clone()) {
+        let factory = SurfaceFactory::new(window.clone());
+        let pending = match factory.create_surface() {
             Ok(pending) => pending,
             Err(error) => {
                 let _ = window.close();
@@ -381,6 +453,8 @@ impl OutputManager {
             }
         };
         let renderer = match spawn_renderer(
+            self.inner.app.clone(),
+            factory,
             pending,
             lumen_render::spike_scene(),
             output.width,
@@ -446,6 +520,61 @@ impl OutputManager {
                 }
                 for output in outputs.values() {
                     output.renderer.apply_scene(scene.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn apply_transition(
+        &self,
+        label: Option<&str>,
+        plan: TransitionPlan,
+    ) -> Result<(), String> {
+        let outputs = self.outputs();
+        match label {
+            Some(label) => {
+                let output = outputs
+                    .get(label)
+                    .ok_or_else(|| format!("no output named {label}"))?;
+                output.renderer.apply_transition(plan);
+            }
+            None => {
+                if outputs.is_empty() {
+                    return Err("no audience output is open".into());
+                }
+                for output in outputs.values() {
+                    output.renderer.apply_transition(plan.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn update_video_frame(
+        &self,
+        label: Option<&str>,
+        asset_id: String,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) -> Result<(), String> {
+        let outputs = self.outputs();
+        match label {
+            Some(label) => {
+                let output = outputs
+                    .get(label)
+                    .ok_or_else(|| format!("no output named {label}"))?;
+                output.renderer.video_frame(asset_id, width, height, rgba);
+            }
+            None => {
+                if outputs.is_empty() {
+                    return Err("no audience output is open".into());
+                }
+                for output in outputs.values() {
+                    output
+                        .renderer
+                        .video_frame(asset_id.clone(), width, height, rgba.clone());
                 }
             }
         }

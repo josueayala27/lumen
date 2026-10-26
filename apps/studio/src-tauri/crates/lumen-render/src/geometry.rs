@@ -82,16 +82,20 @@ pub fn fit_uv(
     }
 }
 
-/// Rotates a point around a center by `angle_degrees` clockwise in screen space.
-pub fn rotate_point(x: f32, y: f32, cx: f32, cy: f32, angle_degrees: f32) -> (f32, f32) {
+/// Rotates a vector by `angle_degrees` clockwise in screen space.
+pub fn rotate_vector(x: f32, y: f32, angle_degrees: f32) -> (f32, f32) {
     if angle_degrees == 0.0 {
         return (x, y);
     }
     let radians = angle_degrees.to_radians();
     let (sin, cos) = radians.sin_cos();
-    let dx = x - cx;
-    let dy = y - cy;
-    (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos)
+    (x * cos - y * sin, x * sin + y * cos)
+}
+
+/// Rotates a point around a center by `angle_degrees` clockwise in screen space.
+pub fn rotate_point(x: f32, y: f32, cx: f32, cy: f32, angle_degrees: f32) -> (f32, f32) {
+    let (dx, dy) = rotate_vector(x - cx, y - cy, angle_degrees);
+    (cx + dx, cy + dy)
 }
 
 /// Axis-aligned bounds of a possibly rotated frame, in normalized slide coordinates.
@@ -191,8 +195,10 @@ mod tests {
     #[test]
     fn contain_letterboxes_inside_the_frame() {
         let contain = fit_uv(LayerFit::Contain, 100.0, 50.0, 100.0, 100.0);
-        assert!((contain.v0 - -0.5).abs() < 1e-6);
-        assert!((contain.v1 - 1.5).abs() < 1e-6);
+        assert!((contain.u0 - -0.5).abs() < 1e-6);
+        assert!((contain.u1 - 1.5).abs() < 1e-6);
+        assert!((contain.v0 - 0.0).abs() < 1e-6);
+        assert!((contain.v1 - 1.0).abs() < 1e-6);
         assert!(contain.discard_outside);
     }
 

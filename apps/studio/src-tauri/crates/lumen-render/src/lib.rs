@@ -135,7 +135,11 @@ pub struct Frame {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "lowercase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase"
+)]
 pub enum Layer {
     Text {
         id: String,
@@ -208,7 +212,7 @@ pub enum Layer {
         source: LayerSource,
         #[serde(default)]
         fit: LayerFit,
-        #[serde(default = "one_bool")]
+        #[serde(default = "one_bool", rename = "loop")]
         loop_: bool,
         #[serde(default = "one_bool")]
         muted: bool,

@@ -257,7 +257,7 @@ impl TextEngine {
 
         for glyph in shaped.glyphs {
             let color = glyph
-                .color
+                .color_opt
                 .map(|color| {
                     let (r, g, b, a) = color.as_rgba_tuple();
                     ClearColor::from_rgba8(r, g, b, a)
@@ -317,14 +317,7 @@ impl TextEngine {
         } else {
             Family::Name(family)
         };
-        let default = shape_attrs(
-            family,
-            weight,
-            false,
-            false,
-            layer_color,
-            letter_spacing,
-        );
+        let default = shape_attrs(family, weight, false, false, layer_color, letter_spacing);
         let spans: Vec<(&str, Attrs<'_>)> = runs
             .iter()
             .map(|run| {
@@ -378,10 +371,7 @@ impl TextEngine {
             if atlas.uvs.contains_key(&glyph.cache_key) {
                 continue;
             }
-            let Some(image) = self
-                .swash
-                .get_image(&mut self.font_system, glyph.cache_key)
-            else {
+            let Some(image) = self.swash.get_image(&mut self.font_system, glyph.cache_key) else {
                 continue;
             };
             let image_w = image.placement.width;
@@ -419,12 +409,7 @@ impl TextEngine {
             if self.loaded_fonts.contains(&font.path) {
                 continue;
             }
-            if self
-                .font_system
-                .db_mut()
-                .load_font_file(&font.path)
-                .is_ok()
-            {
+            if self.font_system.db_mut().load_font_file(&font.path).is_ok() {
                 self.loaded_fonts.insert(font.path.clone());
             }
         }
@@ -530,12 +515,7 @@ impl ShapedLine {
     }
 }
 
-fn blit_glyph(
-    pixels: &mut [u8],
-    image: &cosmic_text::SwashImage,
-    origin_x: u32,
-    origin_y: u32,
-) {
+fn blit_glyph(pixels: &mut [u8], image: &cosmic_text::SwashImage, origin_x: u32, origin_y: u32) {
     let width = image.placement.width;
     let height = image.placement.height;
     for row in 0..height {
