@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { showTimelineSchema } from '@lumen/schema'
-import type { ShowTimeline, TimelineKeyframeInput, TimelineProperty } from '@lumen/schema'
+import type { ShowTimeline, TimelineProperty } from '@lumen/schema'
 import {
   addClip,
   addKeyframe,
@@ -26,6 +26,7 @@ import {
   timelineTotalDurationFrames,
   trimClip,
 } from '../src/index'
+import type { TimelineKeyframeInput } from '../src/index'
 
 function emptyShow(durationFrames = 100): ShowTimeline {
   return createShowTimeline('Show', '25', durationFrames)

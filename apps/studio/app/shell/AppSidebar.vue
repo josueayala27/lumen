@@ -22,6 +22,7 @@ const sections: { title: string; items: NavItem[] }[] = [
       { label: 'Media', href: '/media', icon: 'lucide:image' },
       { label: 'Themes', href: '/themes', icon: 'lucide:palette' },
       { label: 'Playlists', href: '/playlists', icon: 'lucide:list-music' },
+      { label: 'Timelines', href: '/timeline', icon: 'lucide:film' },
     ],
   },
   {
