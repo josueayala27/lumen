@@ -497,7 +497,7 @@ mod tests {
         video.extend_from_slice(&element(0xBA, &720u16.to_be_bytes()));
         let mut tracks = element(0xAE, &element(0xE0, &video));
         tracks = element(0x1654AE6B, &tracks);
-        let mut data = vec![0x1A, 0x45, 0xDF, 0xA3];
+        let mut data = element(0x1A45DFA3, &[]);
         data.extend_from_slice(&element(0x1549A966, &info));
         data.extend_from_slice(&tracks);
 

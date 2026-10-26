@@ -4,11 +4,12 @@ import { Icon } from '#components'
 import { Button, IconButton, Input } from '~/ui'
 import { useShowControl } from '~/control/useShowControl'
 import type { LiveCommand } from '@lumen/schema'
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import TimelinePanel from './TimelinePanel.vue'
 import { useLiveSession } from './useLiveSession'
 import type { LiveItem } from './liveSession'
+import { saveLiveSession } from './liveSessionStore'
 
 const route = useRoute()
 const {
@@ -78,6 +79,54 @@ const nextItemLabel = computed(() => {
 const emptyRail = computed(
   () => !loading.value && items.value.length === 0,
 )
+const stageError = ref('')
+
+function isTauriRuntime(): boolean {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+function stageUrl(): string {
+  const params = new URLSearchParams()
+  const playlistId = playlist.value?.id ?? (route.query.playlist as string | undefined)
+  const presentationId = presentation.value?.id ?? (route.query.presentation as string | undefined)
+  if (playlistId) params.set('playlist', playlistId)
+  if (presentationId) params.set('presentation', presentationId)
+  const query = params.toString()
+  return query ? `/stage?${query}` : '/stage'
+}
+
+async function openStage(): Promise<void> {
+  stageError.value = ''
+  const url = stageUrl()
+  if (!isTauriRuntime()) {
+    const popup = window.open(url, 'lumen-stage', 'popup,width=1280,height=800')
+    if (!popup) stageError.value = 'Stage window was blocked by the browser.'
+    return
+  }
+  try {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+    const existing = await WebviewWindow.getByLabel('stage')
+    if (existing) {
+      await existing.show()
+      await existing.setFocus()
+      return
+    }
+    const stage = new WebviewWindow('stage', {
+      url,
+      title: 'Lumen Stage',
+      width: 1280,
+      height: 800,
+      decorations: false,
+      resizable: true,
+      focus: true,
+    })
+    void stage.once('tauri://error', (event) => {
+      stageError.value = `Stage window failed: ${String(event.payload)}`
+    })
+  } catch (reason) {
+    stageError.value = reason instanceof Error ? reason.message : String(reason)
+  }
+}
 
 function iconFor(item: LiveItem): string {
   if (item.kind === 'media') return 'lucide:film'
@@ -135,11 +184,17 @@ const timecodeLabel = computed(() => {
   const separator = value.rate === '29.97df' ? ';' : ':'
   return `${pad(value.hours)}:${pad(value.minutes)}:${pad(value.seconds)}${separator}${pad(value.frames)}`
 })
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener('keydown', onKey)
-  void load({
+  await load({
     playlistId: (route.query.playlist as string | undefined) ?? undefined,
     presentationId: (route.query.presentation as string | undefined) ?? undefined,
+  })
+  // Publish the restored position so a stage window opened later starts in sync.
+  void saveLiveSession({
+    playlistId: playlist.value?.id ?? null,
+    presentationId: presentation.value?.id ?? null,
+    state: state.value,
   })
 })
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
@@ -240,11 +295,13 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
           {{ timecodeLabel }}<template v-if="!showTimecode?.locked"> · no lock</template>
         </span>
         <span :class="css({ flex: '1' })" />
+        <Button variant="ghost" size="sm" icon="lucide:presentation" @click="openStage">Stage</Button>
         <Button variant="secondary" size="sm" icon="lucide:monitor">Displays</Button>
         <Button variant="ghost" size="sm" icon="lucide:settings-2">Output</Button>
       </div>
 
       <p v-if="error" :class="errorText">{{ error }}</p>
+      <p v-if="stageError" :class="errorText">{{ stageError }}</p>
 
       <div :class="stage">
         <div :class="pane">
