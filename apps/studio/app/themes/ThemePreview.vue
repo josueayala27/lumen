@@ -49,7 +49,7 @@ const bodyStyle = computed(() => textStyle(props.theme.textStyles.body))
 const root = css({ display: 'flex', flexDirection: 'column', gap: '2' })
 const frame = css({
   position: 'relative',
-  containerType: 'inline-size',
+  containerType: '[inline-size]',
   display: 'flex',
   flexDirection: 'column',
   justifyContent: 'center',

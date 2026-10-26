@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defaultTheme, validateTheme } from '@lumen/core'
+import { defaultTheme, paintToCss, validateTheme } from '@lumen/core'
 import type { TextStyle, Theme, Transition } from '@lumen/schema'
 import { css } from 'styled-system/css'
 import { computed, onMounted, ref } from 'vue'
@@ -166,7 +166,14 @@ function setDuration(value: string): void {
 }
 
 function previewTheme(theme: Theme): string {
-  return theme.background.kind === 'solid' ? theme.background.color : '#101828'
+  switch (theme.background.kind) {
+    case 'solid':
+      return theme.background.color
+    case 'gradient':
+      return paintToCss(theme.background.paint)
+    default:
+      return '#101828'
+  }
 }
 
 onMounted(() => void load())
@@ -185,7 +192,7 @@ const listPanel = css({
 const listHeader = css({ p: '4', borderBottomWidth: '1px', borderColor: 'border.default' })
 const eyebrow = css({ textStyle: 'ui.label', color: 'accent.default', textTransform: 'uppercase', mb: '1' })
 const listTitleRow = css({ display: 'flex', alignItems: 'center', gap: '2' })
-const title = css({ flex: '1', textStyle: 'display.sm', color: 'fg.default' })
+const title = css({ flex: '1', textStyle: 'display.md', color: 'fg.default' })
 const listBody = css({ flex: '1', minH: '0', overflowY: 'auto', p: '2' })
 const listItem = css({
   display: 'flex',

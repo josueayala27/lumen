@@ -49,10 +49,15 @@ function writeLocal(records: ThemeRecord[]): void {
 }
 
 async function readTauri(): Promise<ThemeRecord[]> {
+  const { load } = await import('@tauri-apps/plugin-store')
+  const store = await load(THEMES_FILE)
+  return normalizeList(await store.get(THEMES_KEY))
+}
+
+async function readRecords(): Promise<ThemeRecord[]> {
+  if (!isTauri()) return readLocal()
   try {
-    const { load } = await import('@tauri-apps/plugin-store')
-    const store = await load(THEMES_FILE)
-    return normalizeList(await store.get(THEMES_KEY))
+    return await readTauri()
   } catch {
     return []
   }
@@ -67,12 +72,12 @@ async function writeTauri(records: ThemeRecord[]): Promise<void> {
 
 /** All themes, newest first. Corrupt rows are skipped. */
 export async function listThemes(): Promise<ThemeRecord[]> {
-  const records = isTauri() ? await readTauri() : readLocal()
+  const records = await readRecords()
   return records.slice().sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 export async function getTheme(id: string): Promise<ThemeRecord | null> {
-  const records = isTauri() ? await readTauri() : readLocal()
+  const records = await readRecords()
   return records.find((record) => record.id === id) ?? null
 }
 
@@ -81,14 +86,11 @@ export async function saveTheme(record: ThemeRecord): Promise<void> {
   const theme = validateTheme(record.theme)
   if (!theme) throw new Error('Theme is invalid')
   const next: ThemeRecord = { ...record, theme, updatedAt: record.updatedAt }
+  // Read raw: a failed read must not silently overwrite stored themes.
   const records = isTauri() ? await readTauri() : readLocal()
   const merged = [...records.filter((entry) => entry.id !== next.id), next]
   if (isTauri()) {
-    try {
-      await writeTauri(merged)
-    } catch {
-      // Persistence is optional; the editor keeps the theme in memory for this session.
-    }
+    await writeTauri(merged)
     return
   }
   writeLocal(merged)
@@ -98,11 +100,7 @@ export async function deleteTheme(id: string): Promise<void> {
   const records = isTauri() ? await readTauri() : readLocal()
   const merged = records.filter((record) => record.id !== id)
   if (isTauri()) {
-    try {
-      await writeTauri(merged)
-    } catch {
-      // Ignore store failures; the theme list reloads from disk next time.
-    }
+    await writeTauri(merged)
     return
   }
   writeLocal(merged)
