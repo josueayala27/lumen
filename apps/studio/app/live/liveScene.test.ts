@@ -10,6 +10,7 @@ import {
   modeScene,
   sceneForSlide,
   transitionPlan,
+  withTimelineMedia,
   type MediaAssetLike,
 } from './liveScene'
 
@@ -201,5 +202,25 @@ describe('transition plans', () => {
     expect(plan.kind).toBe('dissolve')
     expect(plan.durationMs).toBe(400)
     expect(plan.easing).toBe('ease-out')
+  })
+})
+
+describe('timeline media', () => {
+  it('adds video and image clips behind slide layers', () => {
+    const base = sceneForSlide({ doc: doc(), slideIndex: 0, label: 'Slide' }, null, [], 1)
+    const video: MediaAssetLike = { id: 'v1', kind: 'video', sha256: 'hv', width: 1920, height: 1080, localPath: '/m/v.mp4', missing: false }
+    const audio: MediaAssetLike = { id: 'a1', kind: 'audio', sha256: 'ha', width: null, height: null, localPath: '/m/a.mp3', missing: false }
+    const scene = withTimelineMedia(base, [
+      { clipId: 'c1', asset: video, startMs: 1500, loop: false, gain: 0 },
+      { clipId: 'c2', asset: audio, startMs: 0, loop: false, gain: 1 },
+    ])
+    expect(scene.layers[0]).toMatchObject({ kind: 'video', id: 'timeline-media-c1', startMs: 1500, muted: true })
+    expect(scene.layers).toHaveLength(base.layers.length + 1)
+    expect(scene.assets.map((asset) => asset.id)).toContain('v1')
+  })
+
+  it('returns the same scene when no visual clip is active', () => {
+    const base = blackScene(1)
+    expect(withTimelineMedia(base, [])).toBe(base)
   })
 })

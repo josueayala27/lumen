@@ -228,3 +228,55 @@ export function transitionPlan(
     easing: transition.easing,
   }
 }
+
+/** A timeline media clip resolved against the media library. */
+export interface TimelineMediaLayer {
+  clipId: string
+  asset: MediaAssetLike
+  /** Source position in milliseconds when the clip appeared. */
+  startMs: number
+  loop: boolean
+  /** Clip gain; 0 keeps the video muted. */
+  gain: number
+}
+
+const TIMELINE_MEDIA_Z = -900
+
+/**
+ * Adds timeline media clips to an audience scene as full-frame layers behind
+ * the slide content. Audio-only assets are skipped; the control window plays them.
+ */
+export function withTimelineMedia(scene: Scene, entries: readonly TimelineMediaLayer[]): Scene {
+  const visual = entries.filter((entry) => entry.asset.kind === 'image' || entry.asset.kind === 'video')
+  if (visual.length === 0) return scene
+
+  const assets = [...scene.assets]
+  const layers: SceneLayer[] = []
+  visual.forEach((entry, index) => {
+    const asset = sceneAssetFor(entry.asset)
+    if (!asset) return
+    if (!assets.some((existing) => existing.id === asset.id)) assets.push(asset)
+    const base = {
+      id: `timeline-media-${entry.clipId}`,
+      frame: { x: 0, y: 0, w: 1, h: 1, rotation: 0 },
+      z: TIMELINE_MEDIA_Z + index,
+      opacity: 1,
+      source: { assetId: entry.asset.id, hash: entry.asset.sha256 },
+      fit: 'cover' as const,
+    }
+    layers.push(
+      entry.asset.kind === 'video'
+        ? {
+            ...base,
+            kind: 'video',
+            loop: entry.loop,
+            muted: entry.gain <= 0,
+            volume: Math.min(1, Math.max(0, entry.gain)),
+            startMs: Math.max(0, Math.round(entry.startMs)),
+          }
+        : { ...base, kind: 'image', radius: 0 },
+    )
+  })
+  if (layers.length === 0) return scene
+  return { ...scene, assets, layers: [...layers, ...scene.layers] }
+}

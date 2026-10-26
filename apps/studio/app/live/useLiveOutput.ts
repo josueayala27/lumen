@@ -25,6 +25,13 @@ export interface LiveOutputOptions {
   media: Ref<MediaAssetLike[]>
   outputLabel: Ref<string | null>
   desktop: Ref<boolean>
+  /** Per-frame overrides from the show timeline. A new `key` re-pushes the scene. */
+  sceneTransform?: Ref<LiveSceneTransform | null>
+}
+
+export interface LiveSceneTransform {
+  key: string
+  apply: (scene: Scene, source: SceneSlideSource | null) => Scene
 }
 
 interface Position {
@@ -71,7 +78,9 @@ export function useLiveOutput(options: LiveOutputOptions) {
 
   function currentScene(revision = sceneRevision()): Scene {
     const source = currentSource.value ?? { doc: null, slideIndex: 0, label: 'No slide' }
-    return sceneForSlide(source, options.theme.value, options.media.value, revision)
+    const scene = sceneForSlide(source, options.theme.value, options.media.value, revision)
+    const transform = options.sceneTransform?.value
+    return transform ? transform.apply(scene, currentSource.value) : scene
   }
 
   function transitionFor(value: Position | null): ReturnType<typeof effectiveTransition> {
@@ -175,6 +184,7 @@ export function useLiveOutput(options: LiveOutputOptions) {
       options.items.value,
       options.theme.value,
       options.media.value,
+      options.sceneTransform?.value?.key ?? '',
     ] as const,
     () => void push(),
   )
