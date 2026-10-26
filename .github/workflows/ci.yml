@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check-types
+      - run: pnpm test
+      - run: pnpm --filter api build
+      - run: pnpm --filter realtime build
+      - run: pnpm --filter web build
+      - run: pnpm --filter studio build
+
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/studio/src-tauri
+      - name: Check
+        working-directory: apps/studio/src-tauri
+        run: cargo check
+      - name: Clippy
+        working-directory: apps/studio/src-tauri
+        run: cargo clippy -p lumen-output -p lumen-render -p lumen-media -- -D warnings
+      - name: Test
+        working-directory: apps/studio/src-tauri
+        run: cargo test -p lumen-output -p lumen-render -p lumen-media

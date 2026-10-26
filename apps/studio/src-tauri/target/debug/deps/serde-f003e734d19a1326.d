@@ -1,0 +1,12 @@
+/Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/deps/serde-f003e734d19a1326.d: /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/build/serde-69817ed51c0c0610/out/private.rs
+
+/Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/deps/libserde-f003e734d19a1326.rmeta: /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/build/serde-69817ed51c0c0610/out/private.rs
+
+/Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs:
+/Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs:
+/Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs:
+/Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:
+/Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs:
+/Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/build/serde-69817ed51c0c0610/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/build/serde-69817ed51c0c0610/out

@@ -1,0 +1,14 @@
+/Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/deps/serde-b30b6476e0ba555b.d: /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/build/serde-e0f4f7ca389bb973/out/private.rs
+
+/Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/deps/libserde-b30b6476e0ba555b.rlib: /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/build/serde-e0f4f7ca389bb973/out/private.rs
+
+/Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/deps/libserde-b30b6476e0ba555b.rmeta: /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/build/serde-e0f4f7ca389bb973/out/private.rs
+
+/Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs:
+/Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs:
+/Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs:
+/Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:
+/Users/josueayala/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs:
+/Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/build/serde-e0f4f7ca389bb973/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/josueayala/Code/lumen/apps/studio/src-tauri/target/debug/build/serde-e0f4f7ca389bb973/out
