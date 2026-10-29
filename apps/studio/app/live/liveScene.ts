@@ -72,7 +72,7 @@ export function collectAssetIds(doc: PresentationDoc | null): string[] {
   return [...ids]
 }
 
-function sceneAssetFor(media: MediaAssetLike): SceneAsset | null {
+export function sceneAssetFor(media: MediaAssetLike): SceneAsset | null {
   if (media.kind !== 'image' && media.kind !== 'video') return null
   return {
     id: media.id,
