@@ -1,42 +1,59 @@
 <script setup lang="ts">
 import { css, cx } from 'styled-system/css'
 import { Icon } from '#components'
-import type { Scene } from '@lumen/schema'
+import type { Composition, Screen } from '@lumen/schema'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { isTauriRuntime, previewRender, type DecodedPreview } from '~/control/render'
+import { isTauriRuntime, previewRenderComposition, type DecodedCompositionPreview } from '~/control/render'
 import { schematicLayers } from '~/screens/useScreenPreview'
+import { schematicScene } from './showModel'
 
 /**
- * Draws one scene: through the native preview renderer in the desktop app, as
- * a schematic of its layers in the browser. Renders coalesce so a burst of
- * changes costs at most one follow-up render.
+ * Draws one composition as a screen shows it (layout, mapping, blackout, test
+ * pattern), or the bare canvas when `screen` is null: through the v2
+ * compositor (`preview_render_composition`) in the desktop app, as a schematic
+ * of its layers in the browser. Renders coalesce so a burst of changes costs
+ * at most one follow-up render; `throttleMs` spaces renders further for
+ * thumbnails.
  */
-const props = withDefaults(defineProps<{ scene: Scene | null; maxWidth?: number; label?: string }>(), {
-  maxWidth: 960,
-  label: 'Scene preview',
-})
+const props = withDefaults(
+  defineProps<{
+    composition: Composition | null
+    screen?: Screen | null
+    maxWidth?: number
+    label?: string
+    throttleMs?: number
+  }>(),
+  {
+    screen: null,
+    maxWidth: 960,
+    label: 'Composition preview',
+    throttleMs: 0,
+  },
+)
 
 const native = isTauriRuntime()
 const canvasEl = ref<HTMLCanvasElement | null>(null)
-const frame = ref<DecodedPreview | null>(null)
+const frame = ref<DecodedCompositionPreview | null>(null)
 let running = false
 let queued = false
 let disposed = false
 
-const aspect = computed(() => {
-  const viewport = props.scene?.viewport
-  return viewport ? `${viewport.width} / ${viewport.height}` : '16 / 9'
-})
+const outputSize = computed(() => props.screen?.size ?? props.composition?.canvas ?? { width: 16, height: 9 })
+const aspect = computed(() => `${outputSize.value.width} / ${outputSize.value.height}`)
+const scene = computed(() => (!native && props.composition ? schematicScene(props.composition, props.screen) : null))
 const background = computed(() => {
-  const layer = props.scene?.background
+  const layer = scene.value?.background
   return layer?.kind === 'shape' ? layer.fill : '#000000'
 })
-const schematic = computed(() => (props.scene ? schematicLayers(props.scene) : []))
+const schematic = computed(() => (scene.value ? schematicLayers(scene.value) : []))
 
-function sizeFor(scene: Scene): { width: number; height: number } {
-  const { width, height } = scene.viewport
-  const scale = Math.min(1, props.maxWidth / Math.max(1, width))
-  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
+function sizeFor(size: { width: number; height: number }): { width: number; height: number } {
+  const scale = Math.min(1, props.maxWidth / Math.max(1, size.width))
+  return { width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)) }
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function render(): Promise<void> {
@@ -49,25 +66,28 @@ async function render(): Promise<void> {
   try {
     do {
       queued = false
-      const scene = props.scene
-      if (!scene) {
+      const composition = props.composition
+      if (!composition) {
         frame.value = null
         continue
       }
-      const size = sizeFor(scene)
+      const size = sizeFor(outputSize.value)
       try {
-        const result = await previewRender(scene, size.width, size.height)
+        const result = await previewRenderComposition(composition, props.screen, size.width, size.height)
         if (!disposed) frame.value = result
       } catch {
         if (!disposed) frame.value = null
       }
+      if (props.throttleMs > 0 && !disposed) await pause(props.throttleMs)
     } while (queued && !disposed)
   } finally {
     running = false
   }
 }
 
-watch(() => props.scene, () => void render(), { immediate: true })
+// Screens are often rebuilt per render (mode applied); compare them by value.
+const screenKey = computed(() => (props.screen ? JSON.stringify(props.screen) : ''))
+watch(() => [props.composition, screenKey.value] as const, () => void render(), { immediate: true })
 
 watch(frame, async (value) => {
   await nextTick()

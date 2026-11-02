@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { css } from 'styled-system/css'
 import type { ScreenPatch } from '@lumen/core'
-import type { Scene } from '@lumen/schema'
+import type { Composition } from '@lumen/schema'
 import { shallowRef, watch } from 'vue'
 import { screenStatus, targetLabel, type ScreenStatusKind } from '~/screens/screenStatus'
 import { useScreenOutputs } from '~/screens/useScreenOutputs'
 import { Badge, Button, SegmentedControl, Switch, type SegmentOption } from '~/ui'
-import SceneMonitor from './SceneMonitor.vue'
+import CompositionMonitor from './CompositionMonitor.vue'
 import { updateScreen, updateScreenLayout, type Screen, type TextPreset } from './showModel'
 import { useShowDocument } from './useShowDocument'
 import { useShowLive } from './useShowLive'
@@ -33,16 +33,19 @@ const tones: Record<ScreenStatusKind, 'neutral' | 'success' | 'warning' | 'info'
   live: 'success',
 }
 
-// Freeze holds the thumbnails with the outputs.
-const scenes = shallowRef(new Map<string, Scene>())
+// One program composition for every thumbnail; freeze holds it with the outputs.
+const program = shallowRef<Composition | null>(null)
 watch(
   () => [show.value, live.version.value] as const,
   () => {
-    if (live.mode.value === 'freeze') return
-    scenes.value = new Map(show.value.screens.map((screen) => [screen.id, live.screenScene(screen, 'program')]))
+    if (live.mode.value === 'freeze' && program.value) return
+    program.value = live.frameComposition('program')
   },
   { immediate: true },
 )
+
+/** Thumbnails render at most every this many ms each, so many screens stay cheap. */
+const THUMBNAIL_THROTTLE_MS = 150
 
 function status(screen: Screen) {
   return screenStatus(screen, outputs.displays.value, outputs.outputFor)
@@ -78,7 +81,13 @@ const toggle = css({ display: 'flex', alignItems: 'center', gap: '1.5' })
         </div>
         <Badge :tone="tones[status(screen).kind]" dot>{{ status(screen).label }}</Badge>
       </div>
-      <SceneMonitor :scene="scenes.get(screen.id) ?? null" :max-width="320" :label="`${screen.name} output`" />
+      <CompositionMonitor
+        :composition="program"
+        :screen="live.frameScreen(screen)"
+        :max-width="320"
+        :throttle-ms="THUMBNAIL_THROTTLE_MS"
+        :label="`${screen.name} output`"
+      />
       <div :class="row">
         <label :class="toggle">
           <Switch :model-value="screen.enabled" size="sm" aria-label="Enabled" @update:model-value="(on: boolean) => patch(screen, { enabled: on })" />
