@@ -164,7 +164,7 @@ async function openLive(): Promise<void> {
   if (!draft.value) return
   if (dirty.value) await save()
   if (error.value) return
-  await router.push({ path: '/live', query: { playlist: draft.value.id } })
+  await router.push({ path: '/show', query: { rundown: draft.value.id } })
 }
 
 async function removePlaylist(): Promise<void> {
@@ -360,10 +360,10 @@ const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal
       </template>
       <div :class="cardBox">
         <p :class="boxTitle"><Icon name="lucide:database" :size="14" />Local rundown</p>
-        <p :class="boxText">Stored in SQLite. Live resumes the last item and slide after a restart.</p>
+        <p :class="boxText">Stored in SQLite. Show resumes the last item and slide after a restart.</p>
       </div>
       <div :class="cardBox">
-        <p :class="boxTitle"><Icon name="lucide:keyboard" :size="14" />Live keys</p>
+        <p :class="boxTitle"><Icon name="lucide:keyboard" :size="14" />Show keys</p>
         <p :class="boxText">Space next · Enter take · [ and ] change item · B/C/L/F output modes</p>
       </div>
       <Button v-if="draft" variant="danger" size="md" block icon="lucide:trash-2" @click="removePlaylist">Delete rundown</Button>

@@ -95,7 +95,8 @@ export function assetsForDoc(doc: PresentationDoc | null, media: MediaAssetLike[
     .filter((asset): asset is SceneAsset => asset !== null)
 }
 
-function placeholderDoc(label: string): PresentationDoc {
+/** A one-slide title card for rundown items without a document (media, headers, missing). */
+export function placeholderDoc(label: string): PresentationDoc {
   return {
     schemaVersion: 1,
     kind: 'presentation',
@@ -227,6 +228,15 @@ export function transitionPlan(
     durationMs: transition.durationMs,
     easing: transition.easing,
   }
+}
+
+/**
+ * Per-frame overrides from the show timeline (media clips and keyframes). A new
+ * `key` means the output needs the scene again.
+ */
+export interface LiveSceneTransform {
+  key: string
+  apply: (scene: Scene, source: SceneSlideSource | null) => Scene
 }
 
 /** A timeline media clip resolved against the media library. */

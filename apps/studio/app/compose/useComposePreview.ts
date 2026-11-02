@@ -2,6 +2,7 @@ import { compositionToScene, createScreen, emptyLive, liveComposition, type Show
 import type { Composition, PresentationDoc, Scene, ShowDoc } from '@lumen/schema'
 import { onBeforeUnmount, ref, shallowRef, watch, type Ref } from 'vue'
 import { isTauriRuntime, previewRender } from '~/control/render'
+import { useShowLive } from '~/show/useShowLive'
 
 /** Preview width while dragging a handle (doc 02 § Preview flow). */
 export const DRAG_PREVIEW_WIDTH = 640
@@ -21,14 +22,20 @@ export interface ComposePreviewOptions {
   dragging: Ref<boolean>
 }
 
-/** The v1 scene for the whole canvas, as a full-canvas virtual screen sees it. */
+/**
+ * The v1 scene for the whole canvas, as a full-canvas virtual screen sees it.
+ * `resolve` plays the live clips and rundown content; without it the
+ * composition shows its own layer sources.
+ */
 export function composeCanvasScene(
   show: ShowDoc,
   composition: Composition,
   media: readonly ShowMediaLike[],
   presentation: (id: string) => PresentationDoc | null = () => null,
+  resolve?: (show: ShowDoc) => Composition,
 ): Scene {
-  const resolved = liveComposition({ ...show, composition }, emptyLive(), { media, presentation, theme: null })
+  const next = { ...show, composition }
+  const resolved = resolve ? resolve(next) : liveComposition(next, emptyLive(), { media, presentation, theme: null })
   const screen = createScreen({ id: 'compose-preview', name: 'Compose', size: composition.canvas })
   return compositionToScene(resolved, screen)
 }
@@ -48,6 +55,8 @@ export function previewSize(canvas: { width: number; height: number }, maxWidth:
  */
 export function useComposePreview(options: ComposePreviewOptions) {
   const available = isTauriRuntime()
+  const live = useShowLive()
+  const presentation = (id: string) => options.presentation?.(id) ?? live.presentation(id)
   const frame = shallowRef<ComposePreviewFrame | null>(null)
   const error = ref('')
   let running = false
@@ -57,7 +66,9 @@ export function useComposePreview(options: ComposePreviewOptions) {
   async function renderOnce(): Promise<void> {
     const show = options.show.value
     const composition = show.composition
-    const scene = composeCanvasScene(show, composition, options.media.value, options.presentation)
+    const scene = composeCanvasScene(show, composition, options.media.value, presentation, (value) =>
+      live.composition(value, { media: options.media.value, presentation }),
+    )
     const size = previewSize(composition.canvas, options.dragging.value ? DRAG_PREVIEW_WIDTH : REST_PREVIEW_WIDTH)
     const decoded = await previewRender(scene, size.width, size.height)
     if (disposed) return
@@ -90,7 +101,9 @@ export function useComposePreview(options: ComposePreviewOptions) {
     }
   }
 
-  watch([() => options.show.value.composition, options.media, options.dragging], () => void render(), { immediate: true })
+  watch([() => options.show.value.composition, options.media, options.dragging, live.version], () => void render(), {
+    immediate: true,
+  })
   onBeforeUnmount(() => {
     disposed = true
   })

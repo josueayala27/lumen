@@ -31,9 +31,8 @@ import {
   type TimelineRecord,
   type TimelineSummary,
 } from '~/data/timelines'
-import { withTimelineMedia, type MediaAssetLike, type TimelineMediaLayer } from './liveScene'
+import { withTimelineMedia, type LiveSceneTransform, type MediaAssetLike, type TimelineMediaLayer } from './liveScene'
 import type { LiveItem } from './liveSession'
-import type { LiveSceneTransform } from './useLiveOutput'
 
 export type TimelineClock = 'internal' | 'external'
 

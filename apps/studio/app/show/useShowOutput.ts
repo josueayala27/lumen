@@ -1,18 +1,23 @@
-import type { PresentationDoc, Theme } from '@lumen/schema'
+import type { OutputMode, Scene, Screen, ShowDoc, Transition } from '@lumen/schema'
 import { ref, watch, type Ref } from 'vue'
-import { sceneRevision, type MediaAssetLike } from '~/live/liveScene'
-import { applyScene, isTauri } from '~/output/api'
+import { sceneVideoKey, transitionPlan } from '~/live/liveScene'
+import { applyScene, applyTransition, isTauri, preloadScene } from '~/output/api'
 import { useOutputScreens } from '~/output/useOutputScreens'
-import { composeScreenScene, displayForScreen, type ShowDoc, type ShowLive } from './showModel'
+import { outputAction, type OutputMemory } from './showLive'
+import { displayForScreen } from './showModel'
 
 export interface ShowOutputOptions {
   show: Readonly<Ref<ShowDoc>>
-  live: Readonly<Ref<ShowLive>>
-  media: Ref<MediaAssetLike[]>
-  theme: Ref<Theme | null>
-  presentation: (id: string) => PresentationDoc | null
-  /** Bumps when a lyrics document finishes loading. */
-  docsVersion: Ref<number>
+  /** The scene a screen shows on air right now. */
+  scene: (screen: Screen) => Scene
+  /** The scene a screen shows at the next rundown cue, for preloading. */
+  nextScene?: (screen: Screen) => Scene | null
+  mode: Readonly<Ref<OutputMode>>
+  /** Rundown cue on air; a change while live crossfades with `transition`. */
+  cueKey: Readonly<Ref<string>>
+  transition: Readonly<Ref<Transition>>
+  /** Any other input whose change needs the outputs updated. */
+  version: () => unknown
 }
 
 function message(reason: unknown): string {
@@ -21,30 +26,58 @@ function message(reason: unknown): string {
 
 /**
  * Sends each enabled show screen its own scene on the native output open on
- * its display. Screens without a connected display, or whose display has no
- * open output, are skipped.
+ * its display (the v2 path; there is no single audience output). Rundown cue
+ * changes crossfade, freeze holds the last frame, and the next cue's videos
+ * are preloaded paused. Screens without a connected display, or whose
+ * display has no open output, are skipped.
  */
 export function useShowOutput(options: ShowOutputOptions) {
   const screens = useOutputScreens()
   const error = ref('')
+  const memory = new Map<string, OutputMemory>()
+  let preloadKey = ''
   let token = 0
+
+  function outputLabel(screen: Screen): string | null {
+    if (!screen.enabled) return null
+    const display = displayForScreen(screens.displays.value, screen)
+    return display ? (screens.outputFor(display.index)?.label ?? null) : null
+  }
+
+  function preload(scene: Scene | null): void {
+    const key = scene ? sceneVideoKey(scene) : ''
+    if (key === preloadKey) return
+    preloadKey = key
+    void preloadScene(key ? scene : null).catch(() => undefined)
+  }
 
   async function push(): Promise<void> {
     if (!isTauri()) return
     const run = ++token
-    const context = {
-      media: options.media.value,
-      presentation: options.presentation,
-      theme: options.theme.value,
-      revision: sceneRevision(),
+    const mode = options.mode.value
+    const cueKey = options.cueKey.value
+    const transition = options.transition.value
+    const sends: Promise<void>[] = []
+    const live = new Set<string>()
+    let firstLive: Screen | null = null
+    for (const screen of options.show.value.screens) {
+      const label = outputLabel(screen)
+      if (!label) continue
+      live.add(screen.id)
+      firstLive ??= screen
+      const previous = memory.get(screen.id) ?? null
+      const action = outputAction(previous, { label, mode, cueKey, transition, testPattern: screen.testPattern !== null })
+      if (action === 'skip') continue
+      const scene = options.scene(screen)
+      memory.set(screen.id, { label, scene, cueKey, mode })
+      sends.push(
+        action === 'transition' && previous
+          ? applyTransition(label, transitionPlan(previous.scene, scene, transition))
+          : applyScene(label, scene),
+      )
     }
-    const sends = options.show.value.screens.flatMap((screen) => {
-      if (!screen.enabled) return []
-      const display = displayForScreen(screens.displays.value, screen)
-      const output = display ? screens.outputFor(display.index) : null
-      if (!output) return []
-      return [applyScene(output.label, composeScreenScene(options.show.value, options.live.value, screen, context))]
-    })
+    for (const id of [...memory.keys()]) if (!live.has(id)) memory.delete(id)
+    if (mode === 'live' && firstLive && options.nextScene) preload(options.nextScene(firstLive))
     try {
       await Promise.all(sends)
       if (run === token) error.value = ''
@@ -75,10 +108,9 @@ export function useShowOutput(options: ShowOutputOptions) {
   watch(
     () => [
       options.show.value,
-      options.live.value,
-      options.media.value,
-      options.theme.value,
-      options.docsVersion.value,
+      options.mode.value,
+      options.cueKey.value,
+      options.version(),
       screens.outputs.value,
       screens.displays.value,
     ] as const,
@@ -86,5 +118,15 @@ export function useShowOutput(options: ShowOutputOptions) {
     { deep: false },
   )
 
-  return { error, push, openAll, closeAll, displays: screens.displays, outputs: screens.outputs, outputFor: screens.outputFor, ensureLoaded: screens.ensureLoaded }
+  return {
+    error,
+    push,
+    openAll,
+    closeAll,
+    outputLabel,
+    displays: screens.displays,
+    outputs: screens.outputs,
+    outputFor: screens.outputFor,
+    ensureLoaded: screens.ensureLoaded,
+  }
 }

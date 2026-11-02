@@ -1,0 +1,255 @@
+{
+  "composition": {
+    "schemaVersion": 2,
+    "revision": 0,
+    "canvas": {
+      "width": 1920,
+      "height": 1080
+    },
+    "colorSpace": "srgb",
+    "sources": [],
+    "layers": [
+      {
+        "id": "layer_b15b0a4b-3f6f-452b-bb59-bf0fcda0dbeb",
+        "name": "Background",
+        "sourceId": null,
+        "enabled": true,
+        "transform": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1,
+          "rotation": 0,
+          "anchorX": 0.5,
+          "anchorY": 0.5
+        },
+        "fit": "cover",
+        "opacity": 1,
+        "blend": "normal",
+        "effects": [],
+        "mask": null,
+        "tags": [
+          "background"
+        ]
+      },
+      {
+        "id": "layer_2163bf15-4e4f-4c60-ad37-1816f1a16b51",
+        "name": "Visuals",
+        "sourceId": null,
+        "enabled": true,
+        "transform": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1,
+          "rotation": 0,
+          "anchorX": 0.5,
+          "anchorY": 0.5
+        },
+        "fit": "cover",
+        "opacity": 1,
+        "blend": "normal",
+        "effects": [],
+        "mask": null,
+        "tags": [
+          "visuals"
+        ]
+      },
+      {
+        "id": "layer_672fe5a4-3cd1-4c88-a7e1-7c38811d1352",
+        "name": "Lyrics",
+        "sourceId": null,
+        "enabled": true,
+        "transform": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1,
+          "rotation": 0,
+          "anchorX": 0.5,
+          "anchorY": 0.5
+        },
+        "fit": "cover",
+        "opacity": 1,
+        "blend": "normal",
+        "effects": [],
+        "mask": null,
+        "tags": [
+          "lyrics"
+        ]
+      }
+    ],
+    "master": {
+      "opacity": 1,
+      "effects": []
+    },
+    "fonts": [],
+    "assets": []
+  },
+  "screens": [
+    {
+      "id": "screen_84a5f7a0-4f89-4194-894c-48a09d6819a6",
+      "name": "Main",
+      "target": {
+        "kind": "virtual"
+      },
+      "size": {
+        "width": 1920,
+        "height": 1080
+      },
+      "role": "audience",
+      "enabled": true,
+      "blackout": false,
+      "testPattern": null,
+      "layout": {
+        "layers": {
+          "mode": "all"
+        },
+        "region": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "safeArea": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        },
+        "text": {
+          "preset": "full",
+          "scale": 1,
+          "color": null
+        },
+        "background": null,
+        "stage": null
+      },
+      "mapping": {
+        "cornerPin": null,
+        "mesh": null,
+        "edgeBlend": null,
+        "masks": [],
+        "color": {
+          "brightness": 0,
+          "contrast": 1,
+          "gamma": 1,
+          "red": 1,
+          "green": 1,
+          "blue": 1
+        }
+      }
+    },
+    {
+      "id": "screen_90f385bf-597c-4338-86b1-bb61c7754f99",
+      "name": "LED wall",
+      "target": {
+        "kind": "virtual"
+      },
+      "size": {
+        "width": 1920,
+        "height": 1080
+      },
+      "role": "audience",
+      "enabled": true,
+      "blackout": false,
+      "testPattern": null,
+      "layout": {
+        "layers": {
+          "mode": "only",
+          "ids": [
+            "layer_b15b0a4b-3f6f-452b-bb59-bf0fcda0dbeb",
+            "layer_2163bf15-4e4f-4c60-ad37-1816f1a16b51"
+          ],
+          "tags": []
+        },
+        "region": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "safeArea": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        },
+        "text": {
+          "preset": "hidden",
+          "scale": 1,
+          "color": null
+        },
+        "background": null,
+        "stage": null
+      },
+      "mapping": {
+        "cornerPin": null,
+        "mesh": null,
+        "edgeBlend": null,
+        "masks": [],
+        "color": {
+          "brightness": 0,
+          "contrast": 1,
+          "gamma": 1,
+          "red": 1,
+          "green": 1,
+          "blue": 1
+        }
+      }
+    },
+    {
+      "id": "screen_2344fd3c-6300-4ba7-88f7-778b5cc93f3c",
+      "name": "Side screens",
+      "target": {
+        "kind": "virtual"
+      },
+      "size": {
+        "width": 1920,
+        "height": 1080
+      },
+      "role": "audience",
+      "enabled": true,
+      "blackout": false,
+      "testPattern": null,
+      "layout": {
+        "layers": {
+          "mode": "all"
+        },
+        "region": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "safeArea": {
+          "top": 0,
+          "right": 0,
+          "bottom": 0,
+          "left": 0
+        },
+        "text": {
+          "preset": "lowerThird",
+          "scale": 1,
+          "color": null
+        },
+        "background": null,
+        "stage": null
+      },
+      "mapping": {
+        "cornerPin": null,
+        "mesh": null,
+        "edgeBlend": null,
+        "masks": [],
+        "color": {
+          "brightness": 0,
+          "contrast": 1,
+          "gamma": 1,
+          "red": 1,
+          "green": 1,
+          "blue": 1
+        }
+      }
+    }
+  ]
+}

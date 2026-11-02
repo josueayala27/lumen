@@ -31,7 +31,7 @@ const groups: { title: string; items: { keys: string; action: string }[] }[] = [
     items: [{ keys: 'Mod+K', action: 'Focus search' }],
   },
   {
-    title: 'Live',
+    title: 'Show',
     items: [
       { keys: 'ArrowRight', action: 'Next slide (Space also works)' },
       { keys: 'ArrowLeft', action: 'Previous slide' },
@@ -42,6 +42,8 @@ const groups: { title: string; items: { keys: string; action: string }[] }[] = [
       { keys: 'C', action: 'Clear' },
       { keys: 'L', action: 'Logo' },
       { keys: 'F', action: 'Freeze / unfreeze' },
+      { keys: '1', action: 'Launch clip column 1 (1–9)' },
+      { keys: 'Escape', action: 'Clear all clips' },
     ],
   },
   {

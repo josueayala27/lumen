@@ -2,9 +2,8 @@ import type { PresentationDoc, Scene, SceneLayer, Screen, ShowDoc } from '@lumen
 import { onBeforeUnmount, ref, shallowRef, watch, type Ref } from 'vue'
 import { previewRender, type DecodedPreview } from '~/control/render'
 import type { MediaAsset } from '~/data/media'
-import { sceneRevision } from '~/live/liveScene'
 import { isTauri } from '~/output/api'
-import { composeScreenScene, emptyLive } from '~/show/showModel'
+import { useShowLive } from '~/show/useShowLive'
 
 /** Longest side of the native preview frame, in pixels. */
 export const PREVIEW_MAX = 960
@@ -59,13 +58,14 @@ function message(reason: unknown): string {
 
 /**
  * What the selected screen shows, through the same composition adapter the
- * Show page sends to outputs. Without live clips: the Screens workspace
- * previews the composition's own layer sources. Inside the desktop app the
+ * Show page sends to outputs, with the clips and rundown content playing now
+ * (shared live state; the output mode is left out). Inside the desktop app the
  * scene is rendered by the native preview renderer; in the browser the caller
  * draws `schematic` instead.
  */
 export function useScreenPreview(options: ScreenPreviewOptions) {
   const native = isTauri()
+  const live = useShowLive()
   const scene = shallowRef<Scene | null>(null)
   const frame = shallowRef<DecodedPreview | null>(null)
   const error = ref('')
@@ -73,11 +73,10 @@ export function useScreenPreview(options: ScreenPreviewOptions) {
   let timer: ReturnType<typeof setTimeout> | undefined
 
   function compose(screen: Screen): Scene {
-    return composeScreenScene(options.show.value, emptyLive(), screen, {
-      media: options.media.value,
-      presentation: options.presentation ?? (() => null),
-      theme: null,
-      revision: sceneRevision(),
+    // Library media and documents from the caller win; live documents fill in.
+    return live.screenScene(screen, 'content', options.show.value, {
+      media: options.media.value.length ? options.media.value : live.session.media.value,
+      presentation: (id) => options.presentation?.(id) ?? live.presentation(id),
     })
   }
 
@@ -111,7 +110,7 @@ export function useScreenPreview(options: ScreenPreviewOptions) {
   }
 
   watch(
-    () => [options.show.value, options.screen.value, options.media.value] as const,
+    () => [options.show.value, options.screen.value, options.media.value, live.version.value] as const,
     schedule,
     { immediate: true },
   )

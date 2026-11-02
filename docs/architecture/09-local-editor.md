@@ -36,9 +36,9 @@ Each slide has a solid `#101828` background and one centered text element using 
 
 These routes change with the UI rewrite; see `11-ui.md` § Route changes.
 
-- `/` and `/songs` — library list from SQLite; filter by kind.
+- `/` — library list from SQLite; filter by kind (`/songs` redirects to `/?kind=songs`).
 - `/editor/:id` — song fields, lyric textarea, generated slide rail, preview, save, present.
-- `/live?presentation=<id>` — loads the document, renders slides from `slideText`, and drives next/prev/take, modes, keyboard, MIDI and the LTC timeline.
+- `/show?presentation=<id>` or `/show?rundown=<id>` — the Show workspace loads the document or rundown and drives next/prev/take, modes, keyboard, MIDI and the LTC timeline. `/live` redirects here.
 
 Deleting from the library is a soft delete; no UI yet. New presentations start with one text slide.
 
@@ -47,4 +47,4 @@ Deleting from the library is a soft delete; no UI yet. New presentations start w
 - No sync, conflicts, workspaces or accounts.
 - No real fonts or Rust scene rendering in the editor preview.
 - Text-only slides; shapes, images, media and themes are next.
-- No playlist; Live loads one presentation.
+- Rundowns (`/rundowns`) hold ordered content; the Show workspace runs one rundown or one presentation.

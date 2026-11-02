@@ -114,12 +114,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('offline', syncOnline)
 })
 
-// Go Live opens the most recently edited playlist; without one there is nothing to run.
+// Go Live opens the Show workspace on the most recently edited rundown; without one there is nothing to run.
 const latestPlaylist = computed(() => playlists.value[0])
-const onLive = computed(() => route.path === '/live')
-const goLiveTo = computed(() => (latestPlaylist.value ? `/live?playlist=${latestPlaylist.value.id}` : '/live'))
+const onLive = computed(() => route.path === '/show')
+const goLiveTo = computed(() => (latestPlaylist.value ? `/show?rundown=${latestPlaylist.value.id}` : '/show'))
 const goLiveHint = computed(() =>
-  latestPlaylist.value ? `Open "${latestPlaylist.value.name}" live` : 'Create a playlist to go live',
+  latestPlaylist.value ? `Open "${latestPlaylist.value.name}" live` : 'Create a rundown to go live',
 )
 
 const root = css({

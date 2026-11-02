@@ -1066,7 +1066,7 @@ function back(): void {
 async function present(): Promise<void> {
   if (dirty.value) await save()
   if (error.value) return
-  await router.push({ path: '/live', query: { presentation: id.value } })
+  await router.push({ path: '/show', query: { presentation: id.value } })
 }
 
 onMounted(() => {

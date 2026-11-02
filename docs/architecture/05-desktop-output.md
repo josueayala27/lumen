@@ -31,7 +31,7 @@ Two decode paths, chosen per file by `hap_track` in `src/media.rs`:
 
 Frames reach the preview and every output as one reference-counted `VideoFrame`; fan-out never copies pixels.
 
-`VideoPlaybackManager` tracks demand per caller: `output` (`apply_scene`, `apply_transition`), `preview` (`preview_render`) and `preload` (`preload_scene`, sent by `useLiveOutput` with the next cue). A video decodes while any caller wants it, so the editor preview never stops a video on the audience output. Preloaded videos start paused on their first frame and play from it when an output scene takes them.
+`VideoPlaybackManager` tracks demand per caller: `output` (`apply_scene`, `apply_transition`), `preview` (`preview_render`) and `preload` (`preload_scene`, sent by `useShowOutput` with the next rundown cue). A video decodes while any caller wants it, so the editor preview never stops a video on the audience output. Preloaded videos start paused on their first frame and play from it when an output scene takes them.
 
 Each decoder follows a `VideoTransport` (`lumen-media/src/transport.rs`): play, pause, seek and rate on a monotonic clock, set through `video_transport`. The timeline runner (`useShowTimeline`) seeks on every resync and play/pause change and re-anchors running clips once a second; seeks within 40 ms of the current position only re-anchor. Hap follows the transport frame by frame. ffmpeg restarts at the new position on a real change and ignores rate.
 

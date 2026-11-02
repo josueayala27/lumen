@@ -39,7 +39,8 @@ The Durable Object relays `{hello, snapshot, command, ack}` with a sequence numb
 
 The live state drives content, not the whole output. With render contract v2 (`02-render-contract.md`):
 
-- The current slide becomes the `slide` source on the layer tagged `content` or `lyrics`. Other layers keep playing.
+- The current slide becomes the `slide` source on the topmost layer tagged `content` or `lyrics`. Other layers keep playing. A grid clip launched on that layer covers the slide until the next slide goes on air (`apps/studio/app/show/showLive.ts`).
 - `playlistId` points to a rundown (`11-ui.md`). The word "playlist" stays in the schema until the rename migration.
-- Modes apply per screen after the master stage. `black` and `freeze` affect every screen unless a screen opts out; `clear` hides only content-tagged layers.
-- The Show workspace replaces the `/live` page. Keyboard shortcuts stay the same.
+- Modes apply per screen after the master stage. `black`, `logo` (black until a logo asset exists) and `freeze` affect every screen; screens cannot opt out yet. `clear` hides only content-tagged layers.
+- The Show workspace replaced the `/live` page, which now redirects. Keyboard shortcuts stay the same; the workspace adds 1–9 to launch a clip column and Esc to clear clips.
+- The live state is shared through `useShowLive()`, so the Screens and Compose previews show what is on air.

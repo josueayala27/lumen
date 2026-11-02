@@ -24,7 +24,6 @@ const sections: { title: string; items: NavItem[] }[] = [
     title: 'Perform',
     items: [
       { label: 'Show', href: '/show', icon: 'lucide:layout-grid' },
-      { label: 'Live', href: '/live', icon: 'lucide:radio' },
       { label: 'Timeline', href: '/timeline', icon: 'lucide:film' },
     ],
   },

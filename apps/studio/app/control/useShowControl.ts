@@ -7,6 +7,8 @@ import { toLiveCommand } from './commands'
 export function useShowControl(apply: (command: LiveCommand) => void) {
   const timecode = ref<TimecodeSnapshot | null>(null)
   const learned = ref<MidiBinding | null>(null)
+  /** Last controller command, for the transport status line. */
+  const lastCommand = ref<{ source: string; type: LiveCommand['type']; at: number } | null>(null)
   let unlisten: UnlistenFn | undefined
 
   onMounted(async () => {
@@ -16,7 +18,9 @@ export function useShowControl(apply: (command: LiveCommand) => void) {
         if (!parsed.success) return
         const payload = parsed.data
         if (payload.type === 'command') {
-          apply(toLiveCommand(payload.command))
+          const command = toLiveCommand(payload.command)
+          lastCommand.value = { source: payload.source, type: command.type, at: Date.now() }
+          apply(command)
         } else if (payload.type === 'timecode') {
           timecode.value = payload.snapshot
         } else if (payload.type === 'learned') {
@@ -32,5 +36,5 @@ export function useShowControl(apply: (command: LiveCommand) => void) {
     unlisten?.()
   })
 
-  return { timecode, learned }
+  return { timecode, learned, lastCommand }
 }
