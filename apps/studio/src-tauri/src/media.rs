@@ -879,6 +879,52 @@ mod tests {
     }
 
     #[test]
+    fn composition_video_sources_follow_enabled_drawn_layers() {
+        let composition: Composition = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 2, "revision": 1, "canvas": { "width": 1920, "height": 1080 },
+            "sources": [
+                { "kind": "video", "id": "a", "asset": { "assetId": "clip-a", "hash": "h" }, "inMs": 1500, "loop": false },
+                { "kind": "video", "id": "b", "asset": { "assetId": "clip-b", "hash": "h" } },
+                { "kind": "video", "id": "c", "asset": { "assetId": "clip-c", "hash": "h" } },
+                { "kind": "video", "id": "missing", "asset": { "assetId": "clip-missing", "hash": "h" } },
+                { "kind": "solid", "id": "s", "color": "#000" }
+            ],
+            "layers": [
+                { "id": "l1", "sourceId": "a", "transform": {}, "tags": ["visuals"] },
+                { "id": "l2", "sourceId": "a", "transform": {} },
+                { "id": "l3", "sourceId": "b", "transform": {}, "enabled": false },
+                { "id": "l4", "sourceId": "c", "transform": {}, "tags": ["lyrics"] },
+                { "id": "l5", "sourceId": "missing", "transform": {} },
+                { "id": "l6", "sourceId": "s", "transform": {} }
+            ],
+            "master": {},
+            "assets": [
+                { "id": "clip-a", "hash": "h", "kind": "video", "localPath": "/media/a.mov", "intrinsic": { "width": 1920, "height": 1080 } },
+                { "id": "clip-b", "hash": "h", "kind": "video", "localPath": "/media/b.mov", "intrinsic": { "width": 1920, "height": 1080 } },
+                { "id": "clip-c", "hash": "h", "kind": "video", "localPath": "/media/c.mov", "intrinsic": { "width": 1280, "height": 720 } },
+                { "id": "clip-missing", "hash": "h", "kind": "video", "localPath": "/media/m.mov", "intrinsic": { "width": 1, "height": 1 }, "state": "missing" }
+            ]
+        }))
+        .expect("composition");
+        let all = composition_video_sources(&composition, &[]);
+        let ids: Vec<&str> = all.iter().map(|source| source.asset_id.as_str()).collect();
+        assert_eq!(ids, vec!["clip-a", "clip-c"]);
+        assert_eq!(all[0].start_ms, 1500);
+        assert!(!all[0].loop_playback);
+        assert_eq!(all[1].width, 1280);
+
+        let mut screen = Screen::canvas(composition.canvas);
+        screen.layout.layers = lumen_render::composition::LayerFilter::Only {
+            ids: vec![],
+            tags: vec!["visuals".into()],
+        };
+        let filtered = composition_video_sources(&composition, std::slice::from_ref(&screen));
+        assert_eq!(filtered.len(), 1);
+        screen.enabled = false;
+        assert!(composition_video_sources(&composition, &[screen]).is_empty());
+    }
+
+    #[test]
     fn demand_merges_callers_and_marks_preload_inactive() {
         let mut demand = Demand::default();
         demand.set(

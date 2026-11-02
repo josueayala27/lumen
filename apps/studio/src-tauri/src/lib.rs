@@ -3,8 +3,11 @@ mod media;
 
 use std::sync::Mutex;
 
-use lumen_output::{DisplayInfo, OutputManager, OutputWindow};
-use lumen_render::{PreviewRenderer, RenderStats, Scene, TransitionPlan, VideoFrame};
+use lumen_output::{DisplayInfo, OutputManager, OutputWindow, ScreenOutputStatus};
+use lumen_render::{
+    Composition, CompositionTransition, PreviewRenderer, RenderStats, Scene, Screen,
+    TransitionPlan, VideoFrame,
+};
 use tauri::{Manager, State};
 
 #[derive(Default)]
@@ -161,6 +164,69 @@ fn update_preview_video_frame(
         .map_err(|error| error.to_string())
 }
 
+/// Binary preview payload: `width: u32 le`, `height: u32 le`, `layoutJsonLength: u32 le`,
+/// the UTF-8 layout JSON, then raw row-major RGBA bytes.
+fn preview_payload(width: u32, height: u32, layout: &impl serde::Serialize, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    let layout = serde_json::to_vec(layout).map_err(|error| error.to_string())?;
+    let layout_length = u32::try_from(layout.len()).map_err(|_| "layout is too large")?;
+    let mut payload = Vec::with_capacity(12 + layout.len() + rgba.len());
+    payload.extend_from_slice(&width.to_le_bytes());
+    payload.extend_from_slice(&height.to_le_bytes());
+    payload.extend_from_slice(&layout_length.to_le_bytes());
+    payload.extend_from_slice(&layout);
+    payload.extend_from_slice(rgba);
+    Ok(payload)
+}
+
+/// Renders a composition offscreen: the bare canvas, or one screen with its layout and
+/// mapping. Same binary layout as `preview_render`; the layout JSON is a
+/// `CompositionPreviewResult` keyed by `layerId`, `sourceId` and `elementId`, normalized to the
+/// screen output (or the canvas).
+#[tauri::command]
+fn preview_render_composition(
+    app: tauri::AppHandle,
+    preview: State<'_, PreviewState>,
+    composition: Composition,
+    screen: Option<Screen>,
+    width: u32,
+    height: u32,
+) -> Result<tauri::ipc::Response, String> {
+    if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
+        playback.sync_composition(&app, media::OWNER_PREVIEW, &composition, screen.as_slice());
+    }
+    let mut renderer = preview
+        .0
+        .lock()
+        .map_err(|_| "preview renderer lock poisoned".to_string())?;
+    if renderer.is_none() {
+        *renderer = Some(PreviewRenderer::new().map_err(|error| error.to_string())?);
+    }
+    let frame = renderer
+        .as_mut()
+        .ok_or_else(|| "preview renderer missing".to_string())?
+        .render_composition(&composition, screen.as_ref(), width, height)
+        .map_err(|error| error.to_string())?;
+    let payload = preview_payload(frame.width, frame.height, &frame.layout, &frame.rgba)?;
+    Ok(tauri::ipc::Response::new(payload))
+}
+
+/// Drives one native output per enabled display screen with the composition. Opens missing
+/// outputs, keeps the v1 scene commands untouched, and decodes the composition's videos.
+#[tauri::command]
+fn apply_composition(
+    app: tauri::AppHandle,
+    outputs: State<'_, OutputManager>,
+    composition: Composition,
+    screens: Vec<Screen>,
+    transition: Option<CompositionTransition>,
+) -> Vec<ScreenOutputStatus> {
+    let statuses = outputs.apply_composition(&composition, &screens, &transition.unwrap_or_default());
+    if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
+        playback.sync_composition(&app, media::OWNER_OUTPUT, &composition, &screens);
+    }
+    statuses
+}
+
 /// Renders the scene offscreen and returns a binary IPC response.
 ///
 /// Layout: `width: u32 le`, `height: u32 le`, `layoutJsonLength: u32 le`, the UTF-8
@@ -189,14 +255,7 @@ fn preview_render(
         .ok_or_else(|| "preview renderer missing".to_string())?
         .render(&scene, width, height)
         .map_err(|error| error.to_string())?;
-    let layout = serde_json::to_vec(&frame.layout).map_err(|error| error.to_string())?;
-    let layout_length = u32::try_from(layout.len()).map_err(|_| "layout is too large")?;
-    let mut payload = Vec::with_capacity(12 + layout.len() + frame.rgba.len());
-    payload.extend_from_slice(&frame.width.to_le_bytes());
-    payload.extend_from_slice(&frame.height.to_le_bytes());
-    payload.extend_from_slice(&layout_length.to_le_bytes());
-    payload.extend_from_slice(&layout);
-    payload.extend_from_slice(&frame.rgba);
+    let payload = preview_payload(frame.width, frame.height, &frame.layout, &frame.rgba)?;
     Ok(tauri::ipc::Response::new(payload))
 }
 
@@ -236,6 +295,8 @@ pub fn run() {
             apply_hardcoded_scene,
             output_stats,
             preview_render,
+            preview_render_composition,
+            apply_composition,
             update_preview_video_frame,
             media::import_media,
             media::relink_media,
