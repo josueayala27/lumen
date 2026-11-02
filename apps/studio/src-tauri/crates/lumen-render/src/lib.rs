@@ -11,6 +11,7 @@ mod blur;
 mod color;
 pub mod composition;
 mod geometry;
+pub mod mapping;
 mod renderer;
 mod text;
 mod video;

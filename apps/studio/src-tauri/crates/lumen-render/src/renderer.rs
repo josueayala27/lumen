@@ -18,7 +18,7 @@ use crate::geometry::{easing_progress, fit_uv, rotate_point, rotate_vector, Fram
 use crate::text::{AtlasData, DecorationDraw, GlyphDraw, TextEngine};
 use crate::video::{bc_len, VideoFrame, VideoPixels};
 use crate::{
-    AssetKind, AssetState, Layer, PreviewResult, RenderError, Scene, SceneFont, SceneRole,
+    AssetKind, AssetState, Layer, PreviewResult, RenderError, Scene, SceneAsset, SceneFont, SceneRole,
     TransitionKind, TransitionPlan, Viewport,
 };
 
@@ -405,17 +405,17 @@ fn push_decoration_quad(
     );
 }
 
-struct GpuTexture {
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    width: u32,
-    height: u32,
+pub(crate) struct GpuTexture {
+    pub(crate) texture: wgpu::Texture,
+    pub(crate) view: wgpu::TextureView,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
 }
 
 /// Shader modes in `scene.wgsl` (`params.w`).
-const MODE_TEXTURE: f32 = 1.0;
-const MODE_YCOCG: f32 = 3.0;
-const MODE_OPAQUE: f32 = 4.0;
+pub(crate) const MODE_TEXTURE: f32 = 1.0;
+pub(crate) const MODE_YCOCG: f32 = 3.0;
+pub(crate) const MODE_OPAQUE: f32 = 4.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VideoUpload {
@@ -424,18 +424,18 @@ enum VideoUpload {
 }
 
 /// A video asset's current frame on the GPU.
-struct VideoTexture {
-    gpu: GpuTexture,
+pub(crate) struct VideoTexture {
+    pub(crate) gpu: GpuTexture,
     upload: VideoUpload,
     /// Real frame size; block-compressed textures are padded to multiples of four.
-    frame_width: u32,
-    frame_height: u32,
-    mode: f32,
+    pub(crate) frame_width: u32,
+    pub(crate) frame_height: u32,
+    pub(crate) mode: f32,
 }
 
 impl VideoTexture {
     /// UV scale that hides block padding.
-    fn uv_scale(&self) -> (f32, f32) {
+    pub(crate) fn uv_scale(&self) -> (f32, f32) {
         (
             self.frame_width as f32 / self.gpu.width.max(1) as f32,
             self.frame_height as f32 / self.gpu.height.max(1) as f32,
@@ -476,7 +476,7 @@ fn compressed_texture(
 }
 
 /// Requests BC texture support when the adapter has it; Hap frames then upload without CPU work.
-fn device_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+pub(crate) fn device_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC
 }
 
@@ -553,7 +553,7 @@ fn upload_texture(
 }
 
 /// Shared scene drawing: text atlas, solid shapes, image textures, video textures and transitions.
-struct SceneRenderer {
+pub(crate) struct SceneRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
@@ -565,9 +565,13 @@ struct SceneRenderer {
     shadow_uvs: HashMap<cosmic_text::CacheKey, [f32; 4]>,
     atlas_blur_padding: u32,
     shadow_atlases: HashMap<u32, GpuTexture>,
-    images: HashMap<String, GpuTexture>,
-    videos: HashMap<String, VideoTexture>,
-    bc_supported: bool,
+    pub(crate) images: HashMap<String, GpuTexture>,
+    pub(crate) videos: HashMap<String, VideoTexture>,
+    pub(crate) bc_supported: bool,
+    /// Clear colour of every draw; black for v1 scenes, transparent for slide sources.
+    clear: ClearColor,
+    /// Converts sRGB contract colours to linear light before drawing (composition slides).
+    linear_colors: bool,
     text: TextEngine,
     glyphs: Vec<GlyphDraw>,
     decorations: Vec<DecorationDraw>,
@@ -679,10 +683,26 @@ impl SceneRenderer {
             layout: PreviewResult::default(),
             assets: AssetLoader::new(),
             prepared: None,
+            clear: ClearColor::BLACK,
+            linear_colors: false,
         }
     }
 
-    fn preview_result(&self) -> &PreviewResult {
+    /// A renderer for composition slide sources: transparent clear and linear-light colours.
+    pub(crate) fn for_slides(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+        Self {
+            clear: ClearColor::TRANSPARENT,
+            linear_colors: true,
+            ..Self::new(device, queue, format)
+        }
+    }
+
+    /// Forgets the prepared layout so the next draw shapes its scene again.
+    pub(crate) fn invalidate(&mut self) {
+        self.prepared = None;
+    }
+
+    pub(crate) fn preview_result(&self) -> &PreviewResult {
         &self.layout
     }
 
@@ -706,7 +726,7 @@ impl SceneRenderer {
 
     /// Uploads one decoded frame. Block-compressed frames go to the GPU as-is when
     /// the device supports BC textures and are decoded on the CPU otherwise.
-    fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
+    pub(crate) fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
         let (width, height) = (frame.width, frame.height);
         if width == 0 || height == 0 {
             return Err(RenderError::Backend(format!(
@@ -961,7 +981,7 @@ impl SceneRenderer {
         if self.prepared == Some(key) {
             return Ok(());
         }
-        self.load_image_assets(scene);
+        self.load_image_assets(&scene.assets);
         let layout = self.text.layout(scene, width, height);
         let scale = width as f32 / scene.viewport.width.max(1.0) as f32;
         let radii = shadow_radii(scene, scale);
@@ -1040,8 +1060,8 @@ impl SceneRenderer {
         );
     }
 
-    fn load_image_assets(&mut self, scene: &Scene) {
-        for asset in &scene.assets {
+    pub(crate) fn load_image_assets(&mut self, assets: &[SceneAsset]) {
+        for asset in assets {
             if asset.kind != AssetKind::Image || asset.state == AssetState::Missing {
                 continue;
             }
@@ -1078,7 +1098,7 @@ impl SceneRenderer {
         }
     }
 
-    fn draw(
+    pub(crate) fn draw(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
@@ -1087,8 +1107,16 @@ impl SceneRenderer {
         height: u32,
     ) -> Result<(), RenderError> {
         self.prepare(scene, width, height)?;
-        let clear = ClearColor::BLACK;
-        let calls = self.build_draw_calls(scene, width, height);
+        let clear = self.clear;
+        let mut calls = self.build_draw_calls(scene, width, height);
+        if self.linear_colors {
+            for call in &mut calls {
+                for vertex in &mut call.vertices {
+                    linearize(&mut vertex.color);
+                    linearize(&mut vertex.stroke_color);
+                }
+            }
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(CLEAR_PASS_LABEL),
@@ -1161,10 +1189,13 @@ impl SceneRenderer {
         if let Some(background) = &scene.background {
             self.push_layer_call(&mut calls, scene, background, 0, width, height);
         }
+        // Text layout numbers layers after the background, so index 0 is the first layer
+        // when there is no background.
+        let offset = usize::from(scene.background.is_some());
         let mut ordered: Vec<(usize, &Layer)> = scene.layers.iter().enumerate().collect();
         ordered.sort_by_key(|(_, layer)| layer.z());
         for (index, layer) in ordered {
-            self.push_layer_call(&mut calls, scene, layer, index + 1, width, height);
+            self.push_layer_call(&mut calls, scene, layer, index + offset, width, height);
         }
         calls
     }
@@ -1452,8 +1483,15 @@ impl SceneRenderer {
     }
 }
 
-fn asset_key(id: &str, hash: &str) -> String {
+pub(crate) fn asset_key(id: &str, hash: &str) -> String {
     format!("{id}:{hash}")
+}
+
+/// sRGB-encoded vertex colour to linear light, alpha unchanged.
+fn linearize(color: &mut [f32; 4]) {
+    for channel in color.iter_mut().take(3) {
+        *channel = crate::effects::srgb_to_linear(f64::from(*channel)) as f32;
+    }
 }
 
 /// Unique non-zero box radii required by blurred shadows in this scene.
