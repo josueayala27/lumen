@@ -3,11 +3,11 @@ import { ref, watch, type Ref } from 'vue'
 import { sceneRevision, type MediaAssetLike } from '~/live/liveScene'
 import { applyScene, isTauri } from '~/output/api'
 import { useOutputScreens } from '~/output/useOutputScreens'
-import { composeScreenScene, type ShowDoc, type ShowLive } from './showModel'
+import { composeScreenScene, displayForScreen, type ShowDoc, type ShowLive } from './showModel'
 
 export interface ShowOutputOptions {
-  show: Ref<ShowDoc>
-  live: Ref<ShowLive>
+  show: Readonly<Ref<ShowDoc>>
+  live: Readonly<Ref<ShowLive>>
   media: Ref<MediaAssetLike[]>
   theme: Ref<Theme | null>
   presentation: (id: string) => PresentationDoc | null
@@ -20,9 +20,9 @@ function message(reason: unknown): string {
 }
 
 /**
- * Sends each show screen its own scene on the native output open on its
- * display. Screens without a display, or whose display has no open output,
- * are skipped.
+ * Sends each enabled show screen its own scene on the native output open on
+ * its display. Screens without a connected display, or whose display has no
+ * open output, are skipped.
  */
 export function useShowOutput(options: ShowOutputOptions) {
   const screens = useOutputScreens()
@@ -39,8 +39,9 @@ export function useShowOutput(options: ShowOutputOptions) {
       revision: sceneRevision(),
     }
     const sends = options.show.value.screens.flatMap((screen) => {
-      if (screen.displayIndex === null) return []
-      const output = screens.outputFor(screen.displayIndex)
+      if (!screen.enabled) return []
+      const display = displayForScreen(screens.displays.value, screen)
+      const output = display ? screens.outputFor(display.index) : null
       if (!output) return []
       return [applyScene(output.label, composeScreenScene(options.show.value, options.live.value, screen, context))]
     })
@@ -56,8 +57,9 @@ export function useShowOutput(options: ShowOutputOptions) {
   async function openAll(): Promise<void> {
     const indexes = new Set(
       options.show.value.screens
-        .map((screen) => screen.displayIndex)
-        .filter((index): index is number => index !== null),
+        .filter((screen) => screen.enabled)
+        .map((screen) => displayForScreen(screens.displays.value, screen)?.index)
+        .filter((index): index is number => index !== undefined),
     )
     for (const index of indexes) {
       if (!screens.outputFor(index)) await screens.openDisplay(index)
@@ -78,6 +80,7 @@ export function useShowOutput(options: ShowOutputOptions) {
       options.theme.value,
       options.docsVersion.value,
       screens.outputs.value,
+      screens.displays.value,
     ] as const,
     () => void push(),
     { deep: false },

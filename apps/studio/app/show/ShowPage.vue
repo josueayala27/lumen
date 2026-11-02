@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
-import { slideText } from '@lumen/core'
+import { displayTarget, layoutIncludesLayer, slideText, updateCompositionLayer, type ScreenPatch } from '@lumen/core'
 import type { PresentationDoc } from '@lumen/schema'
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { listMediaAssets, type MediaAsset } from '~/data/media'
 import { getPresentation, listPresentations, type PresentationSummary } from '~/data/presentations'
-import { loadShow, saveShow } from '~/data/shows'
 import ErrorNotice from '~/library/ErrorNotice.vue'
 import PageHeader from '~/library/PageHeader.vue'
 import { isTauri } from '~/output/api'
+import { screenRef } from '~/output/screens'
 import {
   Badge,
   Button,
@@ -29,30 +29,32 @@ import {
   assignClip,
   clearLayer,
   clipAt,
-  defaultShow,
+  displayForScreen,
   emptyLive,
   launchClip,
   launchColumn,
-  removeClip,
-  setLayerOpacity,
+  removeShowClip,
   stepLyrics,
+  toggleScreenLayer,
   updateScreen,
-  type ClipSource,
-  type LyricsStyle,
+  updateScreenLayout,
+  type ClipContent,
+  type Screen,
   type ShowClip,
-  type ShowDoc,
   type ShowLive,
-  type ShowScreen,
+  type TextPreset,
 } from './showModel'
+import { useShowDocument } from './useShowDocument'
 import { useShowOutput } from './useShowOutput'
 
-const show = ref<ShowDoc>(defaultShow())
+const showDocument = useShowDocument()
+const show = showDocument.show
+const saveError = showDocument.error
 const live = ref<ShowLive>(emptyLive())
 const media = ref<MediaAsset[]>([])
 const presentations = ref<PresentationSummary[]>([])
 const docs = shallowRef(new Map<string, PresentationDoc>())
 const docsVersion = ref(0)
-const loading = ref(true)
 const error = ref('')
 const desktop = isTauri()
 
@@ -65,13 +67,14 @@ const output = useShowOutput({
   docsVersion,
 })
 
-const columns = computed(() => Array.from({ length: show.value.columns }, (_, index) => index))
+const columns = computed(() => Array.from({ length: show.value.grid.columns }, (_, index) => index))
 const playing = computed(() => new Set(Object.values(live.value.active).filter(Boolean)))
 const anyOutput = computed(() => output.outputs.value.length > 0)
 
-const lyricOptions: SegmentOption<LyricsStyle>[] = [
+const lyricOptions: SegmentOption<TextPreset>[] = [
   { value: 'full', label: 'Full' },
   { value: 'lowerThird', label: 'Lower third' },
+  { value: 'strip', label: 'Strip' },
   { value: 'hidden', label: 'Hidden' },
 ]
 const NO_DISPLAY = -1
@@ -97,32 +100,28 @@ async function ensureDoc(id: string): Promise<void> {
 
 onMounted(async () => {
   try {
-    const [stored, assets, list] = await Promise.all([loadShow(), listMediaAssets(), listPresentations()])
-    show.value = stored
+    const [, assets, list] = await Promise.all([showDocument.load(), listMediaAssets(), listPresentations()])
     media.value = assets
     presentations.value = list
     await Promise.all(
-      stored.clips.flatMap((clip) => (clip.source.kind === 'lyrics' ? [ensureDoc(clip.source.presentationId)] : [])),
+      show.value.grid.clips.flatMap((clip) =>
+        clip.content.kind === 'presentation' ? [ensureDoc(clip.content.presentationId)] : [],
+      ),
     )
     await output.ensureLoaded()
   } catch (reason) {
     error.value = message(reason)
-  } finally {
-    loading.value = false
   }
   window.addEventListener('keydown', onKey)
 })
 
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
-let saveTimer: ReturnType<typeof setTimeout> | undefined
-watch(show, (value) => {
-  if (loading.value) return
-  clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    saveShow(value).catch((reason) => (error.value = message(reason)))
-  }, 300)
-})
+function setLayerOpacity(layerId: string, opacity: number): void {
+  showDocument.updateComposition((composition) => updateCompositionLayer(composition, layerId, { opacity }), {
+    coalesce: `opacity:${layerId}`,
+  })
+}
 
 // Grid
 
@@ -155,28 +154,30 @@ function onCell(layerId: string, column: number): void {
   picking.value = { layerId, column }
 }
 
-async function pick(source: ClipSource, label: string): Promise<void> {
+async function pick(content: ClipContent, label: string): Promise<void> {
   const target = picking.value
   if (!target) return
   picking.value = null
-  if (source.kind === 'lyrics') await ensureDoc(source.presentationId)
-  show.value = assignClip(show.value, target.layerId, target.column, source, label)
+  if (content.kind === 'presentation') await ensureDoc(content.presentationId)
+  showDocument.update((value) => assignClip(value, target.layerId, target.column, content, label))
 }
 
 function remove(clip: ShowClip): void {
   if (live.value.active[clip.layerId] === clip.id) live.value = clearLayer(live.value, clip.layerId)
-  show.value = removeClip(show.value, clip.id)
+  showDocument.update((value) => removeShowClip(value, clip.id))
 }
 
 function clipIcon(clip: ShowClip): string {
-  if (clip.source.kind === 'lyrics') return 'lucide:music'
-  const { assetId } = clip.source
+  if (clip.content.kind === 'presentation') return 'lucide:music'
+  if (clip.content.kind !== 'media') return 'lucide:layers'
+  const { assetId } = clip.content
   return media.value.find((asset) => asset.id === assetId)?.kind === 'video' ? 'lucide:film' : 'lucide:image'
 }
 
 function clipMissing(clip: ShowClip): boolean {
-  if (clip.source.kind === 'lyrics') return !docs.value.has(clip.source.presentationId)
-  const { assetId } = clip.source
+  if (clip.content.kind === 'presentation') return !docs.value.has(clip.content.presentationId)
+  if (clip.content.kind !== 'media') return false
+  const { assetId } = clip.content
   const asset = media.value.find((entry) => entry.id === assetId)
   return !asset || asset.missing
 }
@@ -188,11 +189,11 @@ function clearAll(): void {
 // Lyrics
 
 const activeLyrics = computed(() =>
-  activeClips(show.value, live.value).filter((clip) => clip.source.kind === 'lyrics'),
+  activeClips(show.value, live.value).filter((clip) => clip.content.kind === 'presentation'),
 )
 
 function slideCount(clip: ShowClip): number {
-  return clip.source.kind === 'lyrics' ? docs.value.get(clip.source.presentationId)?.slides.length ?? 0 : 0
+  return clip.content.kind === 'presentation' ? docs.value.get(clip.content.presentationId)?.slides.length ?? 0 : 0
 }
 
 function step(delta: number): void {
@@ -203,8 +204,8 @@ function step(delta: number): void {
 }
 
 function lyricText(clip: ShowClip): string {
-  if (clip.source.kind !== 'lyrics') return ''
-  const doc = docs.value.get(clip.source.presentationId)
+  if (clip.content.kind !== 'presentation') return ''
+  const doc = docs.value.get(clip.content.presentationId)
   const slide = doc?.slides[live.value.slides[clip.id] ?? 0]
   return slide ? slideText(slide) : ''
 }
@@ -226,45 +227,61 @@ function onKey(event: KeyboardEvent): void {
     return
   }
   const column = Number(event.key) - 1
-  if (Number.isInteger(column) && column >= 0 && column < show.value.columns) {
+  if (Number.isInteger(column) && column >= 0 && column < show.value.grid.columns) {
     live.value = launchColumn(show.value, live.value, column)
   }
 }
 
 // Screens
 
-function patchScreen(screen: ShowScreen, patch: Partial<Omit<ShowScreen, 'id'>>): void {
-  show.value = updateScreen(show.value, screen.id, patch)
+function patchScreen(screen: Screen, patch: ScreenPatch): void {
+  showDocument.update((value) => updateScreen(value, screen.id, patch))
 }
 
-function toggleLayer(screen: ShowScreen, layerId: string, on: boolean): void {
-  const ids = new Set(screen.layerIds)
-  if (on) ids.add(layerId)
-  else ids.delete(layerId)
-  // Keep the show's layer order so the screen stacks the same way.
-  patchScreen(screen, { layerIds: show.value.layers.map((layer) => layer.id).filter((id) => ids.has(id)) })
+function setTextPreset(screen: Screen, preset: TextPreset): void {
+  const text = { scale: 1, color: null, ...screen.layout.text, preset }
+  showDocument.update((value) => updateScreenLayout(value, screen.id, { text }))
 }
 
-function screenStatus(screen: ShowScreen): { label: string; tone: 'success' | 'neutral' | 'warning' } {
-  if (screen.displayIndex === null) return { label: 'No display', tone: 'neutral' }
-  if (!output.displays.value.some((display) => display.index === screen.displayIndex)) {
-    return { label: 'Display missing', tone: 'warning' }
+function toggleLayer(screen: Screen, layerId: string, on: boolean): void {
+  showDocument.update((value) => toggleScreenLayer(value, screen.id, layerId, on))
+}
+
+function displayIndexOf(screen: Screen): number {
+  return displayForScreen(output.displays.value, screen)?.index ?? NO_DISPLAY
+}
+
+function setDisplay(screen: Screen, index: number | undefined): void {
+  const display = output.displays.value.find((entry) => entry.index === index)
+  if (!display) {
+    patchScreen(screen, { target: { kind: 'virtual' } })
+    return
   }
-  return output.outputFor(screen.displayIndex) ? { label: 'Live', tone: 'success' } : { label: 'Off', tone: 'neutral' }
+  patchScreen(screen, { target: displayTarget(screenRef(display)), size: { width: display.width, height: display.height } })
+}
+
+function screenStatus(screen: Screen): { label: string; tone: 'success' | 'neutral' | 'warning' } {
+  if (screen.target.kind !== 'display') return { label: 'No display', tone: 'neutral' }
+  const display = displayForScreen(output.displays.value, screen)
+  if (!display) return { label: 'Display missing', tone: 'warning' }
+  return output.outputFor(display.index) ? { label: 'Live', tone: 'success' } : { label: 'Off', tone: 'neutral' }
 }
 
 /** What a screen shows right now, bottom to top, for the preview list. */
-function screenLines(screen: ShowScreen): string[] {
+function screenLines(screen: Screen): string[] {
   if (screen.testPattern) return ['Test pattern']
+  if (screen.blackout) return ['Blackout']
+  const preset = screen.layout.text?.preset ?? 'full'
   const lines: string[] = []
-  for (const layer of show.value.layers) {
-    if (!screen.layerIds.includes(layer.id) || layer.opacity <= 0) continue
-    const clip = show.value.clips.find((entry) => entry.id === live.value.active[layer.id])
+  for (const layer of show.value.composition.layers) {
+    if (!layer.enabled || !layoutIncludesLayer(screen.layout, layer) || layer.opacity <= 0) continue
+    const clip = show.value.grid.clips.find((entry) => entry.id === live.value.active[layer.id])
     if (!clip) continue
-    if (clip.source.kind === 'lyrics') {
-      if (screen.lyrics === 'hidden') continue
+    if (clip.content.kind === 'presentation') {
+      if (preset === 'hidden') continue
       const text = lyricText(clip).split('\n')[0] ?? ''
-      lines.push(`${layer.name}: ${screen.lyrics === 'lowerThird' ? 'lower third · ' : ''}${text}`)
+      const style = preset === 'lowerThird' ? 'lower third · ' : preset === 'strip' ? 'strip · ' : ''
+      lines.push(`${layer.name}: ${style}${text}`)
       continue
     }
     lines.push(`${layer.name}: ${clip.label}`)
@@ -352,15 +369,16 @@ const pickerItem = css({
     </PageHeader>
 
     <ErrorNotice v-if="error" :message="error" />
+    <ErrorNotice v-if="saveError" :message="saveError" />
     <ErrorNotice v-if="output.error.value" :message="output.error.value" />
 
     <section :class="section">
       <div :class="sectionHead">
         <h2 :class="sectionTitle">Grid</h2>
-        <span :class="hint">Click a cell to launch · 1–{{ show.columns }} launch a column · ←/→ lyrics · Esc clears</span>
+        <span :class="hint">Click a cell to launch · 1–{{ show.grid.columns }} launch a column · ←/→ lyrics · Esc clears</span>
       </div>
       <div :class="gridWrap">
-        <div :class="grid" :style="{ gridTemplateColumns: `200px repeat(${show.columns}, minmax(0, 1fr))` }">
+        <div :class="grid" :style="{ gridTemplateColumns: `200px repeat(${show.grid.columns}, minmax(0, 1fr))` }">
           <div />
           <button
             v-for="column in columns"
@@ -373,7 +391,7 @@ const pickerItem = css({
             {{ column + 1 }}
           </button>
 
-          <template v-for="layer in [...show.layers].reverse()" :key="layer.id">
+          <template v-for="layer in [...show.composition.layers].reverse()" :key="layer.id">
             <div :class="layerCell">
               <div :class="layerHead">
                 <span>{{ layer.name }}</span>
@@ -383,7 +401,7 @@ const pickerItem = css({
                 :model-value="Math.round(layer.opacity * 100)"
                 :aria-label="`${layer.name} opacity`"
                 :value-text="`${Math.round(layer.opacity * 100)}%`"
-                @update:model-value="(value: number) => (show = setLayerOpacity(show, layer.id, value / 100))"
+                @update:model-value="(value: number) => setLayerOpacity(layer.id, value / 100)"
               />
             </div>
             <template v-for="column in columns" :key="`${layer.id}-${column}`">
@@ -439,35 +457,35 @@ const pickerItem = css({
             <span v-for="(line, index) in screenLines(screen)" :key="index">{{ line }}</span>
           </div>
           <Select
-            :model-value="screen.displayIndex ?? NO_DISPLAY"
+            :model-value="displayIndexOf(screen)"
             :options="displayOptions"
             size="sm"
             aria-label="Display"
-            @update:model-value="(value?: number) => patchScreen(screen, { displayIndex: value === undefined || value === NO_DISPLAY ? null : value })"
+            @update:model-value="(value?: number) => setDisplay(screen, value)"
           />
           <SegmentedControl
-            :model-value="screen.lyrics"
+            :model-value="screen.layout.text?.preset ?? 'full'"
             :options="lyricOptions"
             size="sm"
             aria-label="Lyrics"
-            @update:model-value="(value?: LyricsStyle) => value && patchScreen(screen, { lyrics: value })"
+            @update:model-value="(value?: TextPreset) => value && setTextPreset(screen, value)"
           />
           <div :class="layerChecks">
             <Checkbox
-              v-for="layer in show.layers"
+              v-for="layer in show.composition.layers"
               :key="layer.id"
               :label="layer.name"
-              :model-value="screen.layerIds.includes(layer.id)"
+              :model-value="layoutIncludesLayer(screen.layout, layer)"
               @update:model-value="(on: boolean) => toggleLayer(screen, layer.id, on)"
             />
           </div>
           <div :class="row">
             <span>Test pattern</span>
             <Switch
-              :model-value="screen.testPattern"
+              :model-value="screen.testPattern !== null"
               size="sm"
               aria-label="Test pattern"
-              @update:model-value="(on: boolean) => patchScreen(screen, { testPattern: on })"
+              @update:model-value="(on: boolean) => patchScreen(screen, { testPattern: on ? 'bars' : null })"
             />
           </div>
         </article>
@@ -483,7 +501,7 @@ const pickerItem = css({
           :key="asset.id"
           type="button"
           :class="pickerItem"
-          @click="pick({ kind: 'media', assetId: asset.id }, asset.name)"
+          @click="pick({ kind: 'media', assetId: asset.id, loop: true }, asset.name)"
         >
           <Icon :name="asset.kind === 'video' ? 'lucide:film' : 'lucide:image'" :size="14" aria-hidden="true" />
           {{ asset.name }}
@@ -495,7 +513,7 @@ const pickerItem = css({
           :key="item.id"
           type="button"
           :class="pickerItem"
-          @click="pick({ kind: 'lyrics', presentationId: item.id }, item.title)"
+          @click="pick({ kind: 'presentation', presentationId: item.id }, item.title)"
         >
           <Icon :name="item.kind === 'song' ? 'lucide:music' : 'lucide:presentation'" :size="14" aria-hidden="true" />
           {{ item.title }}
