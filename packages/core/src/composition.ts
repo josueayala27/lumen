@@ -106,6 +106,23 @@ export function setLayerMask(composition: Composition, layerId: string, mask: Ma
   return mapLayer(composition, layerId, (layer) => ({ ...layer, mask }))
 }
 
+/**
+ * Copies a layer, with new layer and effect ids, directly above the original.
+ * Returns the composition unchanged when the layer does not exist.
+ */
+export function duplicateCompositionLayer(composition: Composition, layerId: string, id = newId('layer')): Composition {
+  const index = composition.layers.findIndex((layer) => layer.id === layerId)
+  const original = composition.layers[index]
+  if (!original) return composition
+  const copy: Layer = {
+    ...structuredClone(original),
+    id,
+    name: original.name ? `${original.name} copy` : 'Layer copy',
+    effects: original.effects.map((effect) => ({ ...structuredClone(effect), id: newId('effect') })),
+  }
+  return addCompositionLayer(composition, copy, index + 1)
+}
+
 // --- Effects -----------------------------------------------------------------
 
 export function addLayerEffect(composition: Composition, layerId: string, effect: Effect): Composition {
@@ -137,12 +154,8 @@ export function removeLayerEffect(composition: Composition, layerId: string, eff
 
 export function moveLayerEffect(composition: Composition, layerId: string, effectId: string, index: number): Composition {
   return mapLayer(composition, layerId, (layer) => {
-    const from = layer.effects.findIndex((effect) => effect.id === effectId)
-    if (from < 0) return layer
-    const effects = [...layer.effects]
-    const [effect] = effects.splice(from, 1)
-    effects.splice(clampIndex(index, effects.length), 0, effect!)
-    return { ...layer, effects }
+    const effects = moveEffect(layer.effects, effectId, index)
+    return effects === layer.effects ? layer : { ...layer, effects }
   })
 }
 
@@ -189,6 +202,48 @@ export function setMasterOpacity(composition: Composition, opacity: number): Com
   return { ...composition, master: { ...composition.master, opacity: clamp01(opacity) } }
 }
 
+export function setCanvasSize(composition: Composition, canvas: Size): Composition {
+  const width = Math.round(canvas.width)
+  const height = Math.round(canvas.height)
+  if (!(width > 0) || !(height > 0)) return composition
+  if (width === composition.canvas.width && height === composition.canvas.height) return composition
+  return { ...composition, canvas: { width, height } }
+}
+
+export function addMasterEffect(composition: Composition, effect: Effect): Composition {
+  return { ...composition, master: { ...composition.master, effects: [...composition.master.effects, effect] } }
+}
+
+export function updateMasterEffect(
+  composition: Composition,
+  effectId: string,
+  patch: Partial<Omit<Effect, 'id' | 'kind'>>,
+): Composition {
+  return {
+    ...composition,
+    master: {
+      ...composition.master,
+      effects: composition.master.effects.map((effect) =>
+        effect.id === effectId
+          ? { ...effect, ...patch, params: patch.params ? { ...effect.params, ...patch.params } : effect.params }
+          : effect,
+      ),
+    },
+  }
+}
+
+export function removeMasterEffect(composition: Composition, effectId: string): Composition {
+  return {
+    ...composition,
+    master: { ...composition.master, effects: composition.master.effects.filter((effect) => effect.id !== effectId) },
+  }
+}
+
+export function moveMasterEffect(composition: Composition, effectId: string, index: number): Composition {
+  const effects = moveEffect(composition.master.effects, effectId, index)
+  return effects === composition.master.effects ? composition : { ...composition, master: { ...composition.master, effects } }
+}
+
 // --- Helpers -----------------------------------------------------------------
 
 function mapLayer(composition: Composition, layerId: string, update: (layer: Layer) => Layer): Composition {
@@ -199,6 +254,15 @@ function mapLayer(composition: Composition, layerId: string, update: (layer: Lay
     return update(layer)
   })
   return changed ? { ...composition, layers } : composition
+}
+
+function moveEffect(effects: Effect[], effectId: string, index: number): Effect[] {
+  const from = effects.findIndex((effect) => effect.id === effectId)
+  if (from < 0) return effects
+  const next = [...effects]
+  const [effect] = next.splice(from, 1)
+  next.splice(clampIndex(index, next.length), 0, effect!)
+  return next
 }
 
 function clampIndex(index: number, length: number): number {

@@ -4,6 +4,8 @@ import type {
   Layout,
   LayoutText,
   Mapping,
+  Mesh,
+  Point,
   Region,
   Screen,
   ScreenRef,
@@ -121,4 +123,59 @@ export function sideBySideRegions(count: number, overlap = 0): Region[] {
   const n = Math.max(1, Math.round(count))
   const w = (1 + overlap * (n - 1)) / n
   return Array.from({ length: n }, (_, index) => ({ x: index * (w - overlap), y: 0, w, h: 1 }))
+}
+
+/** tl, tr, br, bl in normalized output space. */
+export type CornerPin = [Point, Point, Point, Point]
+
+/** A corner pin that leaves the output unwarped. */
+export function identityCornerPin(): CornerPin {
+  return [
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 1, y: 1 },
+    { x: 0, y: 1 },
+  ]
+}
+
+/** Bilinear point inside a corner-pin quad at `(u, v)` in 0..1. */
+export function quadPoint(pin: readonly Point[], u: number, v: number): Point {
+  const [tl, tr, br, bl] = pin as CornerPin
+  const top = { x: tl.x + (tr.x - tl.x) * u, y: tl.y + (tr.y - tl.y) * u }
+  const bottom = { x: bl.x + (br.x - bl.x) * u, y: bl.y + (br.y - bl.y) * u }
+  return { x: top.x + (bottom.x - top.x) * v, y: top.y + (bottom.y - top.y) * v }
+}
+
+/** A `cols × rows` mesh spread evenly over a corner pin, or over the full output. */
+export function meshForCornerPin(cols: number, rows: number, pin: readonly Point[] | null = null): Mesh {
+  const c = Math.max(2, Math.round(cols))
+  const r = Math.max(2, Math.round(rows))
+  const quad = pin ?? identityCornerPin()
+  const points: Point[] = []
+  for (let row = 0; row < r; row += 1) {
+    for (let col = 0; col < c; col += 1) points.push(quadPoint(quad, col / (c - 1), row / (r - 1)))
+  }
+  return { cols: c, rows: r, points }
+}
+
+/** Mesh point at a fractional grid position, interpolated from its cell. */
+function meshPointAt(mesh: Mesh, u: number, v: number): Point {
+  const fx = u * (mesh.cols - 1)
+  const fy = v * (mesh.rows - 1)
+  const col = Math.min(mesh.cols - 2, Math.floor(fx))
+  const row = Math.min(mesh.rows - 2, Math.floor(fy))
+  const at = (c: number, r: number): Point => mesh.points[r * mesh.cols + c]!
+  return quadPoint([at(col, row), at(col + 1, row), at(col + 1, row + 1), at(col, row + 1)], fx - col, fy - row)
+}
+
+/** Resamples a mesh to a new grid size, keeping its current shape. */
+export function resampleMesh(mesh: Mesh, cols: number, rows: number): Mesh {
+  const c = Math.max(2, Math.round(cols))
+  const r = Math.max(2, Math.round(rows))
+  if (c === mesh.cols && r === mesh.rows) return mesh
+  const points: Point[] = []
+  for (let row = 0; row < r; row += 1) {
+    for (let col = 0; col < c; col += 1) points.push(meshPointAt(mesh, col / (c - 1), row / (r - 1)))
+  }
+  return { cols: c, rows: r, points }
 }

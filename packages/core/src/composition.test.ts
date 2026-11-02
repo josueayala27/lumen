@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest'
 import {
   addCompositionLayer,
   addLayerEffect,
+  addMasterEffect,
+  duplicateCompositionLayer,
+  moveMasterEffect,
+  removeMasterEffect,
+  setCanvasSize,
+  updateMasterEffect,
   addSource,
   createComposition,
   createEffect,
@@ -291,5 +297,40 @@ describe('sceneToComposition', () => {
     expect(back.layers.map((layer) => layer.kind)).toEqual(['video', 'text', 'text'])
     expect(back.layers[1]!.frame).toEqual(scene.layers[1]!.frame)
     expect(back.assets).toEqual([sceneAsset])
+  })
+})
+
+describe('compose helpers', () => {
+  it('duplicates a layer above the original with fresh ids', () => {
+    let composition = createComposition()
+    composition = addCompositionLayer(composition, createLayer({ id: 'a', name: 'Back', effects: [createEffect('blur', 'fx')] }))
+    composition = addCompositionLayer(composition, createLayer({ id: 'b' }))
+    const next = duplicateCompositionLayer(composition, 'a', 'copy')
+    expect(next.layers.map((layer) => layer.id)).toEqual(['a', 'copy', 'b'])
+    const copy = next.layers[1]!
+    expect(copy.name).toBe('Back copy')
+    expect(copy.effects[0]!.id).not.toBe('fx')
+    expect(copy.effects[0]!.params).toEqual(composition.layers[0]!.effects[0]!.params)
+    expect(copy.transform).not.toBe(composition.layers[0]!.transform)
+    expect(duplicateCompositionLayer(composition, 'missing')).toBe(composition)
+  })
+
+  it('edits master effects', () => {
+    let composition = addMasterEffect(createComposition(), createEffect('color', 'c'))
+    composition = addMasterEffect(composition, createEffect('blur', 'b'))
+    composition = updateMasterEffect(composition, 'c', { enabled: false, params: { brightness: 0.5 } })
+    expect(composition.master.effects[0]).toMatchObject({ enabled: false, params: { brightness: 0.5, contrast: 1 } })
+    composition = moveMasterEffect(composition, 'b', 0)
+    expect(composition.master.effects.map((effect) => effect.id)).toEqual(['b', 'c'])
+    expect(moveMasterEffect(composition, 'missing', 0)).toBe(composition)
+    composition = removeMasterEffect(composition, 'b')
+    expect(composition.master.effects.map((effect) => effect.id)).toEqual(['c'])
+  })
+
+  it('sets the canvas size to whole positive pixels', () => {
+    const composition = createComposition({ width: 1920, height: 1080 })
+    expect(setCanvasSize(composition, { width: 1280.4, height: 720 }).canvas).toEqual({ width: 1280, height: 720 })
+    expect(setCanvasSize(composition, { width: 0, height: 720 })).toBe(composition)
+    expect(setCanvasSize(composition, { width: 1920, height: 1080 })).toBe(composition)
   })
 })
