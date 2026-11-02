@@ -1,7 +1,7 @@
 import { showDocSchema, type PresentationDoc, type ShowDoc } from '@lumen/schema'
 import { describe, expect, it } from 'vitest'
 import { addSource } from './composition'
-import { compositionToScene } from './compositionScene'
+import { layersForLayout } from './screen'
 import { buildSongDoc } from './presentation'
 import {
   activeClips,
@@ -183,17 +183,16 @@ describe('liveComposition', () => {
     expect(composition.assets.map((asset) => asset.id).sort()).toEqual(['media_image', 'media_video'])
   })
 
-  it('renders per-screen scenes through the v1 adapter', () => {
+  it('lets each screen layout pick its layers', () => {
     const show = loadedShow()
     const composition = liveComposition(show, launchColumn(show, emptyLive(), 0), context)
-    const [main, wall, side] = show.screens
-    const kinds = compositionToScene(composition, main!).layers.map((layer) => layer.kind)
-    expect(kinds.slice(0, 2)).toEqual(['video', 'image'])
-    expect(kinds.slice(2).every((kind) => kind === 'text')).toBe(true)
-    expect(compositionToScene(composition, wall!).layers.map((layer) => layer.kind)).toEqual(['video', 'image'])
-    const text = compositionToScene(composition, side!).layers.filter((layer) => layer.kind === 'text')
-    expect(text.length).toBeGreaterThan(0)
-    for (const layer of text) expect(layer.frame.y).toBeGreaterThan(0.7)
+    const kindsOn = (index: number) =>
+      layersForLayout(show.screens[index]!.layout, composition.layers).map(
+        (layer) => composition.sources.find((source) => source.id === layer.sourceId)?.kind,
+      )
+    expect(kindsOn(0)).toEqual(['video', 'image', 'slide'])
+    expect(kindsOn(1)).toEqual(['video', 'image'])
+    expect(show.screens[2]!.layout.text?.preset).toBe('lowerThird')
   })
 
   it('leaves layers empty when media is missing and keeps authored sources', () => {
@@ -217,8 +216,11 @@ describe('liveComposition', () => {
     show = assignClip(show, background!.id, 2, { kind: 'source', source: { id: 'x', name: '', kind: 'solid', color: '#0f0' } }, 'Green')
     show = assignClip(show, visuals!.id, 2, { kind: 'sourceRef', sourceId: 'blue' }, 'Blue')
     const composition = liveComposition(show, launchColumn(show, emptyLive(), 2), context)
-    const scene = compositionToScene(composition, show.screens[0]!)
-    expect(scene.layers.map((layer) => (layer.kind === 'shape' ? layer.fill : layer.kind))).toEqual(['#0f0', '#00f'])
+    const colors = composition.layers.map((layer) => {
+      const source = composition.sources.find((entry) => entry.id === layer.sourceId)
+      return source?.kind === 'solid' ? source.color : source?.kind
+    })
+    expect(colors.slice(0, 2)).toEqual(['#0f0', '#00f'])
   })
 })
 

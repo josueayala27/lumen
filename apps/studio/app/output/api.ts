@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { Composition, Scene, Screen, Transition } from '@lumen/schema'
+import type { Composition, Screen, Transition } from '@lumen/schema'
 
 /** A monitor as reported by `lumen-output`. Field names match the Rust serialization. */
 export interface DisplayInfo {
@@ -65,9 +65,13 @@ export function applyComposition(
   return invoke('apply_composition', { composition, screens, transition })
 }
 
-/** Starts the next cue's videos paused on their first frame; `null` releases them. */
-export function preloadScene(scene: Scene | null): Promise<void> {
-  return invoke('preload_scene', { scene })
+/**
+ * Starts the videos of the next cue's composition paused on their first frame
+ * (decoder demand of the `preload` caller); `null` releases them. Every video
+ * source on an enabled layer is preloaded.
+ */
+export function preloadComposition(composition: Composition | null): Promise<void> {
+  return invoke('preload_composition', { composition })
 }
 
 /** A transport change for one video; omitted fields are kept. */

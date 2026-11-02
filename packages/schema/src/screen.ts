@@ -58,6 +58,7 @@ export type LayoutText = z.infer<typeof layoutTextSchema>
 
 export const STAGE_PARTS = ['current', 'next', 'notes', 'clock', 'timers', 'message'] as const
 export const stagePartSchema = z.enum(STAGE_PARTS)
+export type StagePart = z.infer<typeof stagePartSchema>
 
 export const layoutSchema = z.object({
   layers: layerFilterSchema,

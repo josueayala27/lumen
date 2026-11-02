@@ -6,12 +6,11 @@ import {
   type Layout,
   type Mapping,
   type PresentationDoc,
-  type SceneAsset,
+  type CompositionAsset,
   type Screen,
   type ScreenRef,
   type ShowClip,
   type ShowDoc,
-  type SlideElement,
   type Source,
   type TextPreset,
   type Theme,
@@ -25,7 +24,7 @@ import {
   type LayerInput,
 } from './composition'
 import { newId } from './presentation'
-import { buildScene } from './scene'
+import { presentationSlideSource } from './slide'
 import { createScreen, displayTarget } from './screen'
 
 /**
@@ -251,7 +250,8 @@ export interface ShowResolveContext {
   theme: Theme | null
 }
 
-export function sceneAssetForMedia(media: ShowMediaLike): SceneAsset | null {
+/** A media library row as a composition asset; null for kinds a composition cannot draw. */
+export function assetForMedia(media: ShowMediaLike): CompositionAsset | null {
   if (media.kind !== 'image' && media.kind !== 'video') return null
   return {
     id: media.id,
@@ -262,21 +262,6 @@ export function sceneAssetForMedia(media: ShowMediaLike): SceneAsset | null {
     intrinsic: { width: media.width ?? 0, height: media.height ?? 0 },
     state: media.missing ? 'missing' : 'ready',
   }
-}
-
-/** The current slide of a presentation as a `slide` source. */
-export function presentationSlideSource(
-  id: string,
-  doc: PresentationDoc,
-  slideIndex: number,
-  theme: Theme | null,
-): Source | null {
-  if (doc.slides.length === 0) return null
-  const index = Math.min(Math.max(0, slideIndex), doc.slides.length - 1)
-  const size = { width: doc.settings.width, height: doc.settings.height }
-  const scene = buildScene(doc, theme, index, size, { assets: [], fonts: [], revision: index, role: 'audience' })
-  const elements = scene.layers.filter((layer): layer is SlideElement => layer.kind !== 'video')
-  return { id, name: doc.title, kind: 'slide', revision: index, elements, safeArea: scene.safeArea, size }
 }
 
 /** Resolves a clip into a source; null when its media or document is missing. */
@@ -361,7 +346,7 @@ export function liveComposition(show: ShowDoc, live: ShowLive, context: ShowReso
   for (const id of used) {
     if (known.has(id)) continue
     const media = context.media.find((entry) => entry.id === id)
-    const asset = media ? sceneAssetForMedia(media) : null
+    const asset = media ? assetForMedia(media) : null
     if (asset) assets.push(asset)
   }
   return { ...composition, sources, layers, assets }

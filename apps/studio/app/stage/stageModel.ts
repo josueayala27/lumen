@@ -1,5 +1,5 @@
-import { timerRemaining } from '@lumen/core'
-import type { Timer } from '@lumen/schema'
+import { createScreen, timerRemaining } from '@lumen/core'
+import { STAGE_PARTS, type Screen, type Size, type StagePart, type Timer } from '@lumen/schema'
 
 export interface StageSourceSlide {
   label: string
@@ -107,4 +107,43 @@ export function safeAreaPercent(fraction: number): string {
 
 function round(value: number): number {
   return Math.round(value * 100) / 100
+}
+
+/**
+ * The stage screen the window follows: the one named by id, else the first
+ * enabled screen with the `stage` role. Null when the show has none.
+ */
+export function stageScreen(screens: readonly Screen[], screenId: string | null = null): Screen | null {
+  if (screenId) {
+    const named = screens.find((screen) => screen.id === screenId)
+    if (named) return named
+  }
+  return screens.find((screen) => screen.role === 'stage' && screen.enabled) ?? null
+}
+
+/** Which stage parts to show: the screen's `layout.stage`, or every part without one. */
+export function stageParts(screen: Screen | null): ReadonlySet<StagePart> {
+  return new Set(screen?.layout.stage?.show ?? STAGE_PARTS)
+}
+
+/**
+ * The screen a stage slide image renders through: the stage screen's text
+ * override, background and safe area over the whole slide. Its layer filter,
+ * region and mapping are for the show canvas, not a single slide, so they are
+ * left out.
+ */
+export function stageSlideScreen(screen: Screen | null, size: Size): Screen | null {
+  if (!screen) return null
+  return createScreen({
+    id: screen.id,
+    name: screen.name,
+    role: 'stage',
+    size,
+    layout: {
+      text: screen.layout.text,
+      background: screen.layout.background,
+      safeArea: { ...screen.layout.safeArea },
+      stage: screen.layout.stage,
+    },
+  })
 }

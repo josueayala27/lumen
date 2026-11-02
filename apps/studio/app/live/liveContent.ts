@@ -1,18 +1,7 @@
-import { buildScene, createLayer, textSlide } from '@lumen/core'
-import type {
-  Composition,
-  Layer,
-  PresentationDoc,
-  Scene,
-  SceneAsset,
-  SceneLayer,
-  Slide,
-  Source,
-  Theme,
-  Transition,
-} from '@lumen/schema'
+import { assetForMedia, createLayer, textSlide } from '@lumen/core'
+import type { Composition, CompositionAsset, Layer, PresentationDoc, Slide, Source, Theme, Transition } from '@lumen/schema'
 
-/** Minimal media row shape needed to resolve scene assets. */
+/** Minimal media row shape needed to resolve composition assets. */
 export interface MediaAssetLike {
   id: string
   kind: string
@@ -24,35 +13,26 @@ export interface MediaAssetLike {
 }
 
 /** A slide addressed by its live position, with the source document when it has one. */
-export interface SceneSlideSource {
+export interface CueSlide {
   doc: PresentationDoc | null
   slideIndex: number
   label: string
 }
 
-export const DEFAULT_SCENE_SIZE = { width: 1920, height: 1080 }
+export const DEFAULT_SLIDE_SIZE = { width: 1920, height: 1080 }
 export const DEFAULT_TRANSITION: Transition = {
   kind: 'fade',
   durationMs: 300,
   easing: 'cubic-bezier(0.2, 0, 0, 1)',
 }
 const DEFAULT_SAFE_AREA = 0.05
-const BLACK = '#000000'
 
 let revisionCounter = 0
 
-/** Monotonic revision shared by every scene sent to an output. */
-export function sceneRevision(): number {
+/** Monotonic revision shared by every composition sent to an output. */
+export function outputRevision(): number {
   revisionCounter += 1
   return revisionCounter
-}
-
-function viewportFor(doc: PresentationDoc): { width: number; height: number; scale: number } {
-  return {
-    width: doc.settings.width,
-    height: doc.settings.height,
-    scale: 1,
-  }
 }
 
 /** Asset ids referenced by a document's backgrounds and media layers. */
@@ -73,27 +53,14 @@ export function collectAssetIds(doc: PresentationDoc | null): string[] {
   return [...ids]
 }
 
-export function sceneAssetFor(media: MediaAssetLike): SceneAsset | null {
-  if (media.kind !== 'image' && media.kind !== 'video') return null
-  return {
-    id: media.id,
-    hash: media.sha256,
-    kind: media.kind,
-    localPath: media.localPath,
-    url: null,
-    intrinsic: { width: media.width ?? 0, height: media.height ?? 0 },
-    state: media.missing ? 'missing' : 'ready',
-  }
-}
-
-/** Resolves the media rows a document references into scene assets. */
-export function assetsForDoc(doc: PresentationDoc | null, media: MediaAssetLike[]): SceneAsset[] {
+/** Resolves the media rows a document references into composition assets. */
+export function assetsForDoc(doc: PresentationDoc | null, media: readonly MediaAssetLike[]): CompositionAsset[] {
   if (!doc) return []
   const ids = new Set(collectAssetIds(doc))
   return media
     .filter((asset) => ids.has(asset.id))
-    .map(sceneAssetFor)
-    .filter((asset): asset is SceneAsset => asset !== null)
+    .map(assetForMedia)
+    .filter((asset): asset is CompositionAsset => asset !== null)
 }
 
 /** A one-slide title card for rundown items without a document (media, headers, missing). */
@@ -103,79 +70,10 @@ export function placeholderDoc(label: string): PresentationDoc {
     kind: 'presentation',
     title: label,
     themeId: null,
-    settings: { aspectRatio: '16:9', ...DEFAULT_SCENE_SIZE, safeArea: DEFAULT_SAFE_AREA },
+    settings: { aspectRatio: '16:9', ...DEFAULT_SLIDE_SIZE, safeArea: DEFAULT_SAFE_AREA },
     slides: [{ ...textSlide(label, null, 'placeholder-slide'), background: { kind: 'transparent' } }],
     song: null,
   }
-}
-
-/**
- * Builds the audience scene for a live position. Items without a document (media
- * and headers) fall back to a themed title card so the output never goes stale.
- */
-export function sceneForSlide(
-  source: SceneSlideSource,
-  theme: Theme | null,
-  media: MediaAssetLike[],
-  revision: number,
-): Scene {
-  const doc = source.doc
-  if (doc) {
-    const index = Math.min(Math.max(0, source.slideIndex), doc.slides.length - 1)
-    return buildScene(doc, theme, index, viewportFor(doc), {
-      assets: assetsForDoc(doc, media),
-      fonts: [],
-      revision,
-      role: 'audience',
-    })
-  }
-  const label = source.label.trim() || 'No slide'
-  const placeholder = placeholderDoc(label)
-  return buildScene(placeholder, theme, 0, viewportFor(placeholder), {
-    assets: [],
-    fonts: [],
-    revision,
-    role: 'audience',
-  })
-}
-
-function blackLayer(): SceneLayer {
-  return {
-    kind: 'shape',
-    id: 'mode-background',
-    frame: { x: 0, y: 0, w: 1, h: 1, rotation: 0 },
-    z: -1000,
-    opacity: 1,
-    fill: BLACK,
-    stroke: null,
-    strokeWidth: 0,
-    radius: 0,
-  }
-}
-
-function modeSceneBase(revision: number, background: SceneLayer | null): Scene {
-  return {
-    schemaVersion: 1,
-    revision,
-    role: 'audience',
-    viewport: { ...DEFAULT_SCENE_SIZE, scale: 1 },
-    colorSpace: 'srgb',
-    background,
-    layers: [],
-    fonts: [],
-    assets: [],
-    safeArea: {
-      top: DEFAULT_SAFE_AREA,
-      right: DEFAULT_SAFE_AREA,
-      bottom: DEFAULT_SAFE_AREA,
-      left: DEFAULT_SAFE_AREA,
-    },
-  }
-}
-
-/** Black output: an opaque black frame with no slide layers. */
-export function blackScene(revision: number): Scene {
-  return modeSceneBase(revision, blackLayer())
 }
 
 /** Slide transition first, then the theme transition, then the product default. */
@@ -195,7 +93,7 @@ export function isCut(transition: Transition): boolean {
  */
 export interface LiveCompositionTransform {
   key: string
-  apply: (composition: Composition, source: SceneSlideSource | null, contentLayerId: string | null) => Composition
+  apply: (composition: Composition, source: CueSlide | null, contentLayerId: string | null) => Composition
 }
 
 /** A timeline media clip resolved against the media library. */
@@ -220,7 +118,7 @@ export function withTimelineMedia(composition: Composition, entries: readonly Ti
   const layers: Layer[] = []
   for (const entry of entries) {
     if (entry.asset.kind !== 'image' && entry.asset.kind !== 'video') continue
-    const asset = sceneAssetFor(entry.asset)
+    const asset = assetForMedia(entry.asset)
     if (!asset) continue
     if (!assets.some((existing) => existing.id === asset.id)) assets.push(asset)
     const id = `timeline-media-${entry.clipId}`
@@ -253,11 +151,18 @@ export function withTimelineMedia(composition: Composition, entries: readonly Ti
   }
 }
 
-/** Stable key for the videos a scene plays, so preloads are sent only when they change. */
-export function sceneVideoKey(scene: Scene): string {
-  const layers = scene.background ? [scene.background, ...scene.layers] : scene.layers
-  return layers
-    .filter((layer) => layer.kind === 'video')
-    .map((layer) => (layer.kind === 'video' ? `${layer.source.assetId}@${layer.startMs}` : ''))
-    .join('|')
+/**
+ * Stable key for the videos a composition plays (asset and start, in layer
+ * order), so preloads are sent only when they change.
+ */
+export function compositionVideoKey(composition: Composition): string {
+  const sources = new Map(composition.sources.map((source) => [source.id, source]))
+  const keys: string[] = []
+  for (const layer of composition.layers) {
+    const source = layer.enabled && layer.sourceId ? sources.get(layer.sourceId) : undefined
+    if (source?.kind !== 'video') continue
+    const key = `${source.asset.assetId}@${source.inMs}`
+    if (!keys.includes(key)) keys.push(key)
+  }
+  return keys.join('|')
 }

@@ -3,12 +3,12 @@ import { describe, expect, it } from 'vitest'
 import {
   boundsForElement,
   decodeCompositionPreviewResponse,
-  decodePreviewResponse,
+  elementLayout,
   hitTestBounds,
   moveFrame,
   normalizePoint,
   snapFrame,
-  type PreviewBounds,
+  type ElementBounds,
 } from './render'
 
 function payload(options: {
@@ -35,53 +35,13 @@ function payload(options: {
   return bytes
 }
 
-function bounds(overrides: Partial<PreviewBounds> & { elementId: string }): PreviewBounds {
+function bounds(overrides: Partial<ElementBounds> & { elementId: string }): ElementBounds {
   return { x: 0, y: 0, width: 1, height: 1, ...overrides }
 }
 
 function frame(overrides: Partial<Frame> = {}): Frame {
   return { x: 0, y: 0, w: 0.2, h: 0.2, rotation: 0, ...overrides }
 }
-
-describe('decodePreviewResponse', () => {
-  it('reads dimensions, layout and RGBA from the binary payload', () => {
-    const layout = {
-      revision: 7,
-      bounds: [bounds({ elementId: 'a', x: 0.1, y: 0.2, width: 0.3, height: 0.4 })],
-      textRuns: [
-        {
-          elementId: 'a',
-          line: 0,
-          text: 'Hi',
-          x: 0.1,
-          y: 0.2,
-          width: 0.2,
-          height: 0.1,
-          caretStops: [0.1, 0.2],
-        },
-      ],
-    }
-    const decoded = decodePreviewResponse(payload({ layout }))
-    expect(decoded.width).toBe(2)
-    expect(decoded.height).toBe(1)
-    expect(decoded.layout.revision).toBe(7)
-    expect(decoded.layout.bounds[0]?.elementId).toBe('a')
-    expect(decoded.layout.textRuns[0]?.text).toBe('Hi')
-    expect(Array.from(decoded.rgba)).toEqual([255, 0, 0, 255, 0, 255, 0, 255])
-  })
-
-  it('accepts an ArrayBuffer and an ArrayBuffer view', () => {
-    const bytes = payload({})
-    expect(decodePreviewResponse(bytes.buffer as ArrayBuffer).width).toBe(2)
-    expect(decodePreviewResponse(bytes).width).toBe(2)
-  })
-
-  it('rejects truncated payloads and layout length overruns', () => {
-    expect(() => decodePreviewResponse(new Uint8Array(4))).toThrow(/truncated/i)
-    expect(() => decodePreviewResponse(payload({ layoutLength: 9999 }))).toThrow(/layout length/i)
-    expect(() => decodePreviewResponse(payload({ rgba: [1, 2, 3] }))).toThrow(/RGBA bytes/i)
-  })
-})
 
 describe('decodeCompositionPreviewResponse', () => {
   it('reads layer and element bounds keyed by layer, source and element', () => {
@@ -106,11 +66,35 @@ describe('decodeCompositionPreviewResponse', () => {
     expect(Array.from(decoded.rgba)).toEqual([255, 0, 0, 255, 0, 255, 0, 255])
   })
 
-  it('rejects a v1 layout and bad payloads', () => {
-    const v1 = { revision: 1, bounds: [{ elementId: 'a', x: 0, y: 0, width: 1, height: 1 }], textRuns: [] }
-    expect(() => decodeCompositionPreviewResponse(payload({ layout: v1 }))).toThrow()
+  it('accepts an ArrayBuffer and an ArrayBuffer view', () => {
+    const bytes = payload({})
+    expect(decodeCompositionPreviewResponse(bytes.buffer as ArrayBuffer).width).toBe(2)
+    expect(decodeCompositionPreviewResponse(bytes).width).toBe(2)
+  })
+
+  it('rejects layouts without layer ids and bad payloads', () => {
+    const bare = { revision: 1, bounds: [{ elementId: 'a', x: 0, y: 0, width: 1, height: 1 }], textRuns: [] }
+    expect(() => decodeCompositionPreviewResponse(payload({ layout: bare }))).toThrow()
+    expect(() => decodeCompositionPreviewResponse(payload({ layoutLength: 9999 }))).toThrow(/layout length/i)
     expect(() => decodeCompositionPreviewResponse(new Uint8Array(4))).toThrow(/truncated/i)
     expect(() => decodeCompositionPreviewResponse(payload({ rgba: [1, 2, 3] }))).toThrow(/RGBA bytes/i)
+  })
+})
+
+describe('elementLayout', () => {
+  it('keys slide elements by element id and video layers by layer id', () => {
+    const layout = elementLayout({
+      revision: 1,
+      bounds: [
+        { layerId: 'slide-background', sourceId: 'slide-background', elementId: null, x: 0, y: 0, width: 1, height: 1 },
+        { layerId: 'slide-content-0', sourceId: 'slide-content-0', elementId: null, x: 0, y: 0, width: 1, height: 1 },
+        { layerId: 'slide-content-0', sourceId: 'slide-content-0', elementId: 'title', x: 0.1, y: 0.2, width: 0.3, height: 0.4 },
+        { layerId: 'clip', sourceId: 'video-clip', elementId: null, x: 0.5, y: 0.5, width: 0.25, height: 0.25 },
+      ],
+      textRuns: [],
+    })
+    expect(layout.bounds.map((entry) => entry.elementId)).toEqual(['slide-background', 'title', 'clip'])
+    expect(layout.bounds[1]).toEqual({ elementId: 'title', x: 0.1, y: 0.2, width: 0.3, height: 0.4 })
   })
 })
 

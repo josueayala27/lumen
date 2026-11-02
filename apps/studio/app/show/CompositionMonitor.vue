@@ -4,8 +4,7 @@ import { Icon } from '#components'
 import type { Composition, Screen } from '@lumen/schema'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { isTauriRuntime, previewRenderComposition, type DecodedCompositionPreview } from '~/control/render'
-import { schematicLayers } from '~/screens/useScreenPreview'
-import { schematicScene } from './showModel'
+import { schematicFrame } from './schematic'
 
 /**
  * Draws one composition as a screen shows it (layout, mapping, blackout, test
@@ -40,12 +39,9 @@ let disposed = false
 
 const outputSize = computed(() => props.screen?.size ?? props.composition?.canvas ?? { width: 16, height: 9 })
 const aspect = computed(() => `${outputSize.value.width} / ${outputSize.value.height}`)
-const scene = computed(() => (!native && props.composition ? schematicScene(props.composition, props.screen) : null))
-const background = computed(() => {
-  const layer = scene.value?.background
-  return layer?.kind === 'shape' ? layer.fill : '#000000'
-})
-const schematic = computed(() => (scene.value ? schematicLayers(scene.value) : []))
+const drawn = computed(() => (!native && props.composition ? schematicFrame(props.composition, props.screen) : null))
+const background = computed(() => drawn.value?.background ?? '#000000')
+const schematic = computed(() => drawn.value?.layers ?? [])
 
 function sizeFor(size: { width: number; height: number }): { width: number; height: number } {
   const scale = Math.min(1, props.maxWidth / Math.max(1, size.width))

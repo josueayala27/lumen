@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import type { Composition, Scene, SceneLayer, SlideElement, ShowTimeline, TimelineClip, TimelineDoc, TimelineTrack } from '@lumen/schema'
+import type { Composition, SlideElement, ShowTimeline, TimelineClip, TimelineDoc, TimelineTrack } from '@lumen/schema'
 import { createComposition, createLayer } from '../src/composition'
 import { evaluateTimeline } from '../src/timelinePlayback'
 import {
   activeMediaClips,
-  applyKeyframeSamples,
   applyKeyframeSamplesToComposition,
   clipsStartingBetween,
   mediaClipSourceSeconds,
@@ -126,8 +125,8 @@ describe('timelineActions', () => {
   })
 })
 
-describe('applyKeyframeSamples', () => {
-  const text: SceneLayer = {
+describe('applyKeyframeSamplesToComposition', () => {
+  const text: SlideElement = {
     kind: 'text',
     id: 'title',
     frame: { x: 0.1, y: 0.1, w: 0.5, h: 0.2, rotation: 0 },
@@ -148,7 +147,6 @@ describe('applyKeyframeSamples', () => {
     shadow: null,
     outline: null,
   }
-  const scene = { layers: [text] } as unknown as Scene
   const doc = timeline({
     tracks: [
       track('anim', {
@@ -171,27 +169,13 @@ describe('applyKeyframeSamples', () => {
     ],
   })
 
-  it('overrides animated properties on the target slide', () => {
-    const samples = evaluateTimeline(doc, 5, null).keyframes
-    const result = applyKeyframeSamples(scene, doc, samples, { presentationId: 'p1', slideIndex: 0 })
-    const layer = result.layers[0]!
-    expect(layer.opacity).toBeCloseTo(0.5)
-    expect(layer.frame.x).toBe(0.3)
-    expect(layer.frame.y).toBe(0.1)
-  })
-
-  it('leaves other slides untouched', () => {
-    const samples = evaluateTimeline(doc, 5, null).keyframes
-    expect(applyKeyframeSamples(scene, doc, samples, { presentationId: 'p1', slideIndex: 1 })).toBe(scene)
-  })
-
   function composition(): Composition {
     const base = createComposition({ width: 1920, height: 1080 })
     return {
       ...base,
       sources: [
-        { id: 'slide', name: '', kind: 'slide', revision: 0, elements: [text as SlideElement], safeArea: { top: 0, right: 0, bottom: 0, left: 0 }, size: { width: 1920, height: 1080 } },
-        { id: 'other', name: '', kind: 'slide', revision: 0, elements: [text as SlideElement], safeArea: { top: 0, right: 0, bottom: 0, left: 0 }, size: { width: 1920, height: 1080 } },
+        { id: 'slide', name: '', kind: 'slide', revision: 0, elements: [text], safeArea: { top: 0, right: 0, bottom: 0, left: 0 }, size: { width: 1920, height: 1080 } },
+        { id: 'other', name: '', kind: 'slide', revision: 0, elements: [text], safeArea: { top: 0, right: 0, bottom: 0, left: 0 }, size: { width: 1920, height: 1080 } },
       ],
       layers: [
         createLayer({ id: 'content', name: 'Content', sourceId: 'slide', tags: ['content'] }),

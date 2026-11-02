@@ -2,8 +2,6 @@ import type {
   Composition,
   ControlCommand,
   Layer,
-  Scene,
-  SceneLayer,
   ShowTimeline,
   SlideElement,
   TimelineClip,
@@ -190,7 +188,7 @@ function finite(value: number | string, fallback: number): number {
   return Number.isFinite(number) ? number : fallback
 }
 
-function applySample(layer: SceneLayer, sample: KeyframeSample): SceneLayer {
+function applySample(layer: SlideElement, sample: KeyframeSample): SlideElement {
   const { value } = sample
   switch (sample.property) {
     case 'x':
@@ -242,30 +240,6 @@ function samplesByElement(
     byElement.set(track.elementId, list)
   }
   return byElement
-}
-
-/**
- * Applies sampled keyframe values to a scene. Only layer tracks bound to an
- * element on the target slide apply; layers keep their authored values for
- * every property without keyframes. Returns the same scene when nothing applies.
- */
-export function applyKeyframeSamples(
-  scene: Scene,
-  timeline: ShowTimeline,
-  samples: readonly KeyframeSample[],
-  target: KeyframeTarget,
-): Scene {
-  const byElement = samplesByElement(timeline, samples, target)
-  if (byElement.size === 0) return scene
-
-  let changed = false
-  const layers = scene.layers.map((layer) => {
-    const list = byElement.get(layer.id)
-    if (!list) return layer
-    changed = true
-    return list.reduce(applySample, layer)
-  })
-  return changed ? { ...scene, layers } : scene
 }
 
 function applyLayerSample(layer: Layer, sample: KeyframeSample): Layer {
@@ -322,8 +296,7 @@ export function applyKeyframeSamplesToComposition(
       const list = byElement.get(element.id)
       if (!list) return element
       touched = true
-      // applySample keeps the element kind, so the result is still a slide element.
-      return list.reduce<SceneLayer>(applySample, element) as SlideElement
+      return list.reduce(applySample, element)
     })
     if (!touched) return source
     changed = true

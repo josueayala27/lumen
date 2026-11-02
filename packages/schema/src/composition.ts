@@ -1,12 +1,6 @@
 import { z } from 'zod'
 import { assetRefSchema, colorSchema, idSchema, normalizedSchema, paintStopSchema } from './presentation'
-import {
-  sceneAssetSchema,
-  sceneFontSchema,
-  sceneImageLayerSchema,
-  sceneShapeLayerSchema,
-  sceneTextLayerSchema,
-} from './scene'
+import { compositionAssetSchema, compositionFontSchema, slideElementSchema } from './slide'
 
 /**
  * Render contract v2: a composition of sources, layers, effects and masks.
@@ -18,14 +12,6 @@ export const fitSchema = z.enum(['cover', 'contain', 'stretch'])
 export type Fit = z.infer<typeof fitSchema>
 
 // --- Sources -----------------------------------------------------------------
-
-/** Slide elements reuse the v1 scene text, shape and image layer shapes. */
-export const slideElementSchema = z.discriminatedUnion('kind', [
-  sceneTextLayerSchema,
-  sceneShapeLayerSchema,
-  sceneImageLayerSchema,
-])
-export type SlideElement = z.infer<typeof slideElementSchema>
 
 export const insetsSchema = z.object({
   top: normalizedSchema,
@@ -106,7 +92,7 @@ export const shaderSourceSchema = z.object({
   params: z.record(z.string(), paramValueSchema).default({}),
 })
 
-/** Reserved for Wave E3; the v1 adapter skips them. */
+/** Reserved for Wave E3; the compositor skips them. */
 export const ndiSourceSchema = z.object({
   ...sourceBase,
   kind: z.literal('ndi'),
@@ -310,8 +296,8 @@ export const compositionSchema = z
     /** Bottom to top. */
     layers: z.array(layerSchema),
     master: masterSchema,
-    fonts: z.array(sceneFontSchema).default([]),
-    assets: z.array(sceneAssetSchema).default([]),
+    fonts: z.array(compositionFontSchema).default([]),
+    assets: z.array(compositionAssetSchema).default([]),
   })
   .superRefine((composition, ctx) => {
     const sourceIds = composition.sources.map((source) => source.id)

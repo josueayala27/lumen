@@ -8,7 +8,7 @@ import { Button, EmptyState, SegmentedControl, Switch, type SegmentOption } from
 import type { MediaAsset } from '~/data/media'
 import { useShowDocument } from '~/show/useShowDocument'
 import { dragPoint, meshLines, replacePoint } from './geometry'
-import { schematicLayers, useScreenPreview } from './useScreenPreview'
+import { useScreenPreview } from './useScreenPreview'
 
 const props = defineProps<{ screen: Screen | null; media: MediaAsset[] }>()
 
@@ -25,11 +25,8 @@ const modeOptions: SegmentOption<Mode>[] = [
 ]
 
 const preview = useScreenPreview({ show: showDocument.show, screen: toRef(props, 'screen'), media: toRef(props, 'media') })
-const schematic = computed(() => (preview.scene.value ? schematicLayers(preview.scene.value) : []))
-const background = computed(() => {
-  const layer = preview.scene.value?.background
-  return layer?.kind === 'shape' ? layer.fill : '#000000'
-})
+const schematic = computed(() => preview.schematic.value?.layers ?? [])
+const background = computed(() => preview.schematic.value?.background ?? '#000000')
 
 watch(
   () => preview.frame.value,

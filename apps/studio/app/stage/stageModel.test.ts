@@ -1,11 +1,15 @@
-import type { Timer } from '@lumen/schema'
+import { createScreen } from '@lumen/core'
+import { STAGE_PARTS, type Timer } from '@lumen/schema'
 import { describe, expect, it } from 'vitest'
 import {
   formatClock,
   formatDuration,
   safeAreaPercent,
   stageNextSlide,
+  stageParts,
+  stageScreen,
   stageSlideAt,
+  stageSlideScreen,
   timerValue,
   timerViews,
   type StageSourceItem,
@@ -93,5 +97,35 @@ describe('safe area marker', () => {
     expect(safeAreaPercent(0.125)).toBe('12.5%')
     expect(safeAreaPercent(-1)).toBe('0%')
     expect(safeAreaPercent(1)).toBe('25%')
+  })
+})
+
+describe('stage screens', () => {
+  const audience = createScreen({ id: 'main', name: 'Main' })
+  const stage = createScreen({
+    id: 'stage',
+    name: 'Stage',
+    role: 'stage',
+    layout: { text: { preset: 'lowerThird', scale: 1.5, color: '#ffff00' }, region: { x: 0.5, y: 0, w: 0.5, h: 1 } },
+  })
+
+  it('follows the named screen, else the first enabled stage screen', () => {
+    expect(stageScreen([audience, stage])?.id).toBe('stage')
+    expect(stageScreen([audience, stage], 'main')?.id).toBe('main')
+    expect(stageScreen([audience, { ...stage, enabled: false }])).toBeNull()
+  })
+
+  it('shows the parts from layout.stage, or every part', () => {
+    expect([...stageParts(stage)]).toEqual(['current', 'next', 'clock'])
+    expect([...stageParts(null)]).toEqual([...STAGE_PARTS])
+  })
+
+  it('renders slides through the stage text override over the whole slide', () => {
+    const screen = stageSlideScreen(stage, { width: 1280, height: 720 })!
+    expect(screen.size).toEqual({ width: 1280, height: 720 })
+    expect(screen.layout.text).toEqual({ preset: 'lowerThird', scale: 1.5, color: '#ffff00' })
+    expect(screen.layout.region).toEqual({ x: 0, y: 0, w: 1, h: 1 })
+    expect(screen.layout.layers).toEqual({ mode: 'all' })
+    expect(stageSlideScreen(null, { width: 1, height: 1 })).toBeNull()
   })
 })

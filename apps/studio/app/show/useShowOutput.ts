@@ -1,8 +1,7 @@
-import { compositionToScene, createScreen } from '@lumen/core'
 import type { Composition, OutputMode, Screen, ShowDoc, Transition } from '@lumen/schema'
 import { ref, watch, type Ref } from 'vue'
-import { sceneVideoKey } from '~/live/liveScene'
-import { applyComposition, isTauri, preloadScene } from '~/output/api'
+import { compositionVideoKey } from '~/live/liveContent'
+import { applyComposition, isTauri, preloadComposition } from '~/output/api'
 import { useOutputScreens } from '~/output/useOutputScreens'
 import { outputAction, outputTransition, screenForMode, statusErrors, type OutputMemory } from './showLive'
 import { displayForScreen } from './showModel'
@@ -54,19 +53,16 @@ export function useShowOutput(options: ShowOutputOptions) {
   }
 
   /**
-   * Preloads through the v1 `preload_scene` command: the compositor has no
-   * preload of its own, but the decoder demand is shared by asset id, so a
-   * video preloaded here starts from its first frame when `apply_composition`
-   * puts it on air.
+   * Preloads the next cue's videos with `preload_composition`. Decoder demand
+   * is shared by asset id, so a video preloaded here starts from its first
+   * frame when `apply_composition` puts it on air. Sent only when the set of
+   * videos changes.
    */
   function preload(composition: Composition | null): void {
-    const scene = composition
-      ? compositionToScene(composition, createScreen({ id: 'preload', name: 'Preload', size: composition.canvas }))
-      : null
-    const key = scene ? sceneVideoKey(scene) : ''
+    const key = composition ? compositionVideoKey(composition) : ''
     if (key === preloadKey) return
     preloadKey = key
-    void preloadScene(key ? scene : null).catch(() => undefined)
+    void preloadComposition(key ? composition : null).catch(() => undefined)
   }
 
   async function push(): Promise<void> {

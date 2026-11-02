@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import type { Screen } from '@lumen/schema'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useRoute } from 'vue-router'
+import { loadShow } from '~/data/shows'
 import { LIVE_SESSION_LOCAL_KEY } from '~/live/liveSessionStore'
-import { formatClock, safeAreaPercent, timerViews } from './stageModel'
+import { formatClock, safeAreaPercent, stageParts, stageScreen, timerViews } from './stageModel'
 import { useStageRender } from './useStageRender'
 import { useStageSession } from './useStageSession'
 
@@ -36,8 +38,24 @@ const nextDoc = computed(() => next.value?.item.doc ?? null)
 const nextIndex = computed(() => next.value?.slideIndex ?? 0)
 const nextKey = computed(() => (next.value ? `${next.value.item.id}:${next.value.slideIndex}` : ''))
 
-const { image: currentImage, error: currentRenderError } = useStageRender(currentDoc, currentIndex, currentKey)
-const { image: nextImage } = useStageRender(nextDoc, nextIndex, nextKey)
+/** The show's stage screen (`?screen=<id>`, else the first stage screen); its `layout.stage` picks the panels. */
+const screen = shallowRef<Screen | null>(null)
+const parts = computed(() => stageParts(screen.value))
+const showsNext = computed(() => parts.value.has('next'))
+const showsNotes = computed(() => parts.value.has('notes'))
+const sideColumn = computed(() => showsNext.value || showsNotes.value)
+
+async function loadScreen(): Promise<void> {
+  try {
+    const show = await loadShow()
+    screen.value = stageScreen(show.screens, (route.query.screen as string | undefined) ?? null)
+  } catch {
+    screen.value = null
+  }
+}
+
+const { image: currentImage, error: currentRenderError } = useStageRender(currentDoc, currentIndex, currentKey, screen)
+const { image: nextImage } = useStageRender(nextDoc, nextIndex, nextKey, screen)
 const safeAreaStyle = computed(() => ({ inset: safeAreaPercent(safeArea.value) }))
 const emptyLabel = computed(() => {
   if (loading.value) return 'Loading live session…'
@@ -52,6 +70,7 @@ function onStorage(event: StorageEvent): void {
 }
 
 onMounted(() => {
+  void loadScreen()
   void refresh()
   clockTimer = setInterval(() => {
     now.value = Date.now()
@@ -108,11 +127,12 @@ const modePill = css({
 })
 const body = css({
   display: 'grid',
-  gridTemplateColumns: '[minmax(0,2fr)_minmax(0,1fr)]',
+  gridTemplateColumns: '[minmax(0,1fr)]',
   gap: '4',
   flex: '1',
   minH: '0',
 })
+const bodySplit = css({ gridTemplateColumns: '[minmax(0,2fr)_minmax(0,1fr)]' })
 const column = css({ display: 'flex', flexDirection: 'column', gap: '3', minH: '0' })
 const panel = css({
   display: 'flex',
@@ -200,16 +220,17 @@ const footerSpacer = css({ flex: '1' })
   <div :class="root">
     <header :class="header">
       <span :class="modePill"><span :class="css({ w: '1.5', h: '1.5', borderRadius: 'full', bg: 'live.default' })" />{{ mode.toUpperCase() }}</span>
-      <p :class="[message, !stageMessage ? messageEmpty : '']">
+      <p v-if="parts.has('message')" :class="[message, !stageMessage ? messageEmpty : '']">
         {{ stageMessage || 'No stage message' }}
       </p>
-      <time :class="clockStyle">{{ clock }}</time>
+      <span v-else :class="footerSpacer" />
+      <time v-if="parts.has('clock')" :class="clockStyle">{{ clock }}</time>
     </header>
 
     <p v-if="error" :class="errorText">{{ error }}</p>
 
-    <div :class="body">
-      <div :class="column">
+    <div :class="[body, sideColumn && parts.has('current') ? bodySplit : '']">
+      <div v-if="parts.has('current')" :class="column">
         <section :class="[panel, panelGrow]">
           <p :class="panelLabel">
             <span>Current</span>
@@ -227,8 +248,8 @@ const footerSpacer = css({ flex: '1' })
         </section>
       </div>
 
-      <div :class="column">
-        <section :class="panel">
+      <div v-if="sideColumn" :class="column">
+        <section v-if="showsNext" :class="panel">
           <p :class="panelLabel">
             <span>Next</span>
             <span>{{ next?.item.label ?? 'End' }}</span>
@@ -242,7 +263,7 @@ const footerSpacer = css({ flex: '1' })
           </div>
         </section>
 
-        <section :class="[panel, panelGrow]">
+        <section v-if="showsNotes" :class="[panel, panelGrow]">
           <p :class="panelLabel"><span>Notes</span><Icon name="lucide:notebook-pen" :size="14" /></p>
           <p v-if="current?.slide.notes" :class="notesText">{{ current.slide.notes }}</p>
           <p v-else :class="placeholder">No notes for this slide</p>
@@ -251,7 +272,7 @@ const footerSpacer = css({ flex: '1' })
     </div>
 
     <footer :class="footer">
-      <div :class="timersRow">
+      <div v-if="parts.has('timers')" :class="timersRow">
         <div v-for="timer in timers" :key="timer.id" :class="timerCard">
           <span :class="timerLabel">{{ timer.label }}</span>
           <span :class="[timerValueStyle, timer.running ? timerRunning : '']">{{ timer.value }}</span>

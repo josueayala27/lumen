@@ -1,16 +1,15 @@
-import { buildBlankPresentation, compositionToScene, createComposition, createScreen, defaultTheme } from '@lumen/core'
+import { buildBlankPresentation, createComposition, defaultTheme } from '@lumen/core'
 import type { PresentationDoc } from '@lumen/schema'
 import { describe, expect, it } from 'vitest'
 import {
   assetsForDoc,
-  blackScene,
   collectAssetIds,
+  compositionVideoKey,
   effectiveTransition,
-  sceneForSlide,
-  sceneVideoKey,
+  placeholderDoc,
   withTimelineMedia,
   type MediaAssetLike,
-} from './liveScene'
+} from './liveContent'
 
 function doc(): PresentationDoc {
   return buildBlankPresentation('Live test')
@@ -50,39 +49,16 @@ const media: MediaAssetLike[] = [
   },
 ]
 
-describe('scene building', () => {
-  it('builds an audience scene at the document size', () => {
-    const scene = sceneForSlide({ doc: doc(), slideIndex: 0, label: 'Slide 1' }, null, [], 7)
-    expect(scene.revision).toBe(7)
-    expect(scene.role).toBe('audience')
-    expect(scene.viewport).toEqual({ width: 1920, height: 1080, scale: 1 })
-    expect(scene.layers.some((layer) => layer.kind === 'text')).toBe(true)
+describe('live content', () => {
+  it('builds a one-slide title card for items without a document', () => {
+    const placeholder = placeholderDoc('Media')
+    expect(placeholder.slides).toHaveLength(1)
+    expect(placeholder.settings).toMatchObject({ width: 1920, height: 1080 })
+    const text = placeholder.slides[0]!.elements.find((element) => element.kind === 'text')
+    expect(text?.kind === 'text' && text.runs.map((run) => run.text).join('')).toBe('Media')
   })
 
-  it('uses the theme background for transparent slides', () => {
-    const source: PresentationDoc = {
-      ...doc(),
-      slides: [{ ...slideOf(doc()), background: { kind: 'transparent' } }],
-    }
-    const scene = sceneForSlide(
-      { doc: source, slideIndex: 0, label: 'Slide 1' },
-      defaultTheme(),
-      [],
-      1,
-    )
-    expect(scene.background).toMatchObject({ kind: 'shape', fill: '#101828' })
-  })
-
-  it('falls back to a title card for items without a document', () => {
-    const scene = sceneForSlide({ doc: null, slideIndex: 0, label: 'Media' }, null, [], 5)
-    const text = scene.layers.find((layer) => layer.kind === 'text')
-    expect(text?.kind).toBe('text')
-    if (text?.kind === 'text') {
-      expect(text.runs.map((run) => run.text).join('')).toBe('Media')
-    }
-  })
-
-  it('resolves referenced media into scene assets and skips audio', () => {
+  it('resolves referenced media into composition assets and skips audio', () => {
     const imageDoc: PresentationDoc = {
       ...doc(),
       slides: [
@@ -143,14 +119,6 @@ describe('scene building', () => {
   })
 })
 
-describe('black scene', () => {
-  it('is an opaque black frame with no layers', () => {
-    const black = blackScene(2)
-    expect(black.layers).toEqual([])
-    expect(black.background).toMatchObject({ kind: 'shape', fill: '#000000' })
-  })
-})
-
 describe('transition plans', () => {
   it('uses the slide, theme or default transition in order', () => {
     const theme = defaultTheme()
@@ -195,14 +163,14 @@ describe('timeline media', () => {
   })
 })
 
-describe('scene video key', () => {
+describe('composition video key', () => {
   it('lists video assets with their start so preloads change only when videos do', () => {
-    const base = sceneForSlide({ doc: doc(), slideIndex: 0, label: 'Slide' }, null, [], 1)
-    expect(sceneVideoKey(base)).toBe('')
+    expect(compositionVideoKey(createComposition())).toBe('')
     const video: MediaAssetLike = { id: 'v1', kind: 'video', sha256: 'hv', width: 1920, height: 1080, localPath: '/m/v.mp4', missing: false }
     const composition = withTimelineMedia(createComposition(), [{ clipId: 'c1', asset: video, startMs: 500, loop: true, gain: 0 }])
-    const withVideo = compositionToScene(composition, createScreen())
-    expect(sceneVideoKey(withVideo)).toBe('v1@500')
-    expect(sceneVideoKey({ ...withVideo, revision: 99 })).toBe('v1@500')
+    expect(compositionVideoKey(composition)).toBe('v1@500')
+    expect(compositionVideoKey({ ...composition, revision: 99 })).toBe('v1@500')
+    const disabled = { ...composition, layers: composition.layers.map((layer) => ({ ...layer, enabled: false })) }
+    expect(compositionVideoKey(disabled)).toBe('')
   })
 })

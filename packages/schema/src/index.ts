@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export * from './presentation'
-export * from './scene'
+export * from './slide'
 export * from './composition'
 export * from './screen'
 export * from './show'

@@ -1,19 +1,24 @@
 import { invoke } from '@tauri-apps/api/core'
 import {
   compositionPreviewResultSchema,
-  previewResultSchema,
   type Composition,
   type CompositionPreviewResult,
+  type CompositionTextRun,
   type Frame,
-  type PreviewResult,
-  type Scene,
   type Screen,
 } from '@lumen/schema'
 
-/** Layout entry for one rendered layer, in normalized slide coordinates. */
-export type PreviewBounds = PreviewResult['bounds'][number]
-/** Layout entry for one shaped text line, in normalized slide coordinates. */
-export type PreviewTextRun = PreviewResult['textRuns'][number]
+/** Editor box of one slide element (or video element layer), normalized to the slide. */
+export interface ElementBounds {
+  elementId: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** One shaped text line of a slide element, normalized to the slide. */
+export type ElementTextRun = CompositionTextRun
 
 /** A rendered preview frame plus the layout data returned by the same Rust shaping pass. */
 export interface DecodedFrame<Layout> {
@@ -24,8 +29,6 @@ export interface DecodedFrame<Layout> {
   rgba: Uint8Array
 }
 
-/** A v1 scene preview frame (`preview_render`). */
-export type DecodedPreview = DecodedFrame<PreviewResult>
 /** A composition preview frame (`preview_render_composition`). */
 export type DecodedCompositionPreview = DecodedFrame<CompositionPreviewResult>
 
@@ -59,8 +62,7 @@ function payloadBytes(payload: PreviewPayload): Uint8Array {
 }
 
 /**
- * Decodes the binary IPC layout shared by `preview_render` and
- * `preview_render_composition`: `width: u32 le`, `height: u32 le`,
+ * Decodes the binary IPC layout of `preview_render_composition`: `width: u32 le`, `height: u32 le`,
  * `layoutLength: u32 le`, UTF-8 layout JSON, then raw row-major RGBA.
  */
 function decodeFrame<Layout>(payload: PreviewPayload, parse: (value: unknown) => Layout): DecodedFrame<Layout> {
@@ -96,24 +98,9 @@ function decodeFrame<Layout>(payload: PreviewPayload, parse: (value: unknown) =>
   }
 }
 
-/** Decodes a `preview_render` payload with its v1 `PreviewResult` layout. */
-export function decodePreviewResponse(payload: PreviewPayload): DecodedPreview {
-  return decodeFrame(payload, (value) => previewResultSchema.parse(value))
-}
-
 /** Decodes a `preview_render_composition` payload with its `CompositionPreviewResult` layout. */
 export function decodeCompositionPreviewResponse(payload: PreviewPayload): DecodedCompositionPreview {
   return decodeFrame(payload, (value) => compositionPreviewResultSchema.parse(value))
-}
-
-/** Renders a scene offscreen through the native renderer. */
-export async function previewRender(
-  scene: Scene,
-  width: number,
-  height: number,
-): Promise<DecodedPreview> {
-  const payload = await invoke<PreviewPayload>('preview_render', { scene, width, height })
-  return decodePreviewResponse(payload)
 }
 
 /**
@@ -161,6 +148,25 @@ export async function previewRenderComposition(
   return decodeCompositionPreviewResponse(payload)
 }
 
+/**
+ * Element boxes and text runs of a slide composition (`slideComposition` in
+ * `@lumen/core`): slide elements by `elementId`, and layers drawn without an
+ * element (video elements, a video background) by their layer id, which is
+ * the element id. Full-canvas slide layers (`isContentLayer`) are left out.
+ */
+export function elementLayout(
+  layout: CompositionPreviewResult,
+  isContentLayer: (layerId: string) => boolean = (layerId) => layerId.startsWith('slide-content-'),
+): { bounds: ElementBounds[]; textRuns: ElementTextRun[] } {
+  const bounds: ElementBounds[] = []
+  for (const entry of layout.bounds) {
+    const elementId = entry.elementId ?? (isContentLayer(entry.layerId) ? null : entry.layerId)
+    if (elementId === null) continue
+    bounds.push({ elementId, x: entry.x, y: entry.y, width: entry.width, height: entry.height })
+  }
+  return { bounds, textRuns: layout.textRuns }
+}
+
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value))
 }
@@ -179,9 +185,9 @@ export function normalizePoint(
 }
 
 export function boundsForElement(
-  bounds: PreviewBounds[],
+  bounds: ElementBounds[],
   elementId: string,
-): PreviewBounds | null {
+): ElementBounds | null {
   return bounds.find((entry) => entry.elementId === elementId) ?? null
 }
 
@@ -190,7 +196,7 @@ export function boundsForElement(
  * `orderedElements`; the background is never hit.
  */
 export function hitTestBounds(
-  bounds: PreviewBounds[],
+  bounds: ElementBounds[],
   point: NormalizedPoint,
   order: string[],
 ): string | null {
@@ -237,7 +243,7 @@ function snapAxis(
   return best
 }
 
-function axisTargets(bounds: PreviewBounds[], axis: 'x' | 'y'): number[] {
+function axisTargets(bounds: ElementBounds[], axis: 'x' | 'y'): number[] {
   const targets = [0, 0.5, 1]
   for (const entry of bounds) {
     if (axis === 'x') {
@@ -256,7 +262,7 @@ function axisTargets(bounds: PreviewBounds[], axis: 'x' | 'y'): number[] {
  */
 export function snapFrame(
   frame: Frame,
-  others: PreviewBounds[],
+  others: ElementBounds[],
   threshold = 0.008,
 ): SnapResult {
   const x = snapAxis(

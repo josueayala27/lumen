@@ -2,7 +2,6 @@
 import {
   addLayer,
   applyThemeToDoc,
-  buildScene,
   canRedo,
   canUndo,
   clampSelection,
@@ -22,6 +21,7 @@ import {
   selectedElements,
   setSlide,
   setSlideText,
+  slideComposition,
   slideText,
   songFields,
   splitSongLyrics,
@@ -39,7 +39,6 @@ import type {
   Element,
   Frame,
   PresentationDoc,
-  PreviewResult,
   Slide,
 } from '@lumen/schema'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -61,20 +60,21 @@ import {
   relinkMediaAsset,
   type MediaAsset,
 } from '~/data/media'
-import { assetsForDoc } from '~/live/liveScene'
+import { assetsForDoc } from '~/live/liveContent'
 import { Button, ColorField, EmptyState, IconButton, Input, Kbd, Select, Spinner, Textarea } from '~/ui'
 import {
   boundsForElement,
+  elementLayout,
   hitTestBounds,
   isTauriRuntime,
   moveFrame,
   normalizePoint,
-  previewRender,
+  previewRenderComposition,
   snapFrame,
-  type DecodedPreview,
+  type DecodedCompositionPreview,
+  type ElementBounds,
+  type ElementTextRun,
   type NormalizedPoint,
-  type PreviewBounds,
-  type PreviewTextRun,
   type SnapGuide,
 } from '~/control/render'
 import {
@@ -121,8 +121,8 @@ interface DragState {
 }
 
 const tauriRuntime = isTauriRuntime()
-const sceneCanvas = ref<HTMLCanvasElement | null>(null)
-const previewLayout = shallowRef<PreviewResult | null>(null)
+const slideCanvas = ref<HTMLCanvasElement | null>(null)
+const previewLayout = shallowRef<{ bounds: ElementBounds[]; textRuns: ElementTextRun[] } | null>(null)
 const previewError = ref('')
 const previewRevision = ref(0)
 const dragging = ref<DragState | null>(null)
@@ -208,7 +208,7 @@ const selectedMediaMissing = computed(
 const previewHasVideo = computed(() => {
   if (isSong.value || !nativePreview.value) return false
   const doc = previewDoc.value
-  const index = sceneSlideIndex.value
+  const index = previewSlideIndex.value
   const slide = doc && index >= 0 ? doc.slides[index] : null
   return slideHasVideo(slide ?? null)
 })
@@ -251,21 +251,21 @@ const previewDoc = computed<PresentationDoc | null>(() => {
   const active = dragging.value
   return active ? withFrame(base, active.slideId, active.id, active.frame) : base
 })
-const sceneSlideIndex = computed(() => {
+const previewSlideIndex = computed(() => {
   const state = editor.value
   if (!state) return -1
   const doc = previewDoc.value ?? state.doc
   return doc.slides.findIndex((slide) => slide.id === state.slideId)
 })
-const selectionBoxes = computed<PreviewBounds[]>(() => {
+const selectionBoxes = computed<ElementBounds[]>(() => {
   const layout = previewLayout.value
   const state = editor.value
   if (!layout || !state) return []
   return state.selection
     .map((id) => boundsForElement(layout.bounds, id))
-    .filter((entry): entry is PreviewBounds => entry !== null)
+    .filter((entry): entry is ElementBounds => entry !== null)
 })
-const selectionTextRuns = computed<PreviewTextRun[]>(() => {
+const selectionTextRuns = computed<ElementTextRun[]>(() => {
   const layout = previewLayout.value
   const state = editor.value
   if (!layout || !state || state.selection.length === 0) return []
@@ -300,8 +300,8 @@ function fullSizeForDoc(): { width: number; height: number } {
   return { width: settings?.width ?? 1920, height: settings?.height ?? 1080 }
 }
 
-function drawFrame(result: DecodedPreview): void {
-  const canvas = sceneCanvas.value
+function drawFrame(result: DecodedCompositionPreview): void {
+  const canvas = slideCanvas.value
   if (!canvas) return
   canvas.width = result.width
   canvas.height = result.height
@@ -315,19 +315,19 @@ function drawFrame(result: DecodedPreview): void {
 async function renderAt(width: number, height: number): Promise<void> {
   if (!nativePreview.value) return
   const doc = previewDoc.value
-  const index = sceneSlideIndex.value
+  const index = previewSlideIndex.value
   if (!doc || index < 0) return
   const token = ++renderToken
-  const scene = buildScene(doc, null, index, { width, height }, {
+  // One slide as a composition: slide elements on full-canvas slide sources,
+  // videos on their own layers. Bounds come back normalized to the slide.
+  const composition = slideComposition(doc, index, null, {
     assets: assetsForDoc(doc, media.value),
-    fonts: [],
     revision: previewRevision.value,
-    role: 'preview',
   })
   try {
-    const result = await previewRender(scene, width, height)
+    const result = await previewRenderComposition(composition, null, width, height)
     if (token !== renderToken) return
-    previewLayout.value = result.layout
+    previewLayout.value = elementLayout(result.layout)
     drawFrame(result)
   } catch (reason) {
     if (token !== renderToken) return
@@ -1143,7 +1143,7 @@ const slide = css({
   containerType: '[inline-size]',
   background: '[token(gradients.graphite)]',
 })
-const sceneCanvasStyle = css({ position: 'absolute', inset: '0', display: 'block', w: 'full', h: 'full' })
+const slideCanvasStyle = css({ position: 'absolute', inset: '0', display: 'block', w: 'full', h: 'full' })
 const overlay = css({ position: 'absolute', inset: '0', pointerEvents: 'none' })
 const selectionBoxStyle = css({ position: 'absolute', borderWidth: '1px', borderColor: 'accent.default', boxShadow: '[0_0_0_1px_rgba(0,0,0,0.35)]' })
 const selectionHandle = css({ position: 'absolute', w: '[8px]', h: '[8px]', bg: 'accent.default', borderRadius: '[1px]', transform: '[translate(-50%,-50%)]' })
@@ -1277,8 +1277,8 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
           <template v-else>
             <canvas
               v-if="nativePreview"
-              ref="sceneCanvas"
-              :class="sceneCanvasStyle"
+              ref="slideCanvas"
+              :class="slideCanvasStyle"
               aria-label="Native slide preview"
             />
             <div v-if="nativePreview" :class="overlay" aria-hidden="true">

@@ -1,7 +1,7 @@
 import type { Composition, PresentationDoc, Screen, ShowDoc } from '@lumen/schema'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { getPresentation } from '~/data/presentations'
-import { sceneRevision, type LiveCompositionTransform } from '~/live/liveScene'
+import { outputRevision, type LiveCompositionTransform } from '~/live/liveContent'
 import { saveLiveSession } from '~/live/liveSessionStore'
 import { useLiveSession, type LiveLoadOptions } from '~/live/useLiveSession'
 import {
@@ -125,7 +125,7 @@ function createShowLive() {
     })
   }
 
-  function context(revision = sceneRevision()): ComposeContext {
+  function context(revision = outputRevision()): ComposeContext {
     return { media: session.media.value, presentation, theme: session.theme.value, revision }
   }
 

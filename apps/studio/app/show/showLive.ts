@@ -13,8 +13,8 @@ import {
   isCut,
   placeholderDoc,
   type LiveCompositionTransform,
-  type SceneSlideSource,
-} from '~/live/liveScene'
+  type CueSlide,
+} from '~/live/liveContent'
 import { nextLivePosition, type LiveItem } from '~/live/liveSession'
 import type { ScreenOutputStatus } from '~/output/api'
 
@@ -85,7 +85,7 @@ export function cueSource(cue: RundownCue, theme: ShowResolveContext['theme']): 
 }
 
 /** The slide source the timeline transform addresses for a cue. */
-export function cueSlideSource(cue: RundownCue | null): SceneSlideSource | null {
+export function cueSlideSource(cue: RundownCue | null): CueSlide | null {
   return cue ? { doc: cue.doc, slideIndex: cue.slideIndex, label: cue.label } : null
 }
 
