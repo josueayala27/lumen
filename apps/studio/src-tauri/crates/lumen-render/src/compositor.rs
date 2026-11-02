@@ -1782,7 +1782,7 @@ mod tests {
         let mut screen = Screen::canvas(composition.canvas);
         screen.layout.region = crate::composition::Region { x: 0.5, y: 0.0, w: 0.5, h: 1.0 };
         let right = renderer.render_composition(&composition, Some(&screen), 64, 64).expect("render");
-        assert!(pixel(&right, 2, 32)[0] > 150, "right half starts mid-ramp");
+        assert!((115..150).contains(&pixel(&right, 2, 32)[0]), "right half starts mid-ramp");
         screen.mapping.corner_pin = Some([
             crate::composition::Point { x: 0.25, y: 0.25 },
             crate::composition::Point { x: 0.75, y: 0.25 },
