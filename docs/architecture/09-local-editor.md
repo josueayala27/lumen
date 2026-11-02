@@ -34,6 +34,8 @@ Each slide has a solid `#101828` background and one centered text element using 
 
 ## Routes
 
+These routes change with the UI rewrite; see `11-ui.md` § Route changes.
+
 - `/` and `/songs` — library list from SQLite; filter by kind.
 - `/editor/:id` — song fields, lyric textarea, generated slide rail, preview, save, present.
 - `/live?presentation=<id>` — loads the document, renders slides from `slideText`, and drives next/prev/take, modes, keyboard, MIDI and the LTC timeline.

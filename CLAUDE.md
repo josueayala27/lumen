@@ -3,7 +3,9 @@
 ## Read first
 
 - `docs/architecture/README.md` and the document for the area you touch.
-- `packages/schema/src/scene.ts` before any renderer change.
+- `docs/architecture/02-render-contract.md` and `packages/schema/src/scene.ts` before any renderer change.
+- `docs/architecture/10-screens-and-mapping.md` before any screen, layout or mapping change.
+- `docs/architecture/11-ui.md` before any workspace, route or navigation change.
 - `packages/core/src/live.ts` before any live-control change.
 - `docs/architecture/08-show-control.md` before any MIDI or timecode change.
 - `docs/architecture/09-local-editor.md` before any library, song or editor change.
@@ -36,7 +38,7 @@ cd apps/studio/src-tauri && cargo check && cargo test -p lumen-output -p lumen-r
 
 Lumen is a live visuals system: media, lyrics and slides on many screens, per-screen layouts and mapping, live visual layers and effects, sync with lighting, timecode and music (ProPresenter + Resolume + Millumin + QLab). Not church-only; market integrations are packs. See `docs/architecture/07-roadmap.md`.
 
-Presenter core, songs and timeline (T1–T6) are code complete; desktop acceptance is open. The next milestone is **A1 Video engine** (hardware decode, HAP, many layers), then **A2 Compositor and scene contract v2**. Do not add church-specific wording or defaults to the core.
+Presenter core, songs and timeline (T1–T6) are code complete; desktop acceptance is open. **A1 Video engine** is done (open: native VideoToolbox/Media Foundation decode, NotchLC, real-footage budget). Next: **A2 Compositor and render contract v2** (`Composition` + `Screen[]`), then **A3 Studio UI rewrite** (Show, Timeline, Compose, Screens, Content). Do not add church-specific wording or defaults to the core.
 
 ## graphify
 

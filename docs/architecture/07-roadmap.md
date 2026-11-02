@@ -42,7 +42,7 @@ The audience path stays native (invariant 1) and runs with no network (invariant
 
 Everything later depends on this wave.
 
-Status: done — Hap decode (all variants except HDR) with direct BC upload and CPU fallback, frame-accurate playback, 16 Hap decoders, shared frames across outputs, `-hwaccel auto` for ffmpeg, per-video transport (play/pause/seek/rate) driven by the timeline, next-cue preload, per-caller decoder demand, and the 8-layer budget on synthetic Hap Q (4.7 ms GPU per frame). Open: native VideoToolbox/Media Foundation decode with zero-copy textures (H.264/HEVC/ProRes), NotchLC, and the budget check on real footage and disks.
+Status: A1 done, A2 next. A1 delivered Hap decode (all variants except HDR) with direct BC upload and CPU fallback, frame-accurate playback, 16 Hap decoders, shared frames across outputs, `-hwaccel auto` for ffmpeg, per-video transport (play/pause/seek/rate) driven by the timeline, next-cue preload, per-caller decoder demand, and the 8-layer budget on synthetic Hap Q (4.7 ms GPU per frame). Open: native VideoToolbox/Media Foundation decode with zero-copy textures (H.264/HEVC/ProRes), NotchLC, and the budget check on real footage and disks.
 
 ### A1 Video engine
 
@@ -55,12 +55,25 @@ Exit: eight HAP layers loop at 1080p60 without dropped frames; seeking to a fram
 
 ### A2 Compositor and scene contract v2
 
+Contract: `02-render-contract.md`. Screens: `10-screens-and-mapping.md`. UI: `11-ui.md`.
+
 - Scene contract v2 (`02-render-contract.md`): layers reference sources; blend modes (add, screen, multiply, overlay, difference, alpha); per-layer masks.
 - Effects chain per layer and per composition as WGSL shaders with typed parameters: colour, blur, keying, transform, kaleidoscope, feedback.
 - Generators: shader sources with parameters, solid, gradient, noise.
 - Text and lyrics render as a source like any other.
 
 Exit: lyrics over a keyed video over a generator, with three effects, render at 60 fps; preview and output match.
+
+### A3 Studio UI rewrite
+
+The UI moves from the service workflow to the core model (`11-ui.md`): Show, Timeline, Compose, Screens, and a Content library.
+
+- Shell: sidebar groups Perform, Build and Library; routes and redirects.
+- Screens workspace on the v2 `Screen` schema; monitor picker moves out of Settings.
+- Compose workspace on the v2 `Composition` schema.
+- Show workspace merges Live and the first Show page; clip grid on v2 layers.
+
+Exit: one show drives two screens with different layouts from the Show workspace; Compose edits a layer's blend and effects live.
 
 ## Wave B — Screens, layouts and mapping
 
@@ -181,8 +194,9 @@ Exit: signed macOS and Windows builds run a full show offline; cloud sync and pa
 
 1. A1 and A2 before C: live visuals need the video engine and compositor.
 2. A2 before B2: layouts filter layers of the v2 scene.
-3. D1 before D2, E1 and E3: every control path goes through the command bus.
-4. D3 before E1 and F: one clock for cues, timeline and audio.
-5. Mapping and layouts stay per screen, after composition; content never knows which screen shows it.
-6. Cloud stays out of the live path.
-7. Every milestone needs an offline test, a restart test and a frame-rate budget check.
+3. A2 schemas before A3 workspaces: the UI edits v2 documents, rendered through the v1 adapter until the compositor lands.
+4. D1 before D2, E1 and E3: every control path goes through the command bus.
+5. D3 before E1 and F: one clock for cues, timeline and audio.
+6. Mapping and layouts stay per screen, after composition; content never knows which screen shows it.
+7. Cloud stays out of the live path.
+8. Every milestone needs an offline test, a restart test and a frame-rate budget check.

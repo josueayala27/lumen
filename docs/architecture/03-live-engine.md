@@ -34,3 +34,12 @@ Keyboard: Space/→ next, ← previous, Enter take, B black, C clear, L logo, F 
 ## Realtime
 
 The Durable Object relays `{hello, snapshot, command, ack}` with a sequence number and last-snapshot replay. Commands from remote controllers reach the desktop, which applies the reducer and broadcasts a new snapshot. If the DO or network is unavailable, live output continues unchanged.
+
+## Place in the v2 model
+
+The live state drives content, not the whole output. With render contract v2 (`02-render-contract.md`):
+
+- The current slide becomes the `slide` source on the layer tagged `content` or `lyrics`. Other layers keep playing.
+- `playlistId` points to a rundown (`11-ui.md`). The word "playlist" stays in the schema until the rename migration.
+- Modes apply per screen after the master stage. `black` and `freeze` affect every screen unless a screen opts out; `clear` hides only content-tagged layers.
+- The Show workspace replaces the `/live` page. Keyboard shortcuts stay the same.
