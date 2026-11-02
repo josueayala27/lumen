@@ -21,14 +21,14 @@ mod video;
 pub use color::ClearColor;
 pub use composition::{Composition, Screen};
 pub use compositor::{
-    CompositionBounds, CompositionPreviewResult, CompositionTextRun, CompositionTransition, Compositor,
-    ScreenOutput,
+    CompositionBounds, CompositionPreviewResult, CompositionTextRun, CompositionTransition,
+    Compositor, ScreenOutput,
 };
 pub use geometry::{easing_progress, fit_uv, rotated_bounds, FrameRect, UvRect};
 pub use renderer::{
-    create_window_surface, scene_clear_color, spike_scene, surface_action, CompositionFrame, FrameTiming,
-    PendingSurface, PreviewFrame, PreviewRenderer, RenderStats, SurfaceAction, SurfaceFactory,
-    SurfaceRenderer,
+    create_window_surface, scene_clear_color, spike_scene, surface_action, CompositionFrame,
+    FrameTiming, PendingSurface, PreviewFrame, PreviewRenderer, RenderStats, SurfaceAction,
+    SurfaceFactory, SurfaceRenderer,
 };
 pub use video::{VideoFrame, VideoPixels};
 

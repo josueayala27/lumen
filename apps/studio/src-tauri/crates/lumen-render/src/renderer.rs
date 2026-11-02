@@ -20,8 +20,8 @@ use crate::geometry::{easing_progress, fit_uv, rotate_point, rotate_vector, Fram
 use crate::text::{AtlasData, DecorationDraw, GlyphDraw, TextEngine};
 use crate::video::{bc_len, VideoFrame, VideoPixels};
 use crate::{
-    AssetKind, AssetState, Layer, PreviewResult, RenderError, Scene, SceneAsset, SceneFont, SceneRole,
-    TransitionKind, TransitionPlan, Viewport,
+    AssetKind, AssetState, Layer, PreviewResult, RenderError, Scene, SceneAsset, SceneFont,
+    SceneRole, TransitionKind, TransitionPlan, Viewport,
 };
 
 const CLEAR_PASS_LABEL: &str = "lumen-clear-pass";
@@ -691,7 +691,11 @@ impl SceneRenderer {
     }
 
     /// A renderer for composition slide sources: transparent clear and linear-light colours.
-    pub(crate) fn for_slides(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+    pub(crate) fn for_slides(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        format: wgpu::TextureFormat,
+    ) -> Self {
         Self {
             clear: ClearColor::TRANSPARENT,
             linear_colors: true,
@@ -728,7 +732,11 @@ impl SceneRenderer {
 
     /// Uploads one decoded frame. Block-compressed frames go to the GPU as-is when
     /// the device supports BC textures and are decoded on the CPU otherwise.
-    pub(crate) fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
+    pub(crate) fn update_video(
+        &mut self,
+        asset_id: &str,
+        frame: &VideoFrame,
+    ) -> Result<(), RenderError> {
         let (width, height) = (frame.width, frame.height);
         if width == 0 || height == 0 {
             return Err(RenderError::Backend(format!(
@@ -1803,7 +1811,8 @@ impl SurfaceRenderer {
 
     /// Uploads a decoded frame, block compressed or RGBA, to whichever renderer is showing.
     pub fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
-        self.latest_frames.insert(asset_id.to_string(), frame.clone());
+        self.latest_frames
+            .insert(asset_id.to_string(), frame.clone());
         match (&self.composition, self.compositor.as_mut()) {
             (Some(_), Some(compositor)) => compositor.update_video(asset_id, frame),
             _ => self.scene_renderer.update_video(asset_id, frame),
@@ -2139,7 +2148,13 @@ impl PreviewRenderer {
             .as_ref()
             .is_none_or(|(w, h, _, _)| *w != width || *h != height);
         if needs_surface {
-            let texture = preview_target(&self.device, "lumen-composition-preview", width, height, format);
+            let texture = preview_target(
+                &self.device,
+                "lumen-composition-preview",
+                width,
+                height,
+                format,
+            );
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             self.composition_surface = Some((width, height, texture, view));
         }
@@ -2160,9 +2175,15 @@ impl PreviewRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("lumen-composition-preview"),
             });
-        let layout = self
-            .compositor()?
-            .render(&mut encoder, composition, screen, &view, format, width, height)?;
+        let layout = self.compositor()?.render(
+            &mut encoder,
+            composition,
+            screen,
+            &view,
+            format,
+            width,
+            height,
+        )?;
         let rgba = read_back(&self.device, &self.queue, encoder, &texture, width, height)?;
         Ok(CompositionFrame {
             width,
@@ -2185,7 +2206,8 @@ impl PreviewRenderer {
 
     /// Uploads a decoded frame, block compressed or RGBA, for scenes and compositions.
     pub fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
-        self.latest_frames.insert(asset_id.to_string(), frame.clone());
+        self.latest_frames
+            .insert(asset_id.to_string(), frame.clone());
         if let Some(compositor) = self.compositor.as_mut() {
             compositor.update_video(asset_id, frame)?;
         }

@@ -67,7 +67,8 @@ pub fn monitors_changed(previous: &[DisplayInfo], current: &[DisplayInfo]) -> bo
 /// same name. Positions are physical pixels, as `list_displays` reports them.
 pub fn match_display(displays: &[DisplayInfo], target: &ScreenRef) -> Option<usize> {
     let same_position = |display: &&DisplayInfo| {
-        (f64::from(display.x) - target.x).abs() < 0.5 && (f64::from(display.y) - target.y).abs() < 0.5
+        (f64::from(display.x) - target.x).abs() < 0.5
+            && (f64::from(display.y) - target.y).abs() < 0.5
     };
     displays
         .iter()
@@ -188,7 +189,10 @@ enum OutputCommand {
         transition: CompositionTransition,
     },
     Transition(Box<TransitionPlan>),
-    VideoFrame { asset_id: String, frame: VideoFrame },
+    VideoFrame {
+        asset_id: String,
+        frame: VideoFrame,
+    },
     Resize(u32, u32),
     Stop,
 }
@@ -225,7 +229,12 @@ impl RenderThread {
         let _ = self.commands.send(OutputCommand::Scene(Box::new(scene)));
     }
 
-    fn apply_composition(&self, composition: Composition, screen: Screen, transition: CompositionTransition) {
+    fn apply_composition(
+        &self,
+        composition: Composition,
+        screen: Screen,
+        transition: CompositionTransition,
+    ) {
         let _ = self.commands.send(OutputCommand::Composition {
             composition: Box::new(composition),
             screen: Box::new(screen),
@@ -322,7 +331,9 @@ fn spawn_renderer(
                         screen,
                         transition,
                     }) => {
-                        if let Err(error) = renderer.set_composition(&composition, &screen, transition) {
+                        if let Err(error) =
+                            renderer.set_composition(&composition, &screen, transition)
+                        {
                             eprintln!("lumen-output: composition failed: {error}");
                         }
                         continue;
@@ -588,7 +599,9 @@ impl OutputManager {
         let output = outputs
             .get(label)
             .ok_or_else(|| format!("no output named {label}"))?;
-        output.renderer.apply_composition(composition, screen, transition);
+        output
+            .renderer
+            .apply_composition(composition, screen, transition);
         Ok(())
     }
 
@@ -615,7 +628,10 @@ impl OutputManager {
                     return status(None, Some("screen has no display target".into()));
                 };
                 let Some(index) = match_display(&displays, ref_) else {
-                    return status(None, Some(format!("display {} is not connected", ref_.name)));
+                    return status(
+                        None,
+                        Some(format!("display {} is not connected", ref_.name)),
+                    );
                 };
                 let label = format!("audience-{index}");
                 let open = self.outputs().contains_key(&label);
@@ -627,7 +643,12 @@ impl OutputManager {
                         return status(None, Some(error));
                     }
                 }
-                match self.apply_composition_to(&label, composition.clone(), screen.clone(), transition.clone()) {
+                match self.apply_composition_to(
+                    &label,
+                    composition.clone(),
+                    screen.clone(),
+                    transition.clone(),
+                ) {
                     Ok(()) => status(Some(label), None),
                     Err(error) => status(Some(label), Some(error)),
                 }
@@ -828,11 +849,17 @@ mod tests {
             width: 1920.0,
             height: 1080.0,
         };
-        assert_eq!(match_display(&displays, &target("Projector", 3840.0)), Some(2));
+        assert_eq!(
+            match_display(&displays, &target("Projector", 3840.0)),
+            Some(2)
+        );
         // Renamed monitor at the same place.
         assert_eq!(match_display(&displays, &target("Other", 1920.0)), Some(1));
         // Same monitor moved: first one with that name.
-        assert_eq!(match_display(&displays, &target("Built-in", 500.0)), Some(0));
+        assert_eq!(
+            match_display(&displays, &target("Built-in", 500.0)),
+            Some(0)
+        );
         assert_eq!(match_display(&displays, &target("Gone", 999.0)), None);
     }
 

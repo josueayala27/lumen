@@ -116,9 +116,20 @@ pub fn canvas_to_layer(transform: &LayerTransform, aspect: f64, x: f64, y: f64) 
     let (sin, cos) = (-transform.rotation).to_radians().sin_cos();
     let rx = (dx * cos - dy * sin) / aspect;
     let ry = dx * sin + dy * cos;
-    let w = if transform.w.abs() < 1e-9 { 1e-9 } else { transform.w };
-    let h = if transform.h.abs() < 1e-9 { 1e-9 } else { transform.h };
-    ((pivot_x + rx - transform.x) / w, (pivot_y + ry - transform.y) / h)
+    let w = if transform.w.abs() < 1e-9 {
+        1e-9
+    } else {
+        transform.w
+    };
+    let h = if transform.h.abs() < 1e-9 {
+        1e-9
+    } else {
+        transform.h
+    };
+    (
+        (pivot_x + rx - transform.x) / w,
+        (pivot_y + ry - transform.y) / h,
+    )
 }
 
 /// Output-space frames for re-laid-out text, per preset. Same values as the TS adapter.
@@ -140,8 +151,16 @@ pub fn slide_elements_for_layout(
     let font_scale = (transform.h * canvas.height / slide_size.height.max(1.0)).max(1e-6);
     let to_slide = |(x, y, w, h): (f64, f64, f64, f64)| {
         let (cx, cy) = region_uv(region, x, y);
-        let box_w = if transform.w.abs() < 1e-9 { 1e-9 } else { transform.w };
-        let box_h = if transform.h.abs() < 1e-9 { 1e-9 } else { transform.h };
+        let box_w = if transform.w.abs() < 1e-9 {
+            1e-9
+        } else {
+            transform.w
+        };
+        let box_h = if transform.h.abs() < 1e-9 {
+            1e-9
+        } else {
+            transform.h
+        };
         crate::Frame {
             x: (cx - transform.x) / box_w,
             y: (cy - transform.y) / box_h,
@@ -295,7 +314,12 @@ pub fn mesh_point(mesh: &Mesh, u: f64, v: f64) -> Option<Point> {
     let row = (fy.floor() as usize).min(rows - 2);
     let at = |c: usize, r: usize| mesh.points[r * cols + c];
     Some(quad_point(
-        &[at(col, row), at(col + 1, row), at(col + 1, row + 1), at(col, row + 1)],
+        &[
+            at(col, row),
+            at(col + 1, row),
+            at(col + 1, row + 1),
+            at(col, row + 1),
+        ],
         fx - col as f64,
         fy - row as f64,
     ))
@@ -303,8 +327,17 @@ pub fn mesh_point(mesh: &Mesh, u: f64, v: f64) -> Option<Point> {
 
 /// Where content point `(u, v)` lands in normalized output space. The mesh refines the corner
 /// pin (its points already include the pin), so a valid mesh wins; otherwise the corner pin.
-pub fn warp_point(mapping: &Mapping, homography_matrix: Option<&[f64; 9]>, u: f64, v: f64) -> Point {
-    if let Some(point) = mapping.mesh.as_ref().and_then(|mesh| mesh_point(mesh, u, v)) {
+pub fn warp_point(
+    mapping: &Mapping,
+    homography_matrix: Option<&[f64; 9]>,
+    u: f64,
+    v: f64,
+) -> Point {
+    if let Some(point) = mapping
+        .mesh
+        .as_ref()
+        .and_then(|mesh| mesh_point(mesh, u, v))
+    {
         return point;
     }
     if let Some(matrix) = homography_matrix {
@@ -376,7 +409,10 @@ pub fn edge_blend_factor(blend: &EdgeBlend, u: f64, v: f64) -> f64 {
             edge_blend_ramp(distance / side.width, side.gamma, side.power)
         }
     };
-    side(u, &blend.left) * side(1.0 - u, &blend.right) * side(v, &blend.top) * side(1.0 - v, &blend.bottom)
+    side(u, &blend.left)
+        * side(1.0 - u, &blend.right)
+        * side(v, &blend.top)
+        * side(1.0 - v, &blend.bottom)
 }
 
 #[cfg(test)]
@@ -471,7 +507,10 @@ mod tests {
         assert_eq!(canvas_render_size(canvas, half, 1920, 1080), (3840, 1080));
         assert_eq!(canvas_render_size(canvas, half, 960, 540), (1920, 540));
         // A full region keeps every axis at or above the output size.
-        assert_eq!(canvas_render_size(canvas, Region::FULL, 1920, 1080), (3840, 1080));
+        assert_eq!(
+            canvas_render_size(canvas, Region::FULL, 1920, 1080),
+            (3840, 1080)
+        );
         let tiny = Region {
             x: 0.0,
             y: 0.0,
@@ -493,7 +532,10 @@ mod tests {
         };
         assert_eq!(region_uv(region, 0.0, 0.0), (0.25, 0.5));
         assert_eq!(region_uv(region, 1.0, 1.0), (0.75, 1.0));
-        assert_eq!(rect_in_region(region, 0.25, 0.5, 0.5, 0.25), (0.0, 0.0, 1.0, 0.5));
+        assert_eq!(
+            rect_in_region(region, 0.25, 0.5, 0.5, 0.25),
+            (0.0, 0.0, 1.0, 0.5)
+        );
     }
 
     #[test]
@@ -544,7 +586,8 @@ mod tests {
             preset: TextPreset::Hidden,
             ..LayoutText::default()
         };
-        let out = slide_elements_for_layout(&elements, &full, canvas, canvas, &hidden, Region::FULL);
+        let out =
+            slide_elements_for_layout(&elements, &full, canvas, canvas, &hidden, Region::FULL);
         assert_eq!(out, vec![shape.clone()]);
 
         let scaled = LayoutText {
@@ -552,7 +595,8 @@ mod tests {
             scale: 1.5,
             color: Some("#00ff00".into()),
         };
-        let out = slide_elements_for_layout(&elements, &full, canvas, canvas, &scaled, Region::FULL);
+        let out =
+            slide_elements_for_layout(&elements, &full, canvas, canvas, &scaled, Region::FULL);
         match &out[1] {
             SlideElement::Text {
                 font_size,
@@ -603,7 +647,14 @@ mod tests {
             preset: TextPreset::Strip,
             ..LayoutText::default()
         };
-        let out = slide_elements_for_layout(&[text_element(20.0)], &full, canvas, canvas, &strip, Region::FULL);
+        let out = slide_elements_for_layout(
+            &[text_element(20.0)],
+            &full,
+            canvas,
+            canvas,
+            &strip,
+            Region::FULL,
+        );
         match &out[0] {
             SlideElement::Text {
                 font_size,
@@ -630,9 +681,15 @@ mod tests {
         ];
         for quad in quads {
             let matrix = homography(&quad).expect("homography");
-            for (index, (u, v)) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)].iter().enumerate() {
+            for (index, (u, v)) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+                .iter()
+                .enumerate()
+            {
                 let (x, y) = apply_homography(&matrix, *u, *v);
-                assert!(close(x, quad[index].x) && close(y, quad[index].y), "corner {index}: {x},{y}");
+                assert!(
+                    close(x, quad[index].x) && close(y, quad[index].y),
+                    "corner {index}: {x},{y}"
+                );
             }
         }
         // Perspective: the centre of a trapezoid is not its bilinear centre.

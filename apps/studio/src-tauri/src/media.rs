@@ -247,7 +247,10 @@ pub fn scene_video_sources(scene: &Scene) -> Vec<VideoSource> {
 /// Video assets that a composition plays: video sources of enabled layers that at least one
 /// enabled screen draws (every enabled layer when `screens` is empty), in layer order and
 /// de-duplicated by asset. `inMs` becomes the start position.
-pub fn composition_video_sources(composition: &Composition, screens: &[Screen]) -> Vec<VideoSource> {
+pub fn composition_video_sources(
+    composition: &Composition,
+    screens: &[Screen],
+) -> Vec<VideoSource> {
     let drawn = |layer: &lumen_render::composition::CompositionLayer| {
         screens.is_empty()
             || screens
@@ -256,13 +259,20 @@ pub fn composition_video_sources(composition: &Composition, screens: &[Screen]) 
     };
     let mut seen = HashSet::new();
     let mut sources = Vec::new();
-    for layer in composition.layers.iter().filter(|layer| layer.enabled && drawn(layer)) {
+    for layer in composition
+        .layers
+        .iter()
+        .filter(|layer| layer.enabled && drawn(layer))
+    {
         let Some(SourceV2::Video {
             asset,
             loop_,
             in_ms,
             ..
-        }) = layer.source_id.as_deref().and_then(|id| composition.source(id))
+        }) = layer
+            .source_id
+            .as_deref()
+            .and_then(|id| composition.source(id))
         else {
             continue;
         };
@@ -289,7 +299,11 @@ pub fn composition_video_sources(composition: &Composition, screens: &[Screen]) 
             local_path,
             width,
             height,
-            start_ms: if in_ms.is_finite() { in_ms.max(0.0) as u64 } else { 0 },
+            start_ms: if in_ms.is_finite() {
+                in_ms.max(0.0) as u64
+            } else {
+                0
+            },
             loop_playback: *loop_,
         });
     }
@@ -422,7 +436,13 @@ impl VideoPlaybackManager {
 
     /// Composition version of [`Self::sync_owner`]: video sources decode like scene video
     /// layers, under the same per-caller demand.
-    pub fn sync_composition(&self, app: &AppHandle, owner: &str, composition: &Composition, screens: &[Screen]) {
+    pub fn sync_composition(
+        &self,
+        app: &AppHandle,
+        owner: &str,
+        composition: &Composition,
+        screens: &[Screen],
+    ) {
         self.sync_sources(app, owner, composition_video_sources(composition, screens));
     }
 

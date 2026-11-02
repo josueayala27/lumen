@@ -22,8 +22,8 @@ use crate::composition::{
 use crate::effects::{effect_params, generator_params, linear_color, Generator, ParamBlock};
 use crate::geometry::{easing_progress, fit_uv, UvRect};
 use crate::mapping::{
-    canvas_render_size, CanvasKey, layer_matches, rect_in_region, resolve_text, slide_elements_for_layout,
-    warp_grid, WarpVertex,
+    canvas_render_size, layer_matches, rect_in_region, resolve_text, slide_elements_for_layout,
+    warp_grid, CanvasKey, WarpVertex,
 };
 use crate::renderer::{asset_key, SceneRenderer, MODE_OPAQUE, MODE_YCOCG};
 use crate::video::VideoFrame;
@@ -128,14 +128,19 @@ pub struct ScreenOutput<'a> {
 }
 
 /// Maps canvas-normalized editor layout into a screen region.
-fn in_region(canvas: &CompositionPreviewResult, region: crate::composition::Region, revision: u64) -> CompositionPreviewResult {
+fn in_region(
+    canvas: &CompositionPreviewResult,
+    region: crate::composition::Region,
+    revision: u64,
+) -> CompositionPreviewResult {
     CompositionPreviewResult {
         revision,
         bounds: canvas
             .bounds
             .iter()
             .map(|bounds| {
-                let (x, y, width, height) = rect_in_region(region, bounds.x, bounds.y, bounds.width, bounds.height);
+                let (x, y, width, height) =
+                    rect_in_region(region, bounds.x, bounds.y, bounds.width, bounds.height);
                 CompositionBounds {
                     x,
                     y,
@@ -149,7 +154,8 @@ fn in_region(canvas: &CompositionPreviewResult, region: crate::composition::Regi
             .text_runs
             .iter()
             .map(|run| {
-                let (x, y, width, height) = rect_in_region(region, run.x, run.y, run.width, run.height);
+                let (x, y, width, height) =
+                    rect_in_region(region, run.x, run.y, run.width, run.height);
                 CompositionTextRun {
                     x,
                     y,
@@ -442,7 +448,11 @@ impl Compositor {
         self.pool.push(target);
     }
 
-    fn pipeline(&mut self, entry: &'static str, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+    fn pipeline(
+        &mut self,
+        entry: &'static str,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
         if let Some(pipeline) = self.pipelines.get(&(entry, format)) {
             return pipeline.clone();
         }
@@ -527,7 +537,11 @@ impl Compositor {
         pipeline
     }
 
-    fn bind_group(&self, textures: [Option<&wgpu::TextureView>; 5], uniform: &[u8]) -> wgpu::BindGroup {
+    fn bind_group(
+        &self,
+        textures: [Option<&wgpu::TextureView>; 5],
+        uniform: &[u8],
+    ) -> wgpu::BindGroup {
         let buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -646,7 +660,15 @@ impl Compositor {
         let mut groups: Vec<(CanvasKey, Vec<usize>)> = Vec::new();
         for (index, output) in outputs.iter().enumerate() {
             if !needs_canvas(output) {
-                self.draw_screen(encoder, output.screen, None, output.view, output.format, output.width, output.height);
+                self.draw_screen(
+                    encoder,
+                    output.screen,
+                    None,
+                    output.view,
+                    output.format,
+                    output.width,
+                    output.height,
+                );
                 continue;
             }
             let key = CanvasKey::for_layout(&output.screen.layout);
@@ -658,7 +680,12 @@ impl Compositor {
         for (_, members) in groups {
             let (canvas_w, canvas_h) = members.iter().fold((1, 1), |(w, h), index| {
                 let output = &outputs[*index];
-                let (cw, ch) = canvas_render_size(composition.canvas, output.screen.layout.region, output.width, output.height);
+                let (cw, ch) = canvas_render_size(
+                    composition.canvas,
+                    output.screen.layout.region,
+                    output.width,
+                    output.height,
+                );
                 (w.max(cw), h.max(ch))
             });
             let ctx = FrameContext {
@@ -672,8 +699,20 @@ impl Compositor {
             let canvas = self.render_canvas(encoder, &ctx, &mut canvas_preview)?;
             for index in members {
                 let output = &outputs[index];
-                self.draw_screen(encoder, output.screen, Some(&canvas), output.view, output.format, output.width, output.height);
-                results[index] = in_region(&canvas_preview, output.screen.layout.region, composition.revision);
+                self.draw_screen(
+                    encoder,
+                    output.screen,
+                    Some(&canvas),
+                    output.view,
+                    output.format,
+                    output.width,
+                    output.height,
+                );
+                results[index] = in_region(
+                    &canvas_preview,
+                    output.screen.layout.region,
+                    composition.revision,
+                );
             }
             self.give(canvas);
         }
@@ -722,17 +761,35 @@ impl Compositor {
             }
             let (active, previous, fade) = self.layer_fade(layer, ctx.now);
             let source_a = match &active {
-                Some(id) => self.source_view(encoder, ctx, id, layer, &mut frame_sources, &mut borrowed, preview)?,
+                Some(id) => self.source_view(
+                    encoder,
+                    ctx,
+                    id,
+                    layer,
+                    &mut frame_sources,
+                    &mut borrowed,
+                    preview,
+                )?,
                 None => None,
             };
             let source_b = match (&previous, fade < 1.0) {
-                (Some(id), true) => self.source_view(encoder, ctx, id, layer, &mut frame_sources, &mut borrowed, preview)?,
+                (Some(id), true) => self.source_view(
+                    encoder,
+                    ctx,
+                    id,
+                    layer,
+                    &mut frame_sources,
+                    &mut borrowed,
+                    preview,
+                )?,
                 _ => None,
             };
             if source_a.is_none() && source_b.is_none() {
                 continue;
             }
-            preview.bounds.push(layer_bounds(layer, active.as_deref(), ctx));
+            preview
+                .bounds
+                .push(layer_bounds(layer, active.as_deref(), ctx));
 
             let effects = self.known_effects(&layer.id, &layer.effects);
             let (box_w, box_h) = (
@@ -740,7 +797,11 @@ impl Compositor {
                 (layer.transform.h.abs() * f64::from(canvas_h)) as f32,
             );
             let fit_rect = |view: &SourceView| {
-                let fit = if view.stretch { LayerFit::Stretch } else { layer.fit };
+                let fit = if view.stretch {
+                    LayerFit::Stretch
+                } else {
+                    layer.fit
+                };
                 fit_uv(fit, box_w, box_h, view.width as f32, view.height as f32)
             };
             let mut uniform = [[0.0f32; 4]; 32];
@@ -763,8 +824,17 @@ impl Compositor {
                 0.0
             };
             // A layer fading out to nothing scales its opacity instead.
-            let fade_out = if source_a.is_none() { 1.0 - fade as f32 } else { 1.0 };
-            uniform[0] = [blend_code(layer.blend), layer.opacity.clamp(0.0, 1.0) as f32 * fade_out, mix_b, 0.0];
+            let fade_out = if source_a.is_none() {
+                1.0 - fade as f32
+            } else {
+                1.0
+            };
+            uniform[0] = [
+                blend_code(layer.blend),
+                layer.opacity.clamp(0.0, 1.0) as f32 * fade_out,
+                mix_b,
+                0.0,
+            ];
             let transform = &layer.transform;
             uniform[1] = [
                 transform.x as f32,
@@ -780,7 +850,8 @@ impl Compositor {
             ];
             uniform[3] = uv_array(uv_a.unwrap_or(full));
             uniform[4] = uv_array(uv_b.unwrap_or(full));
-            let discard = |uv: Option<UvRect>| f32::from(u8::from(uv.is_some_and(|uv| uv.discard_outside)));
+            let discard =
+                |uv: Option<UvRect>| f32::from(u8::from(uv.is_some_and(|uv| uv.discard_outside)));
             uniform[5] = [discard(uv_a), discard(uv_b), 0.0, 0.0];
             let mask_view = self.write_mask(encoder, ctx, layer, &mut uniform)?;
             uniform[7][3] = f32::from(u8::from(under.is_some()));
@@ -807,7 +878,10 @@ impl Compositor {
                 uniform[0][3] = 1.0;
             }
             let next = self.take(canvas_w, canvas_h);
-            let layer_view = processed.as_ref().map(|target| target.view.clone()).or(a_view);
+            let layer_view = processed
+                .as_ref()
+                .map(|target| target.view.clone())
+                .or(a_view);
             self.pass(
                 encoder,
                 "fs_layer",
@@ -844,7 +918,14 @@ impl Compositor {
             let out = self.take(canvas_w, canvas_h);
             let mut uniform = header(0.0, ctx.now as f32, canvas_w, canvas_h, 0.0);
             uniform[2][0] = master.opacity.max(0.0) as f32;
-            self.pass(encoder, "fs_opacity", &out.view, WORK_FORMAT, [Some(&current.view), None, None, None, None], &uniform);
+            self.pass(
+                encoder,
+                "fs_opacity",
+                &out.view,
+                WORK_FORMAT,
+                [Some(&current.view), None, None, None, None],
+                &uniform,
+            );
             self.give(current);
             current = out;
         }
@@ -856,15 +937,23 @@ impl Compositor {
 
     /// Updates the crossfade state of a layer. Returns the active source, the source fading out
     /// and the eased progress (1 when settled).
-    fn layer_fade(&mut self, layer: &CompositionLayer, now: f64) -> (Option<String>, Option<String>, f64) {
+    fn layer_fade(
+        &mut self,
+        layer: &CompositionLayer,
+        now: f64,
+    ) -> (Option<String>, Option<String>, f64) {
         let transition = self.transition.clone();
-        let state = self.fades.entry(layer.id.clone()).or_insert_with(|| LayerFade {
-            current: layer.source_id.clone(),
-            previous: None,
-            started: now,
-        });
+        let state = self
+            .fades
+            .entry(layer.id.clone())
+            .or_insert_with(|| LayerFade {
+                current: layer.source_id.clone(),
+                previous: None,
+                started: now,
+            });
         if state.current != layer.source_id {
-            state.previous = if transition.duration_ms > 0 && transition.kind != TransitionKind::Cut {
+            state.previous = if transition.duration_ms > 0 && transition.kind != TransitionKind::Cut
+            {
                 state.current.take()
             } else {
                 None
@@ -919,20 +1008,47 @@ impl Compositor {
                     let mut horizontal = uniform;
                     horizontal[2][0] *= pixel_scale;
                     let temp = self.take(width, height);
-                    self.pass(encoder, "fs_blur", &temp.view, WORK_FORMAT, [Some(&current.view), None, None, None, None], &horizontal);
+                    self.pass(
+                        encoder,
+                        "fs_blur",
+                        &temp.view,
+                        WORK_FORMAT,
+                        [Some(&current.view), None, None, None, None],
+                        &horizontal,
+                    );
                     let mut vertical = horizontal;
                     vertical[0][3] = 1.0;
-                    self.pass(encoder, "fs_blur", &current.view, WORK_FORMAT, [Some(&temp.view), None, None, None, None], &vertical);
+                    self.pass(
+                        encoder,
+                        "fs_blur",
+                        &current.view,
+                        WORK_FORMAT,
+                        [Some(&temp.view), None, None, None, None],
+                        &vertical,
+                    );
                     self.give(temp);
                 }
                 EffectKind::Feedback => {
                     let key = format!("{owner}/{}", effect.id);
                     let history = match self.feedback.remove(&key) {
                         Some(target) if target.width == width && target.height == height => target,
-                        _ => create_target(&self.device, "lumen-feedback", width, height, WORK_FORMAT),
+                        _ => create_target(
+                            &self.device,
+                            "lumen-feedback",
+                            width,
+                            height,
+                            WORK_FORMAT,
+                        ),
                     };
                     let out = self.take(width, height);
-                    self.pass(encoder, "fs_feedback", &out.view, WORK_FORMAT, [Some(&current.view), Some(&history.view), None, None, None], &uniform);
+                    self.pass(
+                        encoder,
+                        "fs_feedback",
+                        &out.view,
+                        WORK_FORMAT,
+                        [Some(&current.view), Some(&history.view), None, None, None],
+                        &uniform,
+                    );
                     encoder.copy_texture_to_texture(
                         out.texture.as_image_copy(),
                         history.texture.as_image_copy(),
@@ -948,7 +1064,14 @@ impl Compositor {
                 }
                 _ => {
                     let out = self.take(width, height);
-                    self.pass(encoder, effect_entry(*kind), &out.view, WORK_FORMAT, [Some(&current.view), None, None, None, None], &uniform);
+                    self.pass(
+                        encoder,
+                        effect_entry(*kind),
+                        &out.view,
+                        WORK_FORMAT,
+                        [Some(&current.view), None, None, None, None],
+                        &uniform,
+                    );
                     self.give(current);
                     current = out;
                 }
@@ -990,7 +1113,10 @@ impl Compositor {
             }) => {
                 if points.len() > MAX_POLYGON_POINTS {
                     self.warn_once(format!("polygon:{}", layer.id), || {
-                        format!("layer {} mask keeps the first {MAX_POLYGON_POINTS} polygon points", layer.id)
+                        format!(
+                            "layer {} mask keeps the first {MAX_POLYGON_POINTS} polygon points",
+                            layer.id
+                        )
                     });
                 }
                 let count = points.len().min(MAX_POLYGON_POINTS);
@@ -1009,7 +1135,9 @@ impl Compositor {
                 let view = ctx
                     .composition
                     .asset(&asset.asset_id)
-                    .and_then(|scene_asset| self.image_view(encoder, &scene_asset.id, &scene_asset.hash));
+                    .and_then(|scene_asset| {
+                        self.image_view(encoder, &scene_asset.id, &scene_asset.hash)
+                    });
                 if view.is_none() {
                     // Missing mask image: hide nothing rather than everything.
                     return Ok(None);
@@ -1022,11 +1150,20 @@ impl Compositor {
     }
 
     /// Converted image texture (premultiplied linear), cached per asset.
-    fn image_view(&mut self, encoder: &mut wgpu::CommandEncoder, asset_id: &str, hash: &str) -> Option<SourceView> {
+    fn image_view(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        asset_id: &str,
+        hash: &str,
+    ) -> Option<SourceView> {
         let key = asset_key(asset_id, hash);
         let content_key = hash_of(&key);
         let cache_key = format!("image:{key}");
-        if let Some(cached) = self.cached.get(&cache_key).filter(|cached| cached.key == content_key) {
+        if let Some(cached) = self
+            .cached
+            .get(&cache_key)
+            .filter(|cached| cached.key == content_key)
+        {
             return Some(SourceView {
                 view: cached.target.view.clone(),
                 width: cached.target.width,
@@ -1038,17 +1175,36 @@ impl Compositor {
             let image = self.slides.images.get(&key)?;
             (image.view.clone(), image.width, image.height)
         };
-        let target = create_target(&self.device, "lumen-image-source", width, height, WORK_FORMAT);
+        let target = create_target(
+            &self.device,
+            "lumen-image-source",
+            width,
+            height,
+            WORK_FORMAT,
+        );
         let mut uniform = header(0.0, 0.0, width, height, 0.0);
         uniform[2] = [1.0, 1.0, 0.0, 0.0];
-        self.pass(encoder, "fs_convert", &target.view, WORK_FORMAT, [Some(&view), None, None, None, None], &uniform);
+        self.pass(
+            encoder,
+            "fs_convert",
+            &target.view,
+            WORK_FORMAT,
+            [Some(&view), None, None, None, None],
+            &uniform,
+        );
         let source = SourceView {
             view: target.view.clone(),
             width,
             height,
             stretch: false,
         };
-        self.cached.insert(cache_key, CachedSource { target, key: content_key });
+        self.cached.insert(
+            cache_key,
+            CachedSource {
+                target,
+                key: content_key,
+            },
+        );
         Some(source)
     }
 
@@ -1081,7 +1237,15 @@ impl Compositor {
             Source::Solid { color, .. } => {
                 let mut block = [[0.0; 4]; 4];
                 block[0] = linear_color(color).unwrap_or([0.0, 0.0, 0.0, 1.0]);
-                Some(self.generated(encoder, source_id, 0.0, &block, (4, 4), hash_of(color), ctx.now))
+                Some(self.generated(
+                    encoder,
+                    source_id,
+                    0.0,
+                    &block,
+                    (4, 4),
+                    hash_of(color),
+                    ctx.now,
+                ))
             }
             Source::Gradient {
                 gradient,
@@ -1090,7 +1254,11 @@ impl Compositor {
                 ..
             } => {
                 let size = box_pixels(layer, ctx.canvas_w, ctx.canvas_h);
-                let code = if *gradient == GradientKind::Radial { 2.0 } else { 1.0 };
+                let code = if *gradient == GradientKind::Radial {
+                    2.0
+                } else {
+                    1.0
+                };
                 let key = hash_of((serde_json::to_string(source).unwrap_or_default(), size));
                 Some(self.gradient(encoder, source_id, code, stops, *angle, size, key))
             }
@@ -1101,8 +1269,20 @@ impl Compositor {
                     let size = box_pixels(layer, ctx.canvas_w, ctx.canvas_h);
                     let block = generator_params(generator, params);
                     // Animated: the key changes every frame.
-                    let key = hash_of((ctx.now.to_bits(), serde_json::to_string(params).unwrap_or_default(), size));
-                    Some(self.generated(encoder, source_id, generator as u32 as f32, &block, size, key, ctx.now))
+                    let key = hash_of((
+                        ctx.now.to_bits(),
+                        serde_json::to_string(params).unwrap_or_default(),
+                        size,
+                    ));
+                    Some(self.generated(
+                        encoder,
+                        source_id,
+                        generator as u32 as f32,
+                        &block,
+                        size,
+                        key,
+                        ctx.now,
+                    ))
                 }
                 None => {
                     self.warn_once(format!("shader:{shader_id}"), || {
@@ -1111,10 +1291,13 @@ impl Compositor {
                     None
                 }
             },
-            Source::Image { asset, .. } => ctx
-                .composition
-                .asset(&asset.asset_id)
-                .and_then(|scene_asset| self.image_view(encoder, &scene_asset.id, &scene_asset.hash)),
+            Source::Image { asset, .. } => {
+                ctx.composition
+                    .asset(&asset.asset_id)
+                    .and_then(|scene_asset| {
+                        self.image_view(encoder, &scene_asset.id, &scene_asset.hash)
+                    })
+            }
             Source::Video { asset, .. } => self.video_view(encoder, source_id, &asset.asset_id),
             Source::Slide { .. } => {
                 let view = self.slide_view(encoder, ctx, source, layer, borrowed)?;
@@ -1145,18 +1328,27 @@ impl Compositor {
         now: f64,
     ) -> SourceView {
         let cache_key = format!("source:{source_id}");
-        let fresh = self
-            .cached
-            .get(&cache_key)
-            .is_some_and(|cached| cached.key == key && cached.target.width == width && cached.target.height == height);
+        let fresh = self.cached.get(&cache_key).is_some_and(|cached| {
+            cached.key == key && cached.target.width == width && cached.target.height == height
+        });
         if !fresh {
             let target = match self.cached.remove(&cache_key) {
-                Some(cached) if cached.target.width == width && cached.target.height == height => cached.target,
+                Some(cached) if cached.target.width == width && cached.target.height == height => {
+                    cached.target
+                }
                 _ => create_target(&self.device, "lumen-generator", width, height, WORK_FORMAT),
             };
             let uniform = with_block(header(code, now as f32, width, height, 0.0), block);
-            self.pass(encoder, "fs_generator", &target.view, WORK_FORMAT, [None, None, None, None, None], &uniform);
-            self.cached.insert(cache_key.clone(), CachedSource { target, key });
+            self.pass(
+                encoder,
+                "fs_generator",
+                &target.view,
+                WORK_FORMAT,
+                [None, None, None, None, None],
+                &uniform,
+            );
+            self.cached
+                .insert(cache_key.clone(), CachedSource { target, key });
         }
         let target = &self.cached[&cache_key].target;
         SourceView {
@@ -1179,7 +1371,10 @@ impl Compositor {
         key: u64,
     ) -> SourceView {
         let cache_key = format!("source:{source_id}");
-        let fresh = self.cached.get(&cache_key).is_some_and(|cached| cached.key == key);
+        let fresh = self
+            .cached
+            .get(&cache_key)
+            .is_some_and(|cached| cached.key == key);
         if !fresh {
             let target = create_target(&self.device, "lumen-gradient", width, height, WORK_FORMAT);
             let mut uniform = header(code, 0.0, width, height, 0.0);
@@ -1194,8 +1389,16 @@ impl Compositor {
                     .map(|color| color.to_array())
                     .unwrap_or([0.0, 0.0, 0.0, 1.0]);
             }
-            self.pass(encoder, "fs_generator", &target.view, WORK_FORMAT, [None, None, None, None, None], &uniform);
-            self.cached.insert(cache_key.clone(), CachedSource { target, key });
+            self.pass(
+                encoder,
+                "fs_generator",
+                &target.view,
+                WORK_FORMAT,
+                [None, None, None, None, None],
+                &uniform,
+            );
+            self.cached
+                .insert(cache_key.clone(), CachedSource { target, key });
         }
         let target = &self.cached[&cache_key].target;
         SourceView {
@@ -1207,7 +1410,12 @@ impl Compositor {
     }
 
     /// Latest decoded frame of a video, converted once per new frame.
-    fn video_view(&mut self, encoder: &mut wgpu::CommandEncoder, source_id: &str, asset_id: &str) -> Option<SourceView> {
+    fn video_view(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        source_id: &str,
+        asset_id: &str,
+    ) -> Option<SourceView> {
         let (view, width, height, mode, uv_scale) = {
             let video = self.slides.videos.get(asset_id)?;
             (
@@ -1225,8 +1433,16 @@ impl Compositor {
         });
         if !fresh {
             let target = match self.cached.remove(&cache_key) {
-                Some(cached) if cached.target.width == width && cached.target.height == height => cached.target,
-                _ => create_target(&self.device, "lumen-video-source", width, height, WORK_FORMAT),
+                Some(cached) if cached.target.width == width && cached.target.height == height => {
+                    cached.target
+                }
+                _ => create_target(
+                    &self.device,
+                    "lumen-video-source",
+                    width,
+                    height,
+                    WORK_FORMAT,
+                ),
             };
             let code = if (mode - MODE_YCOCG).abs() < 0.1 {
                 3.0
@@ -1237,8 +1453,16 @@ impl Compositor {
             };
             let mut uniform = header(code, 0.0, width, height, 0.0);
             uniform[2] = [uv_scale.0, uv_scale.1, 0.0, 0.0];
-            self.pass(encoder, "fs_convert", &target.view, WORK_FORMAT, [Some(&view), None, None, None, None], &uniform);
-            self.cached.insert(cache_key.clone(), CachedSource { target, key: seq });
+            self.pass(
+                encoder,
+                "fs_convert",
+                &target.view,
+                WORK_FORMAT,
+                [Some(&view), None, None, None, None],
+                &uniform,
+            );
+            self.cached
+                .insert(cache_key.clone(), CachedSource { target, key: seq });
         }
         let target = &self.cached[&cache_key].target;
         Some(SourceView {
@@ -1295,20 +1519,34 @@ impl Compositor {
             safe_area: *safe_area,
         };
         let (width, height) = box_pixels(layer, ctx.canvas_w, ctx.canvas_h);
-        let key = hash_of((serde_json::to_string(&scene).unwrap_or_default(), width, height));
+        let key = hash_of((
+            serde_json::to_string(&scene).unwrap_or_default(),
+            width,
+            height,
+        ));
         let id = &slide_cache_id(id, ctx);
-        let stale = self.slide_cache.get(id).is_none_or(|cached| cached.key != key);
+        let stale = self
+            .slide_cache
+            .get(id)
+            .is_none_or(|cached| cached.key != key);
         if stale {
-            let target = create_target(&self.device, "lumen-slide-source", width, height, SLIDE_FORMAT);
+            let target = create_target(
+                &self.device,
+                "lumen-slide-source",
+                width,
+                height,
+                SLIDE_FORMAT,
+            );
             // The slide renderer writes its glyph atlas through the queue, so each slide is
             // drawn and submitted on its own before the next one reuses the atlas.
             self.slides.invalidate();
-            let mut slide_encoder = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("lumen-slide-source"),
-                });
-            self.slides.draw(&mut slide_encoder, &target.view, &scene, width, height)?;
+            let mut slide_encoder =
+                self.device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("lumen-slide-source"),
+                    });
+            self.slides
+                .draw(&mut slide_encoder, &target.view, &scene, width, height)?;
             self.queue.submit([slide_encoder.finish()]);
             let layout = self.slides.preview_result().clone();
             let previous = match self.slide_cache.remove(id) {
@@ -1338,7 +1576,9 @@ impl Compositor {
             ((ctx.now - started) * 1000.0 / transition.duration_ms.max(1) as f64).clamp(0.0, 1.0)
         });
         let from = match progress {
-            Some(progress) if progress < 1.0 => cached.previous.as_ref().map(|(target, _)| target.clone()),
+            Some(progress) if progress < 1.0 => {
+                cached.previous.as_ref().map(|(target, _)| target.clone())
+            }
             Some(_) => {
                 cached.previous = None;
                 None
@@ -1380,7 +1620,13 @@ impl Compositor {
     }
 
     /// Adds a slide's element bounds and text runs, mapped through the layer box and region.
-    fn report_slide(&self, source_id: &str, layer: &CompositionLayer, ctx: &FrameContext<'_>, preview: &mut CompositionPreviewResult) {
+    fn report_slide(
+        &self,
+        source_id: &str,
+        layer: &CompositionLayer,
+        ctx: &FrameContext<'_>,
+        preview: &mut CompositionPreviewResult,
+    ) {
         let Some(cached) = self.slide_cache.get(&slide_cache_id(source_id, ctx)) else {
             return;
         };
@@ -1442,7 +1688,11 @@ impl Compositor {
         let uniform = screen_uniform(screen, width, height);
         // Test patterns and blackout fill the whole output, unwarped.
         let unwarped = crate::composition::Mapping::default();
-        let mapping = if canvas.is_some() { &screen.mapping } else { &unwarped };
+        let mapping = if canvas.is_some() {
+            &screen.mapping
+        } else {
+            &unwarped
+        };
         let vertices: Vec<[f32; 4]> = warp_grid(mapping, WARP_SEGMENTS)
             .into_iter()
             .map(|WarpVertex { position, uv }| [position[0], position[1], uv[0], uv[1]])
@@ -1486,10 +1736,17 @@ impl Compositor {
 /// overrides do not re-render each other's slides every frame.
 fn slide_cache_id(source_id: &str, ctx: &FrameContext<'_>) -> String {
     let key = CanvasKey::for_layout(&ctx.screen.layout);
-    format!("{source_id}#{:x}", hash_of(format!("{:?}{:?}", key.text, key.region)))
+    format!(
+        "{source_id}#{:x}",
+        hash_of(format!("{:?}{:?}", key.text, key.region))
+    )
 }
 
-fn layer_bounds(layer: &CompositionLayer, source_id: Option<&str>, ctx: &FrameContext<'_>) -> CompositionBounds {
+fn layer_bounds(
+    layer: &CompositionLayer,
+    source_id: Option<&str>,
+    ctx: &FrameContext<'_>,
+) -> CompositionBounds {
     let transform = &layer.transform;
     let bounds = crate::geometry::rotated_bounds(
         crate::Frame {
@@ -1517,7 +1774,12 @@ fn layer_bounds(layer: &CompositionLayer, source_id: Option<&str>, ctx: &FrameCo
 fn screen_uniform(screen: &Screen, width: u32, height: u32) -> ScreenUniform {
     let mut uniform = [[0.0f32; 4]; 64];
     let region = screen.layout.region;
-    uniform[0] = [region.x as f32, region.y as f32, region.w as f32, region.h as f32];
+    uniform[0] = [
+        region.x as f32,
+        region.y as f32,
+        region.w as f32,
+        region.h as f32,
+    ];
     let background = screen
         .layout
         .background
@@ -1537,7 +1799,12 @@ fn screen_uniform(screen: &Screen, width: u32, height: u32) -> ScreenUniform {
         uniform[4] = [1.0; 4];
     }
     let color = &screen.mapping.color;
-    uniform[5] = [color.brightness as f32, color.contrast as f32, color.gamma as f32, 0.0];
+    uniform[5] = [
+        color.brightness as f32,
+        color.contrast as f32,
+        color.gamma as f32,
+        0.0,
+    ];
     uniform[6] = [color.red as f32, color.green as f32, color.blue as f32, 0.0];
     let pattern = match screen.test_pattern {
         None => 0.0,
@@ -1554,7 +1821,12 @@ fn screen_uniform(screen: &Screen, width: u32, height: u32) -> ScreenUniform {
         .take(MAX_OUTPUT_MASKS)
         .collect();
     let hue = (hash_of(&screen.id) % 360) as f32 / 360.0;
-    uniform[7] = [pattern, f32::from(u8::from(blackout)), masks.len() as f32, hue];
+    uniform[7] = [
+        pattern,
+        f32::from(u8::from(blackout)),
+        masks.len() as f32,
+        hue,
+    ];
     uniform[8] = [width as f32, height as f32, 0.0, 0.0];
     for (index, mask) in masks.into_iter().enumerate() {
         let base = 9 + index * 10;
@@ -1578,7 +1850,12 @@ fn screen_uniform(screen: &Screen, width: u32, height: u32) -> ScreenUniform {
                 invert,
             } => {
                 let count = points.len().min(MAX_OUTPUT_MASK_POINTS);
-                uniform[base] = [2.0, *feather as f32, f32::from(u8::from(*invert)), count as f32];
+                uniform[base] = [
+                    2.0,
+                    *feather as f32,
+                    f32::from(u8::from(*invert)),
+                    count as f32,
+                ];
                 for (point_index, point) in points.iter().take(count).enumerate() {
                     let slot = &mut uniform[base + 3 + point_index / 2];
                     slot[(point_index % 2) * 2] = point[0] as f32;
@@ -1591,7 +1868,13 @@ fn screen_uniform(screen: &Screen, width: u32, height: u32) -> ScreenUniform {
     uniform
 }
 
-fn create_target(device: &wgpu::Device, label: &str, width: u32, height: u32, format: wgpu::TextureFormat) -> Target {
+fn create_target(
+    device: &wgpu::Device,
+    label: &str,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+) -> Target {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
@@ -1671,8 +1954,10 @@ mod tests {
     #[test]
     fn screen_uniform_packs_mapping_and_state() {
         let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../fixtures/full-composition.json")).expect("fixture");
-        let screens: Vec<Screen> = serde_json::from_value(fixture["screens"].clone()).expect("screens");
+            serde_json::from_str(include_str!("../fixtures/full-composition.json"))
+                .expect("fixture");
+        let screens: Vec<Screen> =
+            serde_json::from_value(fixture["screens"].clone()).expect("screens");
         let left = screen_uniform(&screens[0], 1920, 1080);
         assert_eq!(left[0], [0.0, 0.0, 0.55, 1.0]);
         assert!((left[2][1] - 0.1).abs() < 1e-6);
@@ -1765,7 +2050,12 @@ mod tests {
 
     fn pixel(frame: &crate::CompositionFrame, x: u32, y: u32) -> [u8; 4] {
         let offset = ((y * frame.width + x) * 4) as usize;
-        [frame.rgba[offset], frame.rgba[offset + 1], frame.rgba[offset + 2], frame.rgba[offset + 3]]
+        [
+            frame.rgba[offset],
+            frame.rgba[offset + 1],
+            frame.rgba[offset + 2],
+            frame.rgba[offset + 3],
+        ]
     }
 
     #[test]
@@ -1773,23 +2063,43 @@ mod tests {
     fn gpu_renders_the_exit_scene() {
         let composition = exit_composition();
         let mut renderer = PreviewRenderer::new().expect("renderer");
-        renderer.update_video("clip", &green_screen_frame(640, 360)).expect("video");
+        renderer
+            .update_video("clip", &green_screen_frame(640, 360))
+            .expect("video");
         renderer.set_composition_clock(Some(1.0)).expect("clock");
         let frame = renderer
             .render_composition(&composition, None, 960, 540)
             .expect("render");
         if let Ok(path) = std::env::var("LUMEN_DUMP_PNG") {
-            image::save_buffer(&path, &frame.rgba, frame.width, frame.height, image::ColorType::Rgba8).expect("png");
+            image::save_buffer(
+                &path,
+                &frame.rgba,
+                frame.width,
+                frame.height,
+                image::ColorType::Rgba8,
+            )
+            .expect("png");
         }
         let centre = pixel(&frame, 480, 270);
         // The disc survives the key: magenta-ish, not green.
         assert!(centre[0] > 150 && centre[1] < 120, "centre {centre:?}");
         // The green screen is keyed out: the generator shows, which is never this green.
         let corner = pixel(&frame, 40, 40);
-        assert!(!(corner[1] > 180 && corner[0] < 60), "corner still green {corner:?}");
+        assert!(
+            !(corner[1] > 180 && corner[0] < 60),
+            "corner still green {corner:?}"
+        );
         assert!(!frame.layout.text_runs.is_empty(), "lyrics were laid out");
         assert!(frame.layout.text_runs[0].y > 0.6);
-        assert_eq!(frame.layout.bounds.iter().filter(|b| b.element_id.is_none()).count(), 3);
+        assert_eq!(
+            frame
+                .layout
+                .bounds
+                .iter()
+                .filter(|b| b.element_id.is_none())
+                .count(),
+            3
+        );
     }
 
     fn solid_layers(layers: serde_json::Value) -> Composition {
@@ -1881,24 +2191,40 @@ mod tests {
         ]));
         let mut renderer = PreviewRenderer::new().expect("renderer");
         let mut screen = Screen::canvas(composition.canvas);
-        screen.layout.region = crate::composition::Region { x: 0.5, y: 0.0, w: 0.5, h: 1.0 };
-        let right = renderer.render_composition(&composition, Some(&screen), 64, 64).expect("render");
-        assert!((115..150).contains(&pixel(&right, 2, 32)[0]), "right half starts mid-ramp");
+        screen.layout.region = crate::composition::Region {
+            x: 0.5,
+            y: 0.0,
+            w: 0.5,
+            h: 1.0,
+        };
+        let right = renderer
+            .render_composition(&composition, Some(&screen), 64, 64)
+            .expect("render");
+        assert!(
+            (115..150).contains(&pixel(&right, 2, 32)[0]),
+            "right half starts mid-ramp"
+        );
         screen.mapping.corner_pin = Some([
             crate::composition::Point { x: 0.25, y: 0.25 },
             crate::composition::Point { x: 0.75, y: 0.25 },
             crate::composition::Point { x: 0.75, y: 0.75 },
             crate::composition::Point { x: 0.25, y: 0.75 },
         ]);
-        let pinned = renderer.render_composition(&composition, Some(&screen), 64, 64).expect("render");
+        let pinned = renderer
+            .render_composition(&composition, Some(&screen), 64, 64)
+            .expect("render");
         assert_eq!(pixel(&pinned, 4, 4), [0, 0, 0, 255]);
         assert!(pixel(&pinned, 32, 32)[0] > 100);
         screen.blackout = true;
-        let black = renderer.render_composition(&composition, Some(&screen), 64, 64).expect("render");
+        let black = renderer
+            .render_composition(&composition, Some(&screen), 64, 64)
+            .expect("render");
         assert_eq!(pixel(&black, 32, 32), [0, 0, 0, 255]);
         screen.blackout = false;
         screen.test_pattern = Some(crate::composition::TestPattern::Bars);
-        let bars = renderer.render_composition(&composition, Some(&screen), 64, 64).expect("render");
+        let bars = renderer
+            .render_composition(&composition, Some(&screen), 64, 64)
+            .expect("render");
         assert!(pixel(&bars, 2, 10)[0] > 150);
     }
 
@@ -1913,8 +2239,18 @@ mod tests {
         compositor.set_clock(Some(0.0));
         let format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let regions = [
-            crate::composition::Region { x: 0.0, y: 0.0, w: 0.5, h: 1.0 },
-            crate::composition::Region { x: 0.5, y: 0.0, w: 0.5, h: 1.0 },
+            crate::composition::Region {
+                x: 0.0,
+                y: 0.0,
+                w: 0.5,
+                h: 1.0,
+            },
+            crate::composition::Region {
+                x: 0.5,
+                y: 0.0,
+                w: 0.5,
+                h: 1.0,
+            },
         ];
         let screens: Vec<Screen> = regions
             .iter()
@@ -1924,25 +2260,49 @@ mod tests {
                 screen
             })
             .collect();
-        let targets: Vec<Target> = (0..4).map(|_| create_target(&device, "t", 32, 64, format)).collect();
+        let targets: Vec<Target> = (0..4)
+            .map(|_| create_target(&device, "t", 32, 64, format))
+            .collect();
         let read = |target: &Target, encoder: wgpu::CommandEncoder| {
-            crate::renderer::read_back(&device, &queue, encoder, &target.texture, 32, 64).expect("readback")
+            crate::renderer::read_back(&device, &queue, encoder, &target.texture, 32, 64)
+                .expect("readback")
         };
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         let outputs: Vec<ScreenOutput<'_>> = screens
             .iter()
             .zip(&targets)
-            .map(|(screen, target)| ScreenOutput { screen, view: &target.view, format, width: 32, height: 64 })
+            .map(|(screen, target)| ScreenOutput {
+                screen,
+                view: &target.view,
+                format,
+                width: 32,
+                height: 64,
+            })
             .collect();
-        compositor.render_screens(&mut encoder, &composition, &outputs).expect("grouped");
+        compositor
+            .render_screens(&mut encoder, &composition, &outputs)
+            .expect("grouped");
         queue.submit([encoder.finish()]);
         for (index, screen) in screens.iter().enumerate() {
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
             compositor
-                .render(&mut encoder, &composition, screen, &targets[2 + index].view, format, 32, 64)
+                .render(
+                    &mut encoder,
+                    &composition,
+                    screen,
+                    &targets[2 + index].view,
+                    format,
+                    32,
+                    64,
+                )
                 .expect("single");
             let single = read(&targets[2 + index], encoder);
-            let grouped = read(&targets[index], device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None }));
+            let grouped = read(
+                &targets[index],
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None }),
+            );
             assert_eq!(single, grouped, "screen {index}");
         }
 
@@ -1956,9 +2316,18 @@ mod tests {
         let canvas = Screen::canvas(composition.canvas);
         let mut frame_at = |seconds: f64, composition: &Composition| {
             compositor.set_clock(Some(seconds));
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
             compositor
-                .render(&mut encoder, composition, &canvas, &targets[0].view, format, 32, 64)
+                .render(
+                    &mut encoder,
+                    composition,
+                    &canvas,
+                    &targets[0].view,
+                    format,
+                    32,
+                    64,
+                )
                 .expect("render");
             read(&targets[0], encoder)
         };
@@ -1969,7 +2338,11 @@ mod tests {
         let end = frame_at(1.0, &composition);
         let green = |frame: &[u8]| frame[(32 * 16 + 16) * 4 + 1];
         assert_eq!(green(&start), 0, "starts red");
-        assert!((150..230).contains(&green(&middle)), "half way {}", green(&middle));
+        assert!(
+            (150..230).contains(&green(&middle)),
+            "half way {}",
+            green(&middle)
+        );
         assert_eq!(green(&end), 255, "ends white");
     }
 
@@ -1980,7 +2353,10 @@ mod tests {
     fn bench_exit_scene_1080p() {
         let composition = exit_composition();
         let mut composition_1080 = composition.clone();
-        composition_1080.assets[0].intrinsic = crate::IntrinsicSize { width: 1920.0, height: 1080.0 };
+        composition_1080.assets[0].intrinsic = crate::IntrinsicSize {
+            width: 1920.0,
+            height: 1080.0,
+        };
         let (device, queue) = device();
         let mut compositor = Compositor::new(device.clone(), queue.clone());
         let frames: Vec<VideoFrame> = (0..2).map(|_| green_screen_frame(1920, 1080)).collect();
@@ -1992,16 +2368,29 @@ mod tests {
         let mut render = std::time::Duration::ZERO;
         for round in 0..rounds + 10 {
             let started = Instant::now();
-            compositor.update_video("clip", &frames[round % 2]).expect("upload");
+            compositor
+                .update_video("clip", &frames[round % 2])
+                .expect("upload");
             let uploaded = started.elapsed();
             compositor.set_clock(Some(round as f64 / 60.0));
             let started = Instant::now();
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
             compositor
-                .render(&mut encoder, &composition_1080, &screen, &target.view, format, 1920, 1080)
+                .render(
+                    &mut encoder,
+                    &composition_1080,
+                    &screen,
+                    &target.view,
+                    format,
+                    1920,
+                    1080,
+                )
                 .expect("render");
             queue.submit([encoder.finish()]);
-            device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll");
             // Warm-up rounds compile pipelines and render the slide once.
             if round >= 10 {
                 upload += uploaded;
@@ -2012,8 +2401,12 @@ mod tests {
         preview.update_video("clip", &frames[0]).expect("video");
         let started = Instant::now();
         for round in 0..30 {
-            preview.set_composition_clock(Some(round as f64 / 60.0)).expect("clock");
-            preview.render_composition(&composition_1080, None, 1920, 1080).expect("preview");
+            preview
+                .set_composition_clock(Some(round as f64 / 60.0))
+                .expect("clock");
+            preview
+                .render_composition(&composition_1080, None, 1920, 1080)
+                .expect("preview");
         }
         let preview_ms = started.elapsed().as_secs_f64() * 1000.0 / 30.0;
         eprintln!(
@@ -2033,8 +2426,10 @@ mod tests {
         let composition = exit_composition();
         let video = green_screen_frame(640, 360);
         let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../fixtures/full-composition.json")).expect("fixture");
-        let mut mapped: Screen = serde_json::from_value(fixture["screens"][0].clone()).expect("screen");
+            serde_json::from_str(include_str!("../fixtures/full-composition.json"))
+                .expect("fixture");
+        let mut mapped: Screen =
+            serde_json::from_value(fixture["screens"][0].clone()).expect("screen");
         mapped.layout.layers = crate::composition::LayerFilter::All;
         mapped.layout.text = None;
         for screen in [Screen::canvas(composition.canvas), mapped] {
@@ -2051,18 +2446,38 @@ mod tests {
             output.set_clock(Some(2.0));
             let format = wgpu::TextureFormat::Bgra8UnormSrgb;
             let target = create_target(&device, "output", 480, 270, format);
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
             output
-                .render(&mut encoder, &composition, &screen, &target.view, format, 480, 270)
+                .render(
+                    &mut encoder,
+                    &composition,
+                    &screen,
+                    &target.view,
+                    format,
+                    480,
+                    270,
+                )
                 .expect("output");
-            let bgra = crate::renderer::read_back(&device, &queue, encoder, &target.texture, 480, 270).expect("readback");
+            let bgra =
+                crate::renderer::read_back(&device, &queue, encoder, &target.texture, 480, 270)
+                    .expect("readback");
             let mut worst = 0u8;
-            for (rgba, bgra) in expected.rgba.as_chunks::<4>().0.iter().zip(bgra.as_chunks::<4>().0) {
+            for (rgba, bgra) in expected
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(bgra.as_chunks::<4>().0)
+            {
                 for (a, b) in [(rgba[0], bgra[2]), (rgba[1], bgra[1]), (rgba[2], bgra[0])] {
                     worst = worst.max(a.abs_diff(b));
                 }
             }
-            eprintln!("preview vs output ({}): worst channel difference {worst}", screen.id);
+            eprintln!(
+                "preview vs output ({}): worst channel difference {worst}",
+                screen.id
+            );
             assert!(worst <= 2, "preview and output differ by {worst}");
         }
     }

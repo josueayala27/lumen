@@ -203,8 +203,14 @@ mod tests {
         let key = effect_params(EffectKind::Key, &empty);
         assert_eq!(key[0], [0.0, 0.4, 0.1, 0.0]);
         assert_eq!(key[1], [0.0, 1.0, 0.0, 1.0]);
-        assert_eq!(effect_params(EffectKind::Transform, &empty)[0], [1.0, 0.0, 0.0, 0.0]);
-        assert_eq!(effect_params(EffectKind::Kaleidoscope, &empty)[0], [6.0, 0.0, 0.5, 0.5]);
+        assert_eq!(
+            effect_params(EffectKind::Transform, &empty)[0],
+            [1.0, 0.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            effect_params(EffectKind::Kaleidoscope, &empty)[0],
+            [6.0, 0.0, 0.5, 0.5]
+        );
         let feedback = effect_params(EffectKind::Feedback, &empty)[0];
         assert!((feedback[0] - 0.8).abs() < 1e-6 && (feedback[1] - 1.02).abs() < 1e-6);
     }
@@ -213,7 +219,9 @@ mod tests {
     fn reads_numbers_colours_booleans_and_enums() {
         let key = effect_params(
             EffectKind::Key,
-            &params(serde_json::json!({ "mode": "luma", "keyColor": "#0000ff", "invert": true, "threshold": 0.2 })),
+            &params(
+                serde_json::json!({ "mode": "luma", "keyColor": "#0000ff", "invert": true, "threshold": 0.2 }),
+            ),
         );
         assert_eq!(key[0], [1.0, 0.2, 0.1, 1.0]);
         assert_eq!(key[1], [0.0, 0.0, 1.0, 1.0]);
@@ -224,7 +232,10 @@ mod tests {
         assert!((transform[0][3] - std::f32::consts::PI).abs() < 1e-5);
         assert_eq!(transform[1], [0.0, 1.0, 0.0, 0.0]);
         // Wrong types fall back to the default.
-        let blur = effect_params(EffectKind::Blur, &params(serde_json::json!({ "radius": "big" })));
+        let blur = effect_params(
+            EffectKind::Blur,
+            &params(serde_json::json!({ "radius": "big" })),
+        );
         assert_eq!(blur[0][0], 8.0);
     }
 

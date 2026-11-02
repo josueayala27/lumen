@@ -8,7 +8,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ColorSpace, Layer as SlideElement, LayerFit, LayerSource, SafeArea, SceneAsset, SceneFont};
+use crate::{
+    ColorSpace, Layer as SlideElement, LayerFit, LayerSource, SafeArea, SceneAsset, SceneFont,
+};
 
 /// Pixel or slide size.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -661,11 +663,19 @@ mod tests {
             other => panic!("expected only filter, got {other:?}"),
         }
         assert_eq!(
-            fixture.screens[1].layout.text.as_ref().map(|text| text.preset),
+            fixture.screens[1]
+                .layout
+                .text
+                .as_ref()
+                .map(|text| text.preset),
             Some(TextPreset::Hidden)
         );
         assert_eq!(
-            fixture.screens[2].layout.text.as_ref().map(|text| text.preset),
+            fixture.screens[2]
+                .layout
+                .text
+                .as_ref()
+                .map(|text| text.preset),
             Some(TextPreset::LowerThird)
         );
         assert_eq!(fixture.screens[0].mapping.color, MappingColor::default());
@@ -725,8 +735,12 @@ mod tests {
             }
             other => panic!("expected shader, got {other:?}"),
         }
-        assert!(matches!(composition.source("src_ndi"), Some(Source::Ndi { name, .. }) if name == "CAM 1"));
-        assert!(matches!(composition.source("src_camera"), Some(Source::Camera { device_id, .. }) if device_id == "dev-1"));
+        assert!(
+            matches!(composition.source("src_ndi"), Some(Source::Ndi { name, .. }) if name == "CAM 1")
+        );
+        assert!(
+            matches!(composition.source("src_camera"), Some(Source::Camera { device_id, .. }) if device_id == "dev-1")
+        );
 
         let blends: Vec<BlendMode> = composition.layers.iter().map(|layer| layer.blend).collect();
         assert_eq!(
@@ -746,23 +760,30 @@ mod tests {
         assert_eq!(video.transform.rotation, 15.0);
         assert_eq!(video.transform.anchor_y, 1.0);
         assert_eq!(video.fit, LayerFit::Contain);
-        assert_eq!(
-            video.effects[0].effect_kind(),
-            Some(EffectKind::Key)
-        );
+        assert_eq!(video.effects[0].effect_kind(), Some(EffectKind::Key));
         assert_eq!(
             video.effects[0].params.get("invert"),
             Some(&ParamValue::Bool(false))
         );
         assert!(matches!(video.mask, Some(Mask::Rect { radius, .. }) if radius == 0.05));
-        assert!(matches!(&composition.layers[2].mask, Some(Mask::Polygon { points, invert: true, .. }) if points.len() == 3));
-        assert!(matches!(composition.layers[3].mask, Some(Mask::Image { .. })));
+        assert!(
+            matches!(&composition.layers[2].mask, Some(Mask::Polygon { points, invert: true, .. }) if points.len() == 3)
+        );
+        assert!(matches!(
+            composition.layers[3].mask,
+            Some(Mask::Image { .. })
+        ));
         assert!(!composition.layers[5].enabled);
         assert_eq!(composition.master.opacity, 0.9);
-        assert_eq!(composition.master.effects[0].effect_kind(), Some(EffectKind::Blur));
+        assert_eq!(
+            composition.master.effects[0].effect_kind(),
+            Some(EffectKind::Blur)
+        );
 
         let left = &fixture.screens[0];
-        assert!(matches!(&left.target, ScreenTarget::Display { ref_ } if ref_.name == "Projector A" && ref_.x == 1920.0));
+        assert!(
+            matches!(&left.target, ScreenTarget::Display { ref_ } if ref_.name == "Projector A" && ref_.x == 1920.0)
+        );
         assert_eq!(left.layout.region.w, 0.55);
         assert_eq!(left.layout.background.as_deref(), Some("#101010"));
         let text = left.layout.text.as_ref().expect("text");

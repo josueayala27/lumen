@@ -166,7 +166,12 @@ fn update_preview_video_frame(
 
 /// Binary preview payload: `width: u32 le`, `height: u32 le`, `layoutJsonLength: u32 le`,
 /// the UTF-8 layout JSON, then raw row-major RGBA bytes.
-fn preview_payload(width: u32, height: u32, layout: &impl serde::Serialize, rgba: &[u8]) -> Result<Vec<u8>, String> {
+fn preview_payload(
+    width: u32,
+    height: u32,
+    layout: &impl serde::Serialize,
+    rgba: &[u8],
+) -> Result<Vec<u8>, String> {
     let layout = serde_json::to_vec(layout).map_err(|error| error.to_string())?;
     let layout_length = u32::try_from(layout.len()).map_err(|_| "layout is too large")?;
     let mut payload = Vec::with_capacity(12 + layout.len() + rgba.len());
@@ -220,7 +225,8 @@ fn apply_composition(
     screens: Vec<Screen>,
     transition: Option<CompositionTransition>,
 ) -> Vec<ScreenOutputStatus> {
-    let statuses = outputs.apply_composition(&composition, &screens, &transition.unwrap_or_default());
+    let statuses =
+        outputs.apply_composition(&composition, &screens, &transition.unwrap_or_default());
     if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
         playback.sync_composition(&app, media::OWNER_OUTPUT, &composition, &screens);
     }
