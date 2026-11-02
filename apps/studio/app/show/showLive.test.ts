@@ -1,7 +1,7 @@
 import { buildBlankPresentation, buildSongDoc, updatePresentationDoc } from '@lumen/core'
-import type { PlaylistDoc, PresentationDoc, Scene } from '@lumen/schema'
+import type { Composition, PlaylistDoc, PresentationDoc, Scene, Screen } from '@lumen/schema'
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_TRANSITION, type LiveSceneTransform, type MediaAssetLike } from '~/live/liveScene'
+import { DEFAULT_TRANSITION, type LiveCompositionTransform, type MediaAssetLike } from '~/live/liveScene'
 import { buildLiveItems } from '~/live/liveSession'
 import {
   applyTimelineTransform,
@@ -10,17 +10,22 @@ import {
   cueAt,
   nextCue,
   outputAction,
+  outputTransition,
   programComposition,
   releaseContentLayer,
+  screenForMode,
+  showComposition,
   showKeyAction,
-  showScreenScene,
+  statusErrors,
   type OutputMemory,
+  type ShowFrame,
 } from './showLive'
 import {
   assignClip,
   createShowDoc,
   emptyLive,
   launchColumn,
+  schematicScene,
   updateScreen,
   withComposition,
   type ComposeContext,
@@ -52,6 +57,11 @@ const context: ComposeContext = {
   presentation: (id) => (id === 'p_song' ? song : id === 'p_talk' ? talk : null),
   theme: null,
   revision: 3,
+}
+
+/** What a screen shows for a frame, through the browser schematic (v1 adapter). */
+function showScreenScene(show: ShowDoc, live: ReturnType<typeof emptyLive>, screen: Screen, frame: ShowFrame, ctx: ComposeContext): Scene {
+  return schematicScene(showComposition(show, live, frame, ctx), screenForMode(screen, frame.mode), ctx)
 }
 
 function texts(scene: Scene): string[] {
@@ -150,34 +160,61 @@ describe('modes', () => {
   })
 })
 
-describe('applyTimelineTransform', () => {
-  it('hands keyframes bare element ids and restores the layer prefix', () => {
+describe('screenForMode', () => {
+  const screen = createShowDoc().screens[0]!
+
+  it('blacks out the screen for black and logo only', () => {
+    expect(screenForMode(screen, 'black').blackout).toBe(true)
+    expect(screenForMode(screen, 'logo').blackout).toBe(true)
+    for (const mode of ['live', 'clear', 'freeze'] as const) expect(screenForMode(screen, mode)).toBe(screen)
+  })
+
+  it('keeps the test pattern so Rust draws it over the blackout', () => {
+    const patterned = { ...screen, testPattern: 'bars' as const }
+    expect(screenForMode(patterned, 'black')).toMatchObject({ blackout: true, testPattern: 'bars' })
+  })
+})
+
+describe('showComposition', () => {
+  it('clear removes the content layer source and keeps the others', () => {
+    const show = showWithClips()
+    const live = launchColumn(show, emptyLive(), 0)
+    const cue = cueAt(items, 0, 0)
+    const composition = showComposition(show, live, { cue, mode: 'clear' }, context)
+    expect(composition.layers[2]!.sourceId).toBeNull()
+    expect(composition.layers[0]!.sourceId).not.toBeNull()
+  })
+
+  it('black keeps the composition and leaves blackout to the screen', () => {
+    const show = showWithClips()
+    const cue = cueAt(items, 0, 0)
+    const live = showComposition(show, emptyLive(), { cue, mode: 'live' }, context)
+    const black = showComposition(show, emptyLive(), { cue, mode: 'black' }, context)
+    expect(black.layers.map((layer) => layer.sourceId)).toEqual(live.layers.map((layer) => layer.sourceId))
+  })
+
+  it('runs the timeline transform with the cue slide and the content layer', () => {
     const show = createShowDoc()
     const layerId = contentLayerId(show.composition)!
     const cue = cueAt(items, 0, 0)
-    const scene = showScreenScene(show, emptyLive(), show.screens[0]!, { cue, mode: 'live' }, context)
-    const elementId = talk.slides[0]!.elements[0]!.id
-    expect(scene.layers.some((layer) => layer.id === `${layerId}.${elementId}`)).toBe(true)
-    let seen: string[] = []
-    const transform: LiveSceneTransform = {
+    let seen: { layerId: string | null; doc: PresentationDoc | null | undefined } | null = null
+    const transform: LiveCompositionTransform = {
       key: 'k',
-      apply: (input, source) => {
-        seen = input.layers.map((layer) => layer.id)
-        expect(source?.doc).toBe(talk)
-        return { ...input, layers: input.layers.map((layer) => (layer.id === elementId ? { ...layer, opacity: 0.25 } : layer)) }
+      apply: (input: Composition, source, contentId) => {
+        seen = { layerId: contentId, doc: source?.doc }
+        return { ...input, master: { ...input.master, opacity: 0.5 } }
       },
     }
-    const result = applyTimelineTransform(scene, transform, cue, layerId)
-    expect(seen).toContain(elementId)
-    const moved = result.layers.find((layer) => layer.id === `${layerId}.${elementId}`)
-    expect(moved?.opacity).toBe(0.25)
-    expect(applyTimelineTransform(scene, null, cue, layerId)).toBe(scene)
+    const result = showComposition(show, emptyLive(), { cue, mode: 'live' }, context, transform)
+    expect(seen).toEqual({ layerId, doc: talk })
+    expect(result.master.opacity).toBe(0.5)
+    const plain = programComposition(show, emptyLive(), { cue, mode: 'live' }, context)
+    expect(applyTimelineTransform(plain, null, cue, layerId)).toBe(plain)
   })
 })
 
 describe('outputAction', () => {
-  const scene = showScreenScene(createShowDoc(), emptyLive(), createShowDoc().screens[0]!, { cue: null, mode: 'live' }, context)
-  const previous: OutputMemory = { label: 'out-1', scene, cueKey: 'a:0', mode: 'live' }
+  const previous: OutputMemory = { label: 'out-1', cueKey: 'a:0', mode: 'live', transition: null, transitionEndsAt: 0 }
   const base = { label: 'out-1', mode: 'live' as const, cueKey: 'a:1', transition: DEFAULT_TRANSITION, testPattern: false }
 
   it('crossfades a new cue on the same output', () => {
@@ -192,6 +229,37 @@ describe('outputAction', () => {
     expect(outputAction(previous, { ...base, mode: 'freeze' })).toBe('skip')
     expect(outputAction(previous, { ...base, mode: 'freeze', label: 'out-2' })).toBe('apply')
     expect(outputAction(null, { ...base, mode: 'freeze' })).toBe('apply')
+  })
+})
+
+describe('outputTransition', () => {
+  const fading: OutputMemory = { label: 'out-1', cueKey: 'a:1', mode: 'live', transition: DEFAULT_TRANSITION, transitionEndsAt: 1300 }
+  const next = { cueKey: 'a:1', transition: DEFAULT_TRANSITION }
+
+  it('starts the cue transition on a cue change', () => {
+    expect(outputTransition(null, 'transition', next, 0)).toEqual(DEFAULT_TRANSITION)
+  })
+
+  it('keeps a running fade alive on same-cue updates, then cuts', () => {
+    expect(outputTransition(fading, 'apply', next, 1200)).toEqual(DEFAULT_TRANSITION)
+    expect(outputTransition(fading, 'apply', next, 1300)).toBeNull()
+    expect(outputTransition(fading, 'apply', { ...next, cueKey: 'a:2' }, 1200)).toBeNull()
+    expect(outputTransition(null, 'apply', next, 0)).toBeNull()
+  })
+})
+
+describe('statusErrors', () => {
+  it('names the screens Rust could not drive', () => {
+    const screens = createShowDoc().screens
+    const statuses = [
+      { screenId: screens[0]!.id, label: 'audience-1', error: null },
+      { screenId: screens[1]!.id, label: null, error: 'display Projector is not connected' },
+      { screenId: 'gone', label: null, error: 'screen has no display target' },
+    ]
+    expect(statusErrors(statuses, screens)).toEqual([
+      `${screens[1]!.name}: display Projector is not connected`,
+      'gone: screen has no display target',
+    ])
   })
 })
 

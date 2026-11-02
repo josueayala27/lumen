@@ -230,8 +230,8 @@ const meshHandle = css({ w: '[10px]', h: '[10px]', ml: '[-5px]', mt: '[-5px]', b
     </div>
     <p :class="note">
       <Icon name="lucide:info" :size="12" aria-hidden="true" />
-      Mapping is drawn as an overlay only. The renderer does not apply corner pin, mesh, edge blend or colour yet.
-      <template v-if="!preview.native"> Desktop app renders the real frame; the browser shows a schematic.</template>
+      <template v-if="preview.native">The frame is the compositor's output with this mapping; handles are an overlay. Image output masks and stage layouts are not rendered.</template>
+      <template v-else>The browser shows an unmapped schematic; the desktop app renders the mapped output.</template>
     </p>
 
     <div :class="stage">

@@ -1,7 +1,7 @@
 import type { Screen, ShowDoc } from '@lumen/schema'
 import { watch, type Ref } from 'vue'
 import type { MediaAsset } from '~/data/media'
-import { applyScene, isTauri, type DisplayInfo } from '~/output/api'
+import { applyComposition, isTauri, type DisplayInfo } from '~/output/api'
 import { useOutputScreens } from '~/output/useOutputScreens'
 import { displayForScreen } from '~/show/showModel'
 import { useShowLive } from '~/show/useShowLive'
@@ -64,7 +64,8 @@ export function testPatternKeys(screens: readonly Screen[], outputLabel: (screen
 
 /**
  * Shows identify and test patterns on the physical outputs while the Screens
- * workspace is open. When a pattern turns off, the screen gets what is on
+ * workspace is open. The compositor draws the pattern from the screen's
+ * `testPattern` field. When a pattern turns off, the screen gets what is on
  * air back (clips, rundown content and output mode from the shared live state).
  */
 export function useTestPatternOutputs(show: Readonly<Ref<ShowDoc>>, media: Readonly<Ref<MediaAsset[]>>) {
@@ -75,10 +76,11 @@ export function useTestPatternOutputs(show: Readonly<Ref<ShowDoc>>, media: Reado
   async function push(screen: Screen): Promise<void> {
     const output = outputs.outputForScreen(screen)
     if (!output) return
-    const scene = live.screenScene(screen, 'program', show.value, {
+    const composition = live.frameComposition('program', show.value, {
       media: media.value.length ? media.value : live.session.media.value,
     })
-    await applyScene(output.label, scene)
+    const [status] = await applyComposition(composition, [live.frameScreen(screen)])
+    if (status?.error) throw new Error(status.error)
   }
 
   watch(

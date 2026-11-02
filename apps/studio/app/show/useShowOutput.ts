@@ -1,17 +1,18 @@
-import type { OutputMode, Scene, Screen, ShowDoc, Transition } from '@lumen/schema'
+import { compositionToScene, createScreen } from '@lumen/core'
+import type { Composition, OutputMode, Screen, ShowDoc, Transition } from '@lumen/schema'
 import { ref, watch, type Ref } from 'vue'
-import { sceneVideoKey, transitionPlan } from '~/live/liveScene'
-import { applyScene, applyTransition, isTauri, preloadScene } from '~/output/api'
+import { sceneVideoKey } from '~/live/liveScene'
+import { applyComposition, isTauri, preloadScene } from '~/output/api'
 import { useOutputScreens } from '~/output/useOutputScreens'
-import { outputAction, type OutputMemory } from './showLive'
+import { outputAction, outputTransition, screenForMode, statusErrors, type OutputMemory } from './showLive'
 import { displayForScreen } from './showModel'
 
 export interface ShowOutputOptions {
   show: Readonly<Ref<ShowDoc>>
-  /** The scene a screen shows on air right now. */
-  scene: (screen: Screen) => Scene
-  /** The scene a screen shows at the next rundown cue, for preloading. */
-  nextScene?: (screen: Screen) => Scene | null
+  /** The composition on air right now (every screen shows it through its own layout). */
+  composition: () => Composition
+  /** The composition at the next rundown cue, for preloading its videos. */
+  nextComposition?: () => Composition | null
   mode: Readonly<Ref<OutputMode>>
   /** Rundown cue on air; a change while live crossfades with `transition`. */
   cueKey: Readonly<Ref<string>>
@@ -25,26 +26,43 @@ function message(reason: unknown): string {
 }
 
 /**
- * Sends each enabled show screen its own scene on the native output open on
- * its display (the v2 path; there is no single audience output). Rundown cue
- * changes crossfade, freeze holds the last frame, and the next cue's videos
- * are preloaded paused. Screens without a connected display, or whose
- * display has no open output, are skipped.
+ * Sends the program composition to the native outputs through the v2
+ * compositor (`apply_composition`); Rust draws each screen's layout, mapping,
+ * blackout and test pattern. Only screens whose display has an open output are
+ * sent, so outputs open only through `openAll` or the Screens panel. Rundown
+ * cue changes crossfade, freeze holds the last frame, `black`/`logo` black the
+ * screen out, and the next cue's videos are preloaded paused.
  */
 export function useShowOutput(options: ShowOutputOptions) {
   const screens = useOutputScreens()
   const error = ref('')
+  /** Errors per screen id from the last send. */
+  const screenErrors = ref<Record<string, string>>({})
   const memory = new Map<string, OutputMemory>()
   let preloadKey = ''
   let token = 0
 
-  function outputLabel(screen: Screen): string | null {
-    if (!screen.enabled) return null
+  /** The open output a screen's display has, enabled or not. */
+  function openLabel(screen: Screen): string | null {
     const display = displayForScreen(screens.displays.value, screen)
     return display ? (screens.outputFor(display.index)?.label ?? null) : null
   }
 
-  function preload(scene: Scene | null): void {
+  /** The output an enabled screen drives right now. */
+  function outputLabel(screen: Screen): string | null {
+    return screen.enabled ? openLabel(screen) : null
+  }
+
+  /**
+   * Preloads through the v1 `preload_scene` command: the compositor has no
+   * preload of its own, but the decoder demand is shared by asset id, so a
+   * video preloaded here starts from its first frame when `apply_composition`
+   * puts it on air.
+   */
+  function preload(composition: Composition | null): void {
+    const scene = composition
+      ? compositionToScene(composition, createScreen({ id: 'preload', name: 'Preload', size: composition.canvas }))
+      : null
     const key = scene ? sceneVideoKey(scene) : ''
     if (key === preloadKey) return
     preloadKey = key
@@ -57,30 +75,47 @@ export function useShowOutput(options: ShowOutputOptions) {
     const mode = options.mode.value
     const cueKey = options.cueKey.value
     const transition = options.transition.value
-    const sends: Promise<void>[] = []
+    const now = Date.now()
+    const all = options.show.value.screens
+    const enabledLabels = new Set(all.flatMap((screen) => (screen.enabled ? [openLabel(screen) ?? ''] : [])))
+    const groups = new Map<string, { transition: Transition | null; screens: Screen[] }>()
     const live = new Set<string>()
-    let firstLive: Screen | null = null
-    for (const screen of options.show.value.screens) {
-      const label = outputLabel(screen)
+
+    for (const screen of all) {
+      const label = openLabel(screen)
       if (!label) continue
+      // A disabled screen blacks out its output only when no enabled screen uses it.
+      if (!screen.enabled && enabledLabels.has(label)) continue
       live.add(screen.id)
-      firstLive ??= screen
       const previous = memory.get(screen.id) ?? null
       const action = outputAction(previous, { label, mode, cueKey, transition, testPattern: screen.testPattern !== null })
       if (action === 'skip') continue
-      const scene = options.scene(screen)
-      memory.set(screen.id, { label, scene, cueKey, mode })
-      sends.push(
-        action === 'transition' && previous
-          ? applyTransition(label, transitionPlan(previous.scene, scene, transition))
-          : applyScene(label, scene),
-      )
+      const sent = outputTransition(previous, action, { cueKey, transition }, now)
+      memory.set(screen.id, {
+        label,
+        cueKey,
+        mode,
+        transition: action === 'transition' ? transition : sent,
+        transitionEndsAt: action === 'transition' ? now + transition.durationMs : (previous?.transitionEndsAt ?? 0),
+      })
+      const key = sent ? JSON.stringify(sent) : 'cut'
+      const group = groups.get(key) ?? { transition: sent, screens: [] }
+      group.screens.push(screenForMode(screen, mode))
+      groups.set(key, group)
     }
     for (const id of [...memory.keys()]) if (!live.has(id)) memory.delete(id)
-    if (mode === 'live' && firstLive && options.nextScene) preload(options.nextScene(firstLive))
+    if (mode === 'live' && options.nextComposition) preload(options.nextComposition())
+    if (groups.size === 0) return
+
+    const composition = options.composition()
     try {
-      await Promise.all(sends)
-      if (run === token) error.value = ''
+      const results = await Promise.all(
+        [...groups.values()].map((group) => applyComposition(composition, group.screens, group.transition)),
+      )
+      if (run !== token) return
+      const statuses = results.flat()
+      screenErrors.value = Object.fromEntries(statuses.flatMap((status) => (status.error ? [[status.screenId, status.error]] : [])))
+      error.value = statusErrors(statuses, all).join(' · ')
     } catch (reason) {
       if (run === token) error.value = message(reason)
     }
@@ -120,6 +155,7 @@ export function useShowOutput(options: ShowOutputOptions) {
 
   return {
     error,
+    screenErrors,
     push,
     openAll,
     closeAll,

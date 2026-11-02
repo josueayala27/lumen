@@ -282,7 +282,8 @@ const actions = css({ display: 'flex', alignItems: 'center', gap: '1' })
         />
         <p :class="note">
           <span>{{ rendered ? 'Rust preview.' : 'Browser approximation; the desktop app shows the Rust render.' }}</span>
-          <span>Blend modes, effects, masks and generators are not rendered until the compositor lands.</span>
+          <span v-if="rendered">Video rate, reverse and out point are not applied in the preview; transport controls them live.</span>
+          <span v-else>Blend modes, effects, masks and generators render only in the desktop app.</span>
         </p>
         <p v-if="preview.error.value" :class="note">Preview error: {{ preview.error.value }}</p>
       </div>

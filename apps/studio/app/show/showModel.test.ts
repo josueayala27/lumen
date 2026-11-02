@@ -5,15 +5,18 @@ import type { MediaAssetLike } from '~/live/liveScene'
 import type { DisplayInfo } from '~/output/api'
 import {
   assignClip,
-  composeScreenScene,
   createShowDoc,
   displayForScreen,
   emptyLive,
   launchColumn,
+  liveComposition,
+  schematicScene,
   updateScreen,
   withComposition,
   type ComposeContext,
   type ShowDoc,
+  type ShowLive,
+  type Screen,
 } from './showModel'
 
 const media: MediaAssetLike[] = [
@@ -47,7 +50,11 @@ function loadedShow(): ShowDoc {
   return show
 }
 
-describe('composeScreenScene', () => {
+function composeScreenScene(show: ShowDoc, live: ShowLive, screen: Screen, ctx: ComposeContext) {
+  return schematicScene(liveComposition(show, live, ctx), screen, ctx)
+}
+
+describe('schematicScene', () => {
   it('renders each screen through the composition adapter', () => {
     const show = loadedShow()
     const live = launchColumn(show, emptyLive(), 0)
@@ -70,6 +77,14 @@ describe('composeScreenScene', () => {
     const text = scene.layers.filter((layer) => layer.kind === 'text')
     expect(text.length).toBeGreaterThan(0)
     for (const layer of text) expect(layer.opacity).toBeLessThanOrEqual(0.5)
+  })
+
+  it('shows the bare canvas without a screen', () => {
+    const show = loadedShow()
+    const composition = liveComposition(show, launchColumn(show, emptyLive(), 0), context)
+    const scene = schematicScene(composition, null)
+    expect(scene.viewport).toMatchObject(composition.canvas)
+    expect(scene.layers.slice(0, 2).map((layer) => layer.kind)).toEqual(['video', 'image'])
   })
 
   it('renders a test pattern instead of content', () => {

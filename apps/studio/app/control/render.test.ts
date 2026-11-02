@@ -2,6 +2,7 @@ import type { Frame } from '@lumen/schema'
 import { describe, expect, it } from 'vitest'
 import {
   boundsForElement,
+  decodeCompositionPreviewResponse,
   decodePreviewResponse,
   hitTestBounds,
   moveFrame,
@@ -79,6 +80,37 @@ describe('decodePreviewResponse', () => {
     expect(() => decodePreviewResponse(new Uint8Array(4))).toThrow(/truncated/i)
     expect(() => decodePreviewResponse(payload({ layoutLength: 9999 }))).toThrow(/layout length/i)
     expect(() => decodePreviewResponse(payload({ rgba: [1, 2, 3] }))).toThrow(/RGBA bytes/i)
+  })
+})
+
+describe('decodeCompositionPreviewResponse', () => {
+  it('reads layer and element bounds keyed by layer, source and element', () => {
+    const layout = {
+      revision: 3,
+      bounds: [
+        { layerId: 'bg', sourceId: 'solid', elementId: null, x: 0, y: 0, width: 1, height: 1 },
+        { layerId: 'lyrics', sourceId: 'slide', elementId: 'title', x: 0.1, y: 0.7, width: 0.8, height: 0.2 },
+      ],
+      textRuns: [
+        { layerId: 'lyrics', sourceId: 'slide', elementId: 'title', line: 0, text: 'Hi', x: 0.1, y: 0.7, width: 0.2, height: 0.1, caretStops: [0.1, 0.2] },
+      ],
+    }
+    const decoded = decodeCompositionPreviewResponse(payload({ layout }))
+    expect(decoded.width).toBe(2)
+    expect(decoded.layout.revision).toBe(3)
+    expect(decoded.layout.bounds.map((entry) => [entry.layerId, entry.elementId])).toEqual([
+      ['bg', null],
+      ['lyrics', 'title'],
+    ])
+    expect(decoded.layout.textRuns[0]).toMatchObject({ layerId: 'lyrics', text: 'Hi' })
+    expect(Array.from(decoded.rgba)).toEqual([255, 0, 0, 255, 0, 255, 0, 255])
+  })
+
+  it('rejects a v1 layout and bad payloads', () => {
+    const v1 = { revision: 1, bounds: [{ elementId: 'a', x: 0, y: 0, width: 1, height: 1 }], textRuns: [] }
+    expect(() => decodeCompositionPreviewResponse(payload({ layout: v1 }))).toThrow()
+    expect(() => decodeCompositionPreviewResponse(new Uint8Array(4))).toThrow(/truncated/i)
+    expect(() => decodeCompositionPreviewResponse(payload({ rgba: [1, 2, 3] }))).toThrow(/RGBA bytes/i)
   })
 })
 

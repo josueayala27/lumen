@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { css, cx } from 'styled-system/css'
-import type { OutputMode, Scene } from '@lumen/schema'
+import type { Composition, OutputMode } from '@lumen/schema'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useShowControl } from '~/control/useShowControl'
@@ -11,8 +11,8 @@ import { useShowTimeline } from '~/live/useShowTimeline'
 import { isTauri } from '~/output/api'
 import { Badge, Button, IconButton, Input, Kbd, PanelSection } from '~/ui'
 import ClipGrid from './ClipGrid.vue'
+import CompositionMonitor from './CompositionMonitor.vue'
 import RundownPanel from './RundownPanel.vue'
-import SceneMonitor from './SceneMonitor.vue'
 import ScreensPanel from './ScreensPanel.vue'
 import { contentLayerId, cueTransition, showKeyAction } from './showLive'
 import { useShowDocument } from './useShowDocument'
@@ -50,24 +50,27 @@ function cueLabel(cue: { itemId: string; label: string } | null): string {
   return item && session.items.value.length > 1 ? `${item.label} · ${cue.label}` : cue.label
 }
 
-// Monitors. Program holds its frame while frozen, like the outputs.
-const programScene = shallowRef<Scene | null>(null)
-const previewScene = shallowRef<Scene | null>(null)
+// Monitors show the whole canvas through the compositor. Program holds its
+// frame while frozen, like the outputs; black and logo black it out.
+const programComposition = shallowRef<Composition | null>(null)
+const previewComposition = shallowRef<Composition | null>(null)
 watch(
   () => [show.value, live.version.value] as const,
   () => {
-    previewScene.value = live.canvasScene('preview')
-    if (mode.value !== 'freeze' || !programScene.value) programScene.value = live.canvasScene('program')
+    previewComposition.value = live.frameComposition('preview')
+    if (mode.value !== 'freeze' || !programComposition.value) programComposition.value = live.frameComposition('program')
   },
   { immediate: true },
 )
+const previewCanvas = computed(() => live.canvas('preview'))
+const programCanvas = computed(() => live.canvas('program'))
 
 // Outputs
 
 const output = useShowOutput({
   show,
-  scene: (screen) => live.screenScene(screen, 'program'),
-  nextScene: (screen) => (live.upNext.value ? live.screenScene(screen, 'next') : null),
+  composition: () => live.frameComposition('program'),
+  nextComposition: () => (live.upNext.value ? live.frameComposition('next') : null),
   mode,
   cueKey: computed(() => live.programCue.value?.key ?? ''),
   transition: computed(() => cueTransition(live.programCue.value, session.theme.value)),
@@ -85,9 +88,9 @@ const showTimeline = useShowTimeline({
   media: session.media,
 })
 watch(
-  showTimeline.sceneTransform,
+  showTimeline.timelineTransform,
   (value) => {
-    live.sceneTransform.value = value
+    live.timelineTransform.value = value
   },
   { immediate: true },
 )
@@ -238,7 +241,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   if (clockTimer) clearInterval(clockTimer)
-  live.sceneTransform.value = null
+  live.timelineTransform.value = null
 })
 
 const root = css({ display: 'flex', flexDirection: 'column', h: 'full', minH: '0', bg: 'bg.canvas' })
@@ -326,15 +329,15 @@ const shortcut = css({ display: 'flex', alignItems: 'center', justifyContent: 's
           <div :class="pane">
             <p :class="paneLabel">Preview <span :class="paneValue">{{ cueLabel(live.previewCue.value) }}</span></p>
             <div :class="previewFrame">
-              <SceneMonitor :scene="previewScene" label="Preview" />
+              <CompositionMonitor :composition="previewComposition" :screen="previewCanvas" label="Preview" />
             </div>
           </div>
           <div :class="pane">
             <p :class="paneLabel">Program <span :class="paneValue">{{ cueLabel(live.programCue.value) }}</span></p>
             <div :class="programFrame">
-              <SceneMonitor :scene="programScene" label="Program">
+              <CompositionMonitor :composition="programComposition" :screen="programCanvas" label="Program">
                 <span v-if="!isLive" :class="modeBadge">{{ mode }}</span>
-              </SceneMonitor>
+              </CompositionMonitor>
             </div>
           </div>
         </div>
@@ -360,7 +363,7 @@ const shortcut = css({ display: 'flex', alignItems: 'center', justifyContent: 's
           <template #actions>
             <Badge v-if="openOutputs > 0" tone="success" dot :label="`${openOutputs} open`" />
           </template>
-          <ScreensPanel />
+          <ScreensPanel :errors="output.screenErrors.value" />
         </PanelSection>
 
         <PanelSection title="Stage message" collapsible storage-key="show.stageMessage">

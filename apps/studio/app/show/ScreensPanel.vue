@@ -12,6 +12,7 @@ import { useShowDocument } from './useShowDocument'
 import { useShowLive } from './useShowLive'
 
 /** One thumbnail per screen with the switches an operator needs while live. */
+const props = withDefaults(defineProps<{ errors?: Record<string, string> }>(), { errors: () => ({}) })
 const showDocument = useShowDocument()
 const show = showDocument.show
 const live = useShowLive()
@@ -67,6 +68,7 @@ const head = css({ display: 'flex', alignItems: 'center', justifyContent: 'space
 const name = css({ textStyle: 'ui.sm', color: 'fg.default', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
 const meta = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
 const row = css({ display: 'flex', alignItems: 'center', gap: '3', textStyle: 'ui.xs', color: 'fg.muted' })
+const failure = css({ textStyle: 'ui.xs', color: 'danger.default' })
 const toggle = css({ display: 'flex', alignItems: 'center', gap: '1.5' })
 </script>
 
@@ -88,6 +90,7 @@ const toggle = css({ display: 'flex', alignItems: 'center', gap: '1.5' })
         :throttle-ms="THUMBNAIL_THROTTLE_MS"
         :label="`${screen.name} output`"
       />
+      <p v-if="props.errors[screen.id]" :class="failure" role="alert">{{ props.errors[screen.id] }}</p>
       <div :class="row">
         <label :class="toggle">
           <Switch :model-value="screen.enabled" size="sm" aria-label="Enabled" @update:model-value="(on: boolean) => patch(screen, { enabled: on })" />

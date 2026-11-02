@@ -1,7 +1,7 @@
-import { compositionToScene, createScreen, emptyLive, liveComposition, type ShowMediaLike } from '@lumen/core'
-import type { Composition, PresentationDoc, Scene, ShowDoc } from '@lumen/schema'
+import { emptyLive, liveComposition, type ShowMediaLike } from '@lumen/core'
+import type { Composition, CompositionBounds, PresentationDoc, ShowDoc } from '@lumen/schema'
 import { onBeforeUnmount, ref, shallowRef, watch, type Ref } from 'vue'
-import { isTauriRuntime, previewRender } from '~/control/render'
+import { isTauriRuntime, previewRenderComposition } from '~/control/render'
 import { useShowLive } from '~/show/useShowLive'
 
 /** Preview width while dragging a handle (doc 02 § Preview flow). */
@@ -13,6 +13,8 @@ export interface ComposePreviewFrame {
   width: number
   height: number
   rgba: Uint8ClampedArray
+  /** Layer boxes and slide elements as the compositor laid them out, normalized to the canvas. */
+  bounds: CompositionBounds[]
 }
 
 export interface ComposePreviewOptions {
@@ -23,21 +25,18 @@ export interface ComposePreviewOptions {
 }
 
 /**
- * The v1 scene for the whole canvas, as a full-canvas virtual screen sees it.
- * `resolve` plays the live clips and rundown content; without it the
- * composition shows its own layer sources.
+ * The composition the canvas preview renders. `resolve` plays the live clips
+ * and rundown content; without it the composition shows its own layer sources.
  */
-export function composeCanvasScene(
+export function composeCanvasComposition(
   show: ShowDoc,
   composition: Composition,
   media: readonly ShowMediaLike[],
   presentation: (id: string) => PresentationDoc | null = () => null,
   resolve?: (show: ShowDoc) => Composition,
-): Scene {
+): Composition {
   const next = { ...show, composition }
-  const resolved = resolve ? resolve(next) : liveComposition(next, emptyLive(), { media, presentation, theme: null })
-  const screen = createScreen({ id: 'compose-preview', name: 'Compose', size: composition.canvas })
-  return compositionToScene(resolved, screen)
+  return resolve ? resolve(next) : liveComposition(next, emptyLive(), { media, presentation, theme: null })
 }
 
 /** Pixel size of a preview render for a canvas, keeping its aspect ratio. */
@@ -48,8 +47,8 @@ export function previewSize(canvas: { width: number; height: number }, maxWidth:
 }
 
 /**
- * Renders the composition through the Rust preview renderer whenever it
- * changes. One render runs at a time; changes during a render coalesce into one
+ * Renders the bare canvas (no screen) through the v2 compositor whenever the
+ * composition changes: blend modes, effects, masks and generators included. One render runs at a time; changes during a render coalesce into one
  * follow-up. Outside Tauri `available` is false and the page draws its own
  * approximation.
  */
@@ -66,16 +65,17 @@ export function useComposePreview(options: ComposePreviewOptions) {
   async function renderOnce(): Promise<void> {
     const show = options.show.value
     const composition = show.composition
-    const scene = composeCanvasScene(show, composition, options.media.value, presentation, (value) =>
+    const resolved = composeCanvasComposition(show, composition, options.media.value, presentation, (value) =>
       live.composition(value, { media: options.media.value, presentation }),
     )
     const size = previewSize(composition.canvas, options.dragging.value ? DRAG_PREVIEW_WIDTH : REST_PREVIEW_WIDTH)
-    const decoded = await previewRender(scene, size.width, size.height)
+    const decoded = await previewRenderComposition(resolved, null, size.width, size.height)
     if (disposed) return
     frame.value = {
       width: decoded.width,
       height: decoded.height,
       rgba: new Uint8ClampedArray(decoded.rgba.buffer, decoded.rgba.byteOffset, decoded.rgba.byteLength),
+      bounds: decoded.layout.bounds,
     }
     error.value = ''
   }

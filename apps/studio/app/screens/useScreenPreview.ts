@@ -1,8 +1,9 @@
-import type { PresentationDoc, Scene, SceneLayer, Screen, ShowDoc } from '@lumen/schema'
+import type { Composition, PresentationDoc, Scene, SceneLayer, Screen, ShowDoc } from '@lumen/schema'
 import { onBeforeUnmount, ref, shallowRef, watch, type Ref } from 'vue'
-import { previewRender, type DecodedPreview } from '~/control/render'
+import { previewRenderComposition, type DecodedCompositionPreview } from '~/control/render'
 import type { MediaAsset } from '~/data/media'
 import { isTauri } from '~/output/api'
+import { schematicScene } from '~/show/showModel'
 import { useShowLive } from '~/show/useShowLive'
 
 /** Longest side of the native preview frame, in pixels. */
@@ -57,24 +58,25 @@ function message(reason: unknown): string {
 }
 
 /**
- * What the selected screen shows, through the same composition adapter the
- * Show page sends to outputs, with the clips and rundown content playing now
- * (shared live state; the output mode is left out). Inside the desktop app the
- * scene is rendered by the native preview renderer; in the browser the caller
- * draws `schematic` instead.
+ * What the selected screen shows, with the clips and rundown content playing
+ * now (shared live state; the output mode is left out). Inside the desktop app
+ * the v2 compositor renders the screen as its output does: layout, corner
+ * pin, mesh, edge blend, colour, output masks and test pattern. In the browser
+ * the caller draws `schematic` from `scene` (v1 adapter, no mapping).
  */
 export function useScreenPreview(options: ScreenPreviewOptions) {
   const native = isTauri()
   const live = useShowLive()
+  const composition = shallowRef<Composition | null>(null)
   const scene = shallowRef<Scene | null>(null)
-  const frame = shallowRef<DecodedPreview | null>(null)
+  const frame = shallowRef<DecodedCompositionPreview | null>(null)
   const error = ref('')
   let token = 0
   let timer: ReturnType<typeof setTimeout> | undefined
 
-  function compose(screen: Screen): Scene {
+  function compose(): Composition {
     // Library media and documents from the caller win; live documents fill in.
-    return live.screenScene(screen, 'content', options.show.value, {
+    return live.frameComposition('content', options.show.value, {
       media: options.media.value.length ? options.media.value : live.session.media.value,
       presentation: (id) => options.presentation?.(id) ?? live.presentation(id),
     })
@@ -84,17 +86,21 @@ export function useScreenPreview(options: ScreenPreviewOptions) {
     const screen = options.screen.value
     const run = ++token
     if (!screen) {
+      composition.value = null
       scene.value = null
       frame.value = null
       return
     }
     try {
-      const next = compose(screen)
-      scene.value = next
+      const next = compose()
+      composition.value = next
       error.value = ''
-      if (!native) return
+      if (!native) {
+        scene.value = schematicScene(next, screen, { theme: live.session.theme.value })
+        return
+      }
       const size = previewSize(screen)
-      const result = await previewRender(next, size.width, size.height)
+      const result = await previewRenderComposition(next, screen, size.width, size.height)
       if (run === token) frame.value = result
     } catch (reason) {
       if (run === token) {
@@ -116,5 +122,5 @@ export function useScreenPreview(options: ScreenPreviewOptions) {
   )
   onBeforeUnmount(() => clearTimeout(timer))
 
-  return { native, scene, frame, error, compose, render }
+  return { native, composition, scene, frame, error, compose, render }
 }

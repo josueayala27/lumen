@@ -16,6 +16,7 @@ import {
   type SceneSlideSource,
 } from '~/live/liveScene'
 import { nextLivePosition, type LiveItem } from '~/live/liveSession'
+import type { ScreenOutputStatus } from '~/output/api'
 
 /**
  * Pure glue between the rundown live state (`packages/core/src/live.ts`) and
@@ -234,6 +235,17 @@ export function outputTransition(
   if (action === 'transition') return next.transition
   if (action !== 'apply' || !previous?.transition) return null
   return previous.cueKey === next.cueKey && now < previous.transitionEndsAt ? previous.transition : null
+}
+
+/**
+ * Per-screen errors from `apply_composition`, as `Screen name: error` lines.
+ * Screens Rust reports without an error are left out.
+ */
+export function statusErrors(statuses: readonly ScreenOutputStatus[], screens: readonly Screen[]): string[] {
+  const names = new Map(screens.map((screen) => [screen.id, screen.name]))
+  return statuses.flatMap((status) =>
+    status.error ? [`${names.get(status.screenId) ?? status.screenId}: ${status.error}`] : [],
+  )
 }
 
 /** Keyboard map for the Show workspace. Returns null for keys it does not handle. */

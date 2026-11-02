@@ -405,7 +405,7 @@ const maskRow = css({ display: 'flex', alignItems: 'center', justifyContent: 'sp
 
     <PanelSection title="Mapping" collapsible storage-key="lumen.screens.mapping">
       <div :class="sectionBody">
-        <p :class="hint">Saved with the show. The renderer does not apply mapping yet.</p>
+        <p :class="hint">Saved with the show and applied by the compositor. Image output masks are not rendered; up to four rect or polygon masks are.</p>
 
         <PropertyRow label="Corner pin">
           <Switch :model-value="pin !== null" size="sm" aria-label="Corner pin" @update:model-value="(on: boolean) => patchMapping({ cornerPin: on ? identityCornerPin() : null })" />
