@@ -1,14 +1,15 @@
-import { buildScene, textSlide } from '@lumen/core'
+import { buildScene, createLayer, textSlide } from '@lumen/core'
 import type {
-  OutputMode,
+  Composition,
+  Layer,
   PresentationDoc,
   Scene,
   SceneAsset,
   SceneLayer,
   Slide,
+  Source,
   Theme,
   Transition,
-  TransitionPlan,
 } from '@lumen/schema'
 
 /** Minimal media row shape needed to resolve scene assets. */
@@ -177,34 +178,6 @@ export function blackScene(revision: number): Scene {
   return modeSceneBase(revision, blackLayer())
 }
 
-/** Clear output: transparent/background only, per the live engine contract. */
-export function clearScene(revision: number): Scene {
-  return modeSceneBase(revision, null)
-}
-
-/**
- * Logo output has no logo asset yet, so it falls back to the black frame instead
- * of showing the previous slide.
- */
-export function logoScene(revision: number): Scene {
-  return blackScene(revision)
-}
-
-/** Scene for a non-live mode; `live` and `freeze` keep the current frame instead. */
-export function modeScene(mode: OutputMode, revision: number): Scene | null {
-  switch (mode) {
-    case 'black':
-      return blackScene(revision)
-    case 'clear':
-      return clearScene(revision)
-    case 'logo':
-      return logoScene(revision)
-    case 'live':
-    case 'freeze':
-      return null
-  }
-}
-
 /** Slide transition first, then the theme transition, then the product default. */
 export function effectiveTransition(slide: Slide | null, theme: Theme | null): Transition {
   return slide?.transition ?? theme?.transition ?? DEFAULT_TRANSITION
@@ -214,29 +187,15 @@ export function isCut(transition: Transition): boolean {
   return transition.kind === 'cut' || transition.durationMs === 0
 }
 
-export function transitionPlan(
-  from: Scene,
-  to: Scene,
-  transition: Transition,
-): TransitionPlan {
-  return {
-    fromRevision: from.revision,
-    toRevision: to.revision,
-    from,
-    to,
-    kind: transition.kind,
-    durationMs: transition.durationMs,
-    easing: transition.easing,
-  }
-}
-
 /**
- * Per-frame overrides from the show timeline (media clips and keyframes). A new
- * `key` means the output needs the scene again.
+ * Per-frame overrides from the show timeline (media clips and keyframes),
+ * applied to the program composition. `source` is the rundown slide on air and
+ * `contentLayerId` the layer the rundown drives. A new `key` means the outputs
+ * need the composition again.
  */
-export interface LiveSceneTransform {
+export interface LiveCompositionTransform {
   key: string
-  apply: (scene: Scene, source: SceneSlideSource | null) => Scene
+  apply: (composition: Composition, source: SceneSlideSource | null, contentLayerId: string | null) => Composition
 }
 
 /** A timeline media clip resolved against the media library. */
@@ -250,45 +209,48 @@ export interface TimelineMediaLayer {
   gain: number
 }
 
-const TIMELINE_MEDIA_Z = -900
-
 /**
- * Adds timeline media clips to an audience scene as full-frame layers behind
- * the slide content. Audio-only assets are skipped; the control window plays them.
+ * Adds timeline media clips to a composition as full-canvas layers below
+ * every other layer. Audio-only assets are skipped; the control window plays
+ * them. Returns the same composition when no visual clip is active.
  */
-export function withTimelineMedia(scene: Scene, entries: readonly TimelineMediaLayer[]): Scene {
-  const visual = entries.filter((entry) => entry.asset.kind === 'image' || entry.asset.kind === 'video')
-  if (visual.length === 0) return scene
-
-  const assets = [...scene.assets]
-  const layers: SceneLayer[] = []
-  visual.forEach((entry, index) => {
+export function withTimelineMedia(composition: Composition, entries: readonly TimelineMediaLayer[]): Composition {
+  const assets = [...composition.assets]
+  const sources: Source[] = []
+  const layers: Layer[] = []
+  for (const entry of entries) {
+    if (entry.asset.kind !== 'image' && entry.asset.kind !== 'video') continue
     const asset = sceneAssetFor(entry.asset)
-    if (!asset) return
+    if (!asset) continue
     if (!assets.some((existing) => existing.id === asset.id)) assets.push(asset)
-    const base = {
-      id: `timeline-media-${entry.clipId}`,
-      frame: { x: 0, y: 0, w: 1, h: 1, rotation: 0 },
-      z: TIMELINE_MEDIA_Z + index,
-      opacity: 1,
-      source: { assetId: entry.asset.id, hash: entry.asset.sha256 },
-      fit: 'cover' as const,
-    }
-    layers.push(
+    const id = `timeline-media-${entry.clipId}`
+    const ref = { assetId: entry.asset.id, hash: entry.asset.sha256 }
+    sources.push(
       entry.asset.kind === 'video'
         ? {
-            ...base,
+            id,
+            name: '',
             kind: 'video',
+            asset: ref,
             loop: entry.loop,
+            inMs: Math.max(0, Math.round(entry.startMs)),
+            outMs: null,
+            rate: 1,
+            reverse: false,
             muted: entry.gain <= 0,
             volume: Math.min(1, Math.max(0, entry.gain)),
-            startMs: Math.max(0, Math.round(entry.startMs)),
           }
-        : { ...base, kind: 'image', radius: 0 },
+        : { id, name: '', kind: 'image', asset: ref },
     )
-  })
-  if (layers.length === 0) return scene
-  return { ...scene, assets, layers: [...layers, ...scene.layers] }
+    layers.push(createLayer({ id, name: 'Timeline media', sourceId: id, fit: 'cover', tags: ['timeline'] }))
+  }
+  if (layers.length === 0) return composition
+  return {
+    ...composition,
+    assets,
+    sources: [...composition.sources, ...sources],
+    layers: [...layers, ...composition.layers],
+  }
 }
 
 /** Stable key for the videos a scene plays, so preloads are sent only when they change. */

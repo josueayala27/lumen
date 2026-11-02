@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { Scene, SceneLayer, ShowTimeline, TimelineClip, TimelineDoc, TimelineTrack } from '@lumen/schema'
+import type { Composition, Scene, SceneLayer, SlideElement, ShowTimeline, TimelineClip, TimelineDoc, TimelineTrack } from '@lumen/schema'
+import { createComposition, createLayer } from '../src/composition'
 import { evaluateTimeline } from '../src/timelinePlayback'
 import {
   activeMediaClips,
   applyKeyframeSamples,
+  applyKeyframeSamplesToComposition,
   clipsStartingBetween,
   mediaClipSourceSeconds,
   showTimelineFromCueDoc,
@@ -181,5 +183,56 @@ describe('applyKeyframeSamples', () => {
   it('leaves other slides untouched', () => {
     const samples = evaluateTimeline(doc, 5, null).keyframes
     expect(applyKeyframeSamples(scene, doc, samples, { presentationId: 'p1', slideIndex: 1 })).toBe(scene)
+  })
+
+  function composition(): Composition {
+    const base = createComposition({ width: 1920, height: 1080 })
+    return {
+      ...base,
+      sources: [
+        { id: 'slide', name: '', kind: 'slide', revision: 0, elements: [text as SlideElement], safeArea: { top: 0, right: 0, bottom: 0, left: 0 }, size: { width: 1920, height: 1080 } },
+        { id: 'other', name: '', kind: 'slide', revision: 0, elements: [text as SlideElement], safeArea: { top: 0, right: 0, bottom: 0, left: 0 }, size: { width: 1920, height: 1080 } },
+      ],
+      layers: [
+        createLayer({ id: 'content', name: 'Content', sourceId: 'slide', tags: ['content'] }),
+        createLayer({ id: 'side', name: 'Side', sourceId: 'other' }),
+      ],
+    }
+  }
+
+  it('drives elements of the slide source on the content layer only', () => {
+    const samples = evaluateTimeline(doc, 5, null).keyframes
+    const input = composition()
+    const result = applyKeyframeSamplesToComposition(input, doc, samples, { presentationId: 'p1', slideIndex: 0 }, 'content')
+    const slide = result.sources.find((source) => source.id === 'slide')
+    const element = slide?.kind === 'slide' ? slide.elements[0]! : null
+    expect(element?.opacity).toBeCloseTo(0.5)
+    expect(element?.frame.x).toBe(0.3)
+    expect(result.sources.find((source) => source.id === 'other')).toBe(input.sources[1])
+    expect(applyKeyframeSamplesToComposition(input, doc, samples, { presentationId: 'p1', slideIndex: 1 }, 'content')).toBe(input)
+    expect(applyKeyframeSamplesToComposition(input, doc, samples, { presentationId: 'p1', slideIndex: 0 }, null)).toBe(input)
+  })
+
+  it('drives a composition layer when the track names its id', () => {
+    const layerDoc = timeline({
+      tracks: [
+        track('layer', {
+          kind: 'layer',
+          presentationId: null,
+          slideIndex: null,
+          elementId: 'side',
+          properties: [
+            { id: 'op', property: 'opacity', keyframes: [{ id: 'k1', frame: 0, value: 0.25, easing: linear }] },
+            { id: 'w', property: 'width', keyframes: [{ id: 'k2', frame: 0, value: 0.5, easing: linear }] },
+          ],
+        }),
+      ],
+    })
+    const samples = evaluateTimeline(layerDoc, 0, null).keyframes
+    const result = applyKeyframeSamplesToComposition(composition(), layerDoc, samples, { presentationId: null, slideIndex: null }, 'content')
+    const side = result.layers.find((layer) => layer.id === 'side')!
+    expect(side.opacity).toBe(0.25)
+    expect(side.transform.w).toBe(0.5)
+    expect(side.transform.h).toBe(1)
   })
 })

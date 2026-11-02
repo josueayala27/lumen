@@ -1,15 +1,12 @@
-import { buildBlankPresentation, defaultTheme } from '@lumen/core'
+import { buildBlankPresentation, compositionToScene, createComposition, createScreen, defaultTheme } from '@lumen/core'
 import type { PresentationDoc } from '@lumen/schema'
 import { describe, expect, it } from 'vitest'
 import {
   assetsForDoc,
   blackScene,
-  clearScene,
   collectAssetIds,
   effectiveTransition,
-  modeScene,
   sceneForSlide,
-  transitionPlan,
   sceneVideoKey,
   withTimelineMedia,
   type MediaAssetLike,
@@ -146,25 +143,11 @@ describe('scene building', () => {
   })
 })
 
-describe('output modes', () => {
-  it('keeps the current frame for live and freeze', () => {
-    expect(modeScene('live', 1)).toBeNull()
-    expect(modeScene('freeze', 1)).toBeNull()
-  })
-
-  it('black and logo fall back to an opaque frame', () => {
+describe('black scene', () => {
+  it('is an opaque black frame with no layers', () => {
     const black = blackScene(2)
     expect(black.layers).toEqual([])
     expect(black.background).toMatchObject({ kind: 'shape', fill: '#000000' })
-    expect(modeScene('black', 2)).toEqual(black)
-    expect(modeScene('logo', 2)).toEqual(blackScene(2))
-  })
-
-  it('clear drops the background and layers', () => {
-    const clear = clearScene(3)
-    expect(clear.background).toBeNull()
-    expect(clear.layers).toEqual([])
-    expect(modeScene('clear', 3)).toEqual(clear)
   })
 })
 
@@ -187,42 +170,28 @@ describe('transition plans', () => {
       easing: 'linear',
     })
   })
-
-  it('carries both scenes and their revisions', () => {
-    const from = blackScene(1)
-    const to = clearScene(2)
-    const plan = transitionPlan(from, to, {
-      kind: 'dissolve',
-      durationMs: 400,
-      easing: 'ease-out',
-    })
-    expect(plan.fromRevision).toBe(1)
-    expect(plan.toRevision).toBe(2)
-    expect(plan.from).toEqual(from)
-    expect(plan.to).toEqual(to)
-    expect(plan.kind).toBe('dissolve')
-    expect(plan.durationMs).toBe(400)
-    expect(plan.easing).toBe('ease-out')
-  })
 })
 
 describe('timeline media', () => {
-  it('adds video and image clips behind slide layers', () => {
-    const base = sceneForSlide({ doc: doc(), slideIndex: 0, label: 'Slide' }, null, [], 1)
-    const video: MediaAssetLike = { id: 'v1', kind: 'video', sha256: 'hv', width: 1920, height: 1080, localPath: '/m/v.mp4', missing: false }
-    const audio: MediaAssetLike = { id: 'a1', kind: 'audio', sha256: 'ha', width: null, height: null, localPath: '/m/a.mp3', missing: false }
-    const scene = withTimelineMedia(base, [
+  const video: MediaAssetLike = { id: 'v1', kind: 'video', sha256: 'hv', width: 1920, height: 1080, localPath: '/m/v.mp4', missing: false }
+  const audio: MediaAssetLike = { id: 'a1', kind: 'audio', sha256: 'ha', width: null, height: null, localPath: '/m/a.mp3', missing: false }
+
+  it('adds video and image clips as the bottom composition layers', () => {
+    const base = createComposition({ width: 1920, height: 1080 })
+    const composition = withTimelineMedia(base, [
       { clipId: 'c1', asset: video, startMs: 1500, loop: false, gain: 0 },
       { clipId: 'c2', asset: audio, startMs: 0, loop: false, gain: 1 },
     ])
-    expect(scene.layers[0]).toMatchObject({ kind: 'video', id: 'timeline-media-c1', startMs: 1500, muted: true })
-    expect(scene.layers).toHaveLength(base.layers.length + 1)
-    expect(scene.assets.map((asset) => asset.id)).toContain('v1')
+    expect(composition.layers).toHaveLength(1)
+    expect(composition.layers[0]).toMatchObject({ id: 'timeline-media-c1', sourceId: 'timeline-media-c1', fit: 'cover' })
+    expect(composition.sources[0]).toMatchObject({ kind: 'video', inMs: 1500, muted: true, loop: false })
+    expect(composition.assets.map((asset) => asset.id)).toContain('v1')
   })
 
-  it('returns the same scene when no visual clip is active', () => {
-    const base = blackScene(1)
+  it('returns the same composition when no visual clip is active', () => {
+    const base = createComposition()
     expect(withTimelineMedia(base, [])).toBe(base)
+    expect(withTimelineMedia(base, [{ clipId: 'c2', asset: audio, startMs: 0, loop: false, gain: 1 }])).toBe(base)
   })
 })
 
@@ -231,7 +200,8 @@ describe('scene video key', () => {
     const base = sceneForSlide({ doc: doc(), slideIndex: 0, label: 'Slide' }, null, [], 1)
     expect(sceneVideoKey(base)).toBe('')
     const video: MediaAssetLike = { id: 'v1', kind: 'video', sha256: 'hv', width: 1920, height: 1080, localPath: '/m/v.mp4', missing: false }
-    const withVideo = withTimelineMedia(base, [{ clipId: 'c1', asset: video, startMs: 500, loop: true, gain: 0 }])
+    const composition = withTimelineMedia(createComposition(), [{ clipId: 'c1', asset: video, startMs: 500, loop: true, gain: 0 }])
+    const withVideo = compositionToScene(composition, createScreen())
     expect(sceneVideoKey(withVideo)).toBe('v1@500')
     expect(sceneVideoKey({ ...withVideo, revision: 99 })).toBe('v1@500')
   })

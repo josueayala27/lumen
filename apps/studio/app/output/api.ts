@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { Scene, TransitionPlan } from '@lumen/schema'
+import type { Composition, Scene, Screen, Transition, TransitionPlan } from '@lumen/schema'
 
 /** A monitor as reported by `lumen-output`. Field names match the Rust serialization. */
 export interface DisplayInfo {
@@ -49,6 +49,30 @@ export function applyScene(label: string | null, scene: Scene): Promise<void> {
 /** Starts a transition between two scenes on the assigned audience output. */
 export function applyTransition(label: string | null, plan: TransitionPlan): Promise<void> {
   return invoke('apply_transition', { label, plan })
+}
+
+/** What `apply_composition` did with one screen. Field names match the Rust serialization. */
+export interface ScreenOutputStatus {
+  screenId: string
+  /** Output window label when the screen drives a native output. */
+  label: string | null
+  /** Why the screen has no output: not a display target, monitor missing, open failed. */
+  error: string | null
+}
+
+/**
+ * Sends a composition to one native output per display screen (render
+ * contract v2). Rust opens a missing output for each enabled screen, renders
+ * disabled screens with an open output black, and applies each screen's
+ * layout, mapping, blackout and test pattern. `transition` animates layer
+ * source changes and slide revisions; null cuts.
+ */
+export function applyComposition(
+  composition: Composition,
+  screens: readonly Screen[],
+  transition: Transition | null = null,
+): Promise<ScreenOutputStatus[]> {
+  return invoke('apply_composition', { composition, screens, transition })
 }
 
 /** Starts the next cue's videos paused on their first frame; `null` releases them. */

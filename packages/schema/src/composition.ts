@@ -333,3 +333,44 @@ export const compositionSchema = z
     })
   })
 export type Composition = z.infer<typeof compositionSchema>
+
+// --- Preview result ----------------------------------------------------------
+
+/**
+ * Editor bounds of a layer box (`elementId` null) or a slide element, from
+ * `preview_render_composition`. Normalized to the screen output before mapping,
+ * or to the canvas when no screen is given.
+ */
+export const compositionBoundsSchema = z.object({
+  layerId: z.string(),
+  sourceId: z.string().nullable(),
+  elementId: z.string().nullable(),
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+})
+export type CompositionBounds = z.infer<typeof compositionBoundsSchema>
+
+/** One shaped text line of a slide source, in the same space as the bounds. */
+export const compositionTextRunSchema = z.object({
+  layerId: z.string(),
+  sourceId: z.string(),
+  elementId: z.string(),
+  line: z.number().int().nonnegative(),
+  text: z.string(),
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+  caretStops: z.array(z.number()),
+})
+export type CompositionTextRun = z.infer<typeof compositionTextRunSchema>
+
+/** Layout JSON returned with a composition preview frame. */
+export const compositionPreviewResultSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  bounds: z.array(compositionBoundsSchema),
+  textRuns: z.array(compositionTextRunSchema),
+})
+export type CompositionPreviewResult = z.infer<typeof compositionPreviewResultSchema>

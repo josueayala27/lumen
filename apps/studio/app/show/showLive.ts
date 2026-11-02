@@ -1,23 +1,21 @@
 import {
   clearLayer,
-  compositionToScene,
   createScreen,
   liveComposition,
   presentationSlideSource,
   type ShowLive,
   type ShowResolveContext,
 } from '@lumen/core'
-import type { Composition, Layer, OutputMode, PresentationDoc, Scene, Screen, ShowDoc, Source, Transition } from '@lumen/schema'
+import type { Composition, Layer, OutputMode, PresentationDoc, Screen, ShowDoc, Source, Transition } from '@lumen/schema'
 import {
   assetsForDoc,
   effectiveTransition,
   isCut,
   placeholderDoc,
-  type LiveSceneTransform,
+  type LiveCompositionTransform,
   type SceneSlideSource,
 } from '~/live/liveScene'
 import { nextLivePosition, type LiveItem } from '~/live/liveSession'
-import { testPatternScene, type ComposeContext } from './showModel'
 
 /**
  * Pure glue between the rundown live state (`packages/core/src/live.ts`) and
@@ -135,63 +133,43 @@ export function programComposition(
 }
 
 /**
- * Runs the timeline transform (media clips and keyframes) on a v2 scene. The
- * adapter names slide elements `<layerId>.<elementId>`; keyframe tracks bind to
- * the bare element id, so the content layer's prefix comes off for the call.
+ * Runs the timeline transform (media clips and keyframes) on the program
+ * composition. Keyframes address composition layers by id and the content
+ * layer's slide elements by their bare element id.
  */
 export function applyTimelineTransform(
-  scene: Scene,
-  transform: LiveSceneTransform | null,
+  composition: Composition,
+  transform: LiveCompositionTransform | null,
   cue: RundownCue | null,
   layerId: string | null,
-): Scene {
-  if (!transform) return scene
-  const prefix = layerId ? `${layerId}.` : null
-  const stripped = new Set<string>()
-  const bare = prefix
-    ? {
-        ...scene,
-        layers: scene.layers.map((layer) => {
-          if (!layer.id.startsWith(prefix)) return layer
-          const id = layer.id.slice(prefix.length)
-          stripped.add(id)
-          return { ...layer, id }
-        }),
-      }
-    : scene
-  const result = transform.apply(bare, cueSlideSource(cue))
-  if (!prefix || stripped.size === 0) return result
-  return {
-    ...result,
-    layers: result.layers.map((layer) => (stripped.has(layer.id) ? { ...layer, id: `${prefix}${layer.id}` } : layer)),
-  }
-}
-
-export interface ShowSceneOptions {
-  transform?: LiveSceneTransform | null
+): Composition {
+  return transform ? transform.apply(composition, cueSlideSource(cue), layerId) : composition
 }
 
 /**
- * The v1 scene one screen shows for a frame. Test patterns win; `black` and
- * `logo` (no logo asset yet) give a black frame; `freeze` renders like `live`
- * and the output decides not to send it.
+ * The composition a frame shows on every screen: `programComposition` (clips,
+ * rundown cue, `clear`) plus the timeline transform. `black`, `logo` and test
+ * patterns are per screen (`screenForMode`); `freeze` renders like `live` and
+ * the output decides not to send it.
  */
-export function showScreenScene(
+export function showComposition(
   show: ShowDoc,
   live: ShowLive,
-  screen: Screen,
   frame: ShowFrame,
-  context: ComposeContext,
-  options: ShowSceneOptions = {},
-): Scene {
-  if (screen.testPattern) return testPatternScene(screen, context)
+  context: ShowResolveContext,
+  transform: LiveCompositionTransform | null = null,
+): Composition {
   const composition = programComposition(show, live, frame, context)
-  const black = frame.mode === 'black' || frame.mode === 'logo'
-  const scene = compositionToScene(composition, black ? { ...screen, blackout: true } : screen, {
-    revision: context.revision,
-  })
-  if (black || screen.blackout) return scene
-  return applyTimelineTransform(scene, options.transform ?? null, frame.cue, contentLayerId(show.composition))
+  return applyTimelineTransform(composition, transform, frame.cue, contentLayerId(show.composition))
+}
+
+/**
+ * The screen as the compositor should draw it for an output mode: `black` and
+ * `logo` (no logo asset yet) set blackout, which Rust renders as a black
+ * frame. Test patterns stay on the screen and win, as Rust draws them first.
+ */
+export function screenForMode(screen: Screen, mode: OutputMode): Screen {
+  return (mode === 'black' || mode === 'logo') && !screen.blackout ? { ...screen, blackout: true } : screen
 }
 
 /** A virtual screen that shows the whole canvas, for the Preview and Program monitors. */
@@ -208,9 +186,11 @@ export function cueTransition(cue: RundownCue | null, theme: ShowResolveContext[
 /** What an output last received, per screen. */
 export interface OutputMemory {
   label: string
-  scene: Scene
   cueKey: string
   mode: OutputMode
+  /** The transition last started on this output and when it ends (ms, `Date.now()` clock). */
+  transition: Transition | null
+  transitionEndsAt: number
 }
 
 export type OutputAction = 'skip' | 'apply' | 'transition'
@@ -237,6 +217,23 @@ export function outputAction(
     return 'transition'
   }
   return 'apply'
+}
+
+/**
+ * The `transition` argument for `apply_composition`. A cue change starts the
+ * cue transition. Updates on the same cue while that transition still runs
+ * (timeline keyframes, clip changes) resend it, because a cut would end the
+ * running fade at once. Everything else cuts.
+ */
+export function outputTransition(
+  previous: OutputMemory | null,
+  action: OutputAction,
+  next: { cueKey: string; transition: Transition },
+  now: number,
+): Transition | null {
+  if (action === 'transition') return next.transition
+  if (action !== 'apply' || !previous?.transition) return null
+  return previous.cueKey === next.cueKey && now < previous.transitionEndsAt ? previous.transition : null
 }
 
 /** Keyboard map for the Show workspace. Returns null for keys it does not handle. */

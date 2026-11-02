@@ -1,7 +1,7 @@
-import type { Composition, PresentationDoc, Scene, Screen, ShowDoc } from '@lumen/schema'
+import type { Composition, PresentationDoc, Screen, ShowDoc } from '@lumen/schema'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { getPresentation } from '~/data/presentations'
-import { sceneRevision, type LiveSceneTransform } from '~/live/liveScene'
+import { sceneRevision, type LiveCompositionTransform } from '~/live/liveScene'
 import { saveLiveSession } from '~/live/liveSessionStore'
 import { useLiveSession, type LiveLoadOptions } from '~/live/useLiveSession'
 import {
@@ -20,13 +20,14 @@ import {
   nextCue,
   programComposition,
   releaseContentLayer,
-  showScreenScene,
+  screenForMode,
+  showComposition,
   type ShowFrame,
 } from './showLive'
 import { useShowDocument } from './useShowDocument'
 
 /**
- * Which state a scene shows: on air (`program`, with the output mode), the
+ * Which state a composition shows: on air (`program`, with the output mode), the
  * previewed cue, the on-air content without the mode (build workspaces), or
  * the next cue (preloading).
  */
@@ -45,7 +46,7 @@ function createShowLive() {
   const docs = shallowRef(new Map<string, PresentationDoc>())
   const docsVersion = ref(0)
   /** Timeline media and keyframes, set by the Show workspace while it runs. */
-  const sceneTransform = shallowRef<LiveSceneTransform | null>(null)
+  const timelineTransform = shallowRef<LiveCompositionTransform | null>(null)
   const sessionLoaded = ref(false)
   let sessionKey: string | null = null
 
@@ -61,7 +62,7 @@ function createShowLive() {
   /** Program content without the output mode, for build workspaces. */
   const content = computed<ShowFrame>(() => ({ cue: programCue.value, mode: 'live' }))
 
-  /** Changes whenever any live input of a scene changes. */
+  /** Changes whenever any live input of a composition changes. */
   const version = computed(() => [
     grid.value,
     programCue.value?.key ?? '',
@@ -71,7 +72,7 @@ function createShowLive() {
     session.media.value,
     session.theme.value,
     docsVersion.value,
-    sceneTransform.value?.key ?? '',
+    timelineTransform.value?.key ?? '',
   ])
 
   // A new rundown slide on air takes the content layer back from the grid.
@@ -141,20 +142,28 @@ function createShowLive() {
     }
   }
 
-  /** What a screen shows for a frame; the timeline transform applies to the program only. */
-  function screenScene(
-    screen: Screen,
+  /**
+   * The composition every screen shows for a frame (clips, rundown cue,
+   * `clear`); the timeline transform applies to the program only. Send it with
+   * `frameScreen` for the output mode.
+   */
+  function frameComposition(
     kind: FrameKind = 'program',
     show: ShowDoc = document.show.value,
     overrides: Partial<ComposeContext> = {},
-  ): Scene {
-    const transform = kind === 'program' ? sceneTransform.value : null
-    return showScreenScene(show, grid.value, screen, frameOf(kind), { ...context(), ...overrides }, { transform })
+  ): Composition {
+    const transform = kind === 'program' ? timelineTransform.value : null
+    return showComposition(show, grid.value, frameOf(kind), { ...context(), ...overrides }, transform)
   }
 
-  /** The whole canvas for a frame, as the Preview and Program monitors show it. */
-  function canvasScene(kind: FrameKind = 'program', show: ShowDoc = document.show.value): Scene {
-    return screenScene(canvasScreen(show), kind, show)
+  /** A screen with the frame's output mode applied (`black`/`logo` set blackout). */
+  function frameScreen(screen: Screen, kind: FrameKind = 'program'): Screen {
+    return screenForMode(screen, frameOf(kind).mode)
+  }
+
+  /** The virtual screen for the whole canvas, as the Preview and Program monitors show it. */
+  function canvas(kind: FrameKind = 'program', show: ShowDoc = document.show.value): Screen {
+    return frameScreen(canvasScreen(show), kind)
   }
 
   /** The playing composition (clips and rundown content), without the output mode. */
@@ -191,7 +200,7 @@ function createShowLive() {
     grid,
     docs,
     docsVersion,
-    sceneTransform,
+    timelineTransform,
     sessionLoaded,
     mode,
     programCue,
@@ -206,8 +215,9 @@ function createShowLive() {
     ensureGridDocs,
     loadSession,
     context,
-    screenScene,
-    canvasScene,
+    frameComposition,
+    frameScreen,
+    canvas,
     composition,
     launch,
     launchColumn: launchGridColumn,

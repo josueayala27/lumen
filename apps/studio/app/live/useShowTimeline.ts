@@ -1,7 +1,7 @@
 import {
   activeMediaClips,
   advancePlayback,
-  applyKeyframeSamples,
+  applyKeyframeSamplesToComposition,
   createPlaybackState,
   evaluateTimeline,
   frameCount,
@@ -31,7 +31,7 @@ import {
   type TimelineRecord,
   type TimelineSummary,
 } from '~/data/timelines'
-import { withTimelineMedia, type LiveSceneTransform, type MediaAssetLike, type TimelineMediaLayer } from './liveScene'
+import { withTimelineMedia, type LiveCompositionTransform, type MediaAssetLike, type TimelineMediaLayer } from './liveScene'
 import type { LiveItem } from './liveSession'
 
 export type TimelineClock = 'internal' | 'external'
@@ -424,8 +424,8 @@ export function useShowTimeline(options: ShowTimelineOptions) {
     return layers
   })
 
-  /** Scene overrides for the audience output: media clips and sampled keyframes. */
-  const sceneTransform = computed<LiveSceneTransform | null>(() => {
+  /** Program composition overrides: media clips and sampled keyframes. */
+  const timelineTransform = computed<LiveCompositionTransform | null>(() => {
     const current = doc.value
     const result = evaluation.value
     if (!current || !result || !armed.value) return null
@@ -434,14 +434,15 @@ export function useShowTimeline(options: ShowTimelineOptions) {
     const key = JSON.stringify([media.map((entry) => entry.clipId), result.keyframes.map((sample) => sample.value)])
     return {
       key,
-      apply: (scene, source) => {
+      apply: (composition, source, contentLayerId) => {
         const target = {
           presentationId: source?.doc
             ? options.items.value.find((item) => item.doc === source.doc)?.presentationId ?? null
             : null,
           slideIndex: source?.slideIndex ?? null,
         }
-        return withTimelineMedia(applyKeyframeSamples(scene, current, result.keyframes, target), media)
+        const animated = applyKeyframeSamplesToComposition(composition, current, result.keyframes, target, contentLayerId)
+        return withTimelineMedia(animated, media)
       },
     }
   })
@@ -471,7 +472,7 @@ export function useShowTimeline(options: ShowTimelineOptions) {
     rateMismatch,
     legacyCueCount,
     durationFrames,
-    sceneTransform,
+    timelineTransform,
     refresh,
     select,
     importLegacyCues,

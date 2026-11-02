@@ -1,5 +1,5 @@
-import { compositionToScene, liveComposition, type ShowLive, type ShowResolveContext } from '@lumen/core'
-import type { Scene, SceneLayer, Screen, ShowDoc } from '@lumen/schema'
+import { compositionToScene, createScreen, type ShowResolveContext } from '@lumen/core'
+import type { Composition, Scene, SceneLayer, Screen, Theme } from '@lumen/schema'
 import { blackScene, sceneForSlide } from '~/live/liveScene'
 import type { DisplayInfo } from '~/output/api'
 
@@ -7,7 +7,7 @@ import type { DisplayInfo } from '~/output/api'
  * Studio glue for the v2 show document. The model itself (composition,
  * screens, clip grid, live state, migration) is pure and lives in
  * `@lumen/core` (`packages/core/src/show.ts`); this module adds what needs the
- * studio: the test pattern scene and monitor lookup.
+ * studio: the browser schematic scene and monitor lookup.
  */
 
 export {
@@ -39,8 +39,12 @@ export interface ComposeContext extends ShowResolveContext {
 
 const FULL_FRAME = { x: 0, y: 0, w: 1, h: 1, rotation: 0 }
 
-/** Colour bars, a centre cross and the screen name for lining up projectors. */
-export function testPatternScene(screen: Screen, context: ComposeContext): Scene {
+/**
+ * Colour bars, a centre cross and the screen name, as a v1 scene for the
+ * browser schematic. The desktop app draws test patterns in Rust from the
+ * screen's `testPattern` field.
+ */
+export function testPatternScene(screen: Screen, context: { theme: Theme | null; revision: number }): Scene {
   const label = sceneForSlide({ doc: null, slideIndex: 0, label: screen.name }, context.theme, [], context.revision)
   const bars = ['#ffffff', '#ffff00', '#00ffff', '#00ff00', '#ff00ff', '#ff0000', '#0000ff', '#000000']
   const shape = (id: string, frame: typeof FULL_FRAME, fill: string, z: number): SceneLayer => ({
@@ -68,10 +72,20 @@ export function testPatternScene(screen: Screen, context: ComposeContext): Scene
   return { ...blackScene(context.revision), layers, background: null, fonts: label.fonts }
 }
 
-/** The v1 scene one screen shows right now, through the composition adapter. */
-export function composeScreenScene(show: ShowDoc, live: ShowLive, screen: Screen, context: ComposeContext): Scene {
-  if (screen.testPattern) return testPatternScene(screen, context)
-  return compositionToScene(liveComposition(show, live, context), screen, { revision: context.revision })
+/**
+ * The v1 scene the browser fallback draws as a schematic for one screen (or
+ * the bare canvas when `screen` is null). The desktop app renders the
+ * composition through the compositor instead; this is the only studio use of
+ * the v1 adapter outside the preload path.
+ */
+export function schematicScene(
+  composition: Composition,
+  screen: Screen | null,
+  context: { theme: Theme | null; revision?: number } = { theme: null },
+): Scene {
+  const target = screen ?? createScreen({ id: 'canvas', name: 'Canvas', size: composition.canvas })
+  if (target.testPattern) return testPatternScene(target, { theme: context.theme, revision: context.revision ?? composition.revision })
+  return compositionToScene(composition, target, { revision: context.revision })
 }
 
 /** The connected monitor a screen targets: exact name and position first, then name. */

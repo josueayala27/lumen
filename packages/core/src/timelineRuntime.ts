@@ -1,8 +1,11 @@
 import type {
+  Composition,
   ControlCommand,
+  Layer,
   Scene,
   SceneLayer,
   ShowTimeline,
+  SlideElement,
   TimelineClip,
   TimelineDoc,
   TimelineTrack,
@@ -221,6 +224,26 @@ function applySample(layer: SceneLayer, sample: KeyframeSample): SceneLayer {
   }
 }
 
+/** Samples grouped by the element (or layer) id their track binds to; empty when nothing applies. */
+function samplesByElement(
+  timeline: ShowTimeline,
+  samples: readonly KeyframeSample[],
+  target: KeyframeTarget,
+): Map<string, KeyframeSample[]> {
+  const byElement = new Map<string, KeyframeSample[]>()
+  if (samples.length === 0) return byElement
+  const tracks = tracksFor(timeline, target)
+  if (tracks.size === 0) return byElement
+  for (const sample of samples) {
+    const track = tracks.get(sample.trackId)
+    if (!track?.elementId) continue
+    const list = byElement.get(track.elementId) ?? []
+    list.push(sample)
+    byElement.set(track.elementId, list)
+  }
+  return byElement
+}
+
 /**
  * Applies sampled keyframe values to a scene. Only layer tracks bound to an
  * element on the target slide apply; layers keep their authored values for
@@ -232,18 +255,7 @@ export function applyKeyframeSamples(
   samples: readonly KeyframeSample[],
   target: KeyframeTarget,
 ): Scene {
-  if (samples.length === 0) return scene
-  const tracks = tracksFor(timeline, target)
-  if (tracks.size === 0) return scene
-
-  const byElement = new Map<string, KeyframeSample[]>()
-  for (const sample of samples) {
-    const track = tracks.get(sample.trackId)
-    if (!track?.elementId) continue
-    const list = byElement.get(track.elementId) ?? []
-    list.push(sample)
-    byElement.set(track.elementId, list)
-  }
+  const byElement = samplesByElement(timeline, samples, target)
   if (byElement.size === 0) return scene
 
   let changed = false
@@ -254,4 +266,68 @@ export function applyKeyframeSamples(
     return list.reduce(applySample, layer)
   })
   return changed ? { ...scene, layers } : scene
+}
+
+function applyLayerSample(layer: Layer, sample: KeyframeSample): Layer {
+  const { value } = sample
+  const transform = layer.transform
+  switch (sample.property) {
+    case 'x':
+      return { ...layer, transform: { ...transform, x: finite(value, transform.x) } }
+    case 'y':
+      return { ...layer, transform: { ...transform, y: finite(value, transform.y) } }
+    case 'width':
+      return { ...layer, transform: { ...transform, w: Math.max(0, finite(value, transform.w)) } }
+    case 'height':
+      return { ...layer, transform: { ...transform, h: Math.max(0, finite(value, transform.h)) } }
+    case 'rotation':
+      return { ...layer, transform: { ...transform, rotation: finite(value, transform.rotation) } }
+    case 'opacity':
+      return { ...layer, opacity: Math.min(1, Math.max(0, finite(value, layer.opacity))) }
+    default:
+      return layer
+  }
+}
+
+/**
+ * Applies sampled keyframe values to a v2 composition. A track whose
+ * `elementId` names a composition layer drives that layer's transform and
+ * opacity; any other id addresses an element of the slide source on
+ * `contentLayerId` (the layer the rundown drives), in slide space. Returns the
+ * same composition when nothing applies.
+ */
+export function applyKeyframeSamplesToComposition(
+  composition: Composition,
+  timeline: ShowTimeline,
+  samples: readonly KeyframeSample[],
+  target: KeyframeTarget,
+  contentLayerId: string | null,
+): Composition {
+  const byElement = samplesByElement(timeline, samples, target)
+  if (byElement.size === 0) return composition
+
+  let changed = false
+  const layers = composition.layers.map((layer) => {
+    const list = byElement.get(layer.id)
+    if (!list) return layer
+    changed = true
+    return list.reduce(applyLayerSample, layer)
+  })
+
+  const contentSourceId = composition.layers.find((layer) => layer.id === contentLayerId)?.sourceId ?? null
+  const sources = composition.sources.map((source) => {
+    if (source.id !== contentSourceId || source.kind !== 'slide') return source
+    let touched = false
+    const elements = source.elements.map((element) => {
+      const list = byElement.get(element.id)
+      if (!list) return element
+      touched = true
+      // applySample keeps the element kind, so the result is still a slide element.
+      return list.reduce<SceneLayer>(applySample, element) as SlideElement
+    })
+    if (!touched) return source
+    changed = true
+    return { ...source, elements }
+  })
+  return changed ? { ...composition, layers, sources } : composition
 }

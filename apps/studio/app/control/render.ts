@@ -1,5 +1,14 @@
 import { invoke } from '@tauri-apps/api/core'
-import { previewResultSchema, type Frame, type PreviewResult, type Scene } from '@lumen/schema'
+import {
+  compositionPreviewResultSchema,
+  previewResultSchema,
+  type Composition,
+  type CompositionPreviewResult,
+  type Frame,
+  type PreviewResult,
+  type Scene,
+  type Screen,
+} from '@lumen/schema'
 
 /** Layout entry for one rendered layer, in normalized slide coordinates. */
 export type PreviewBounds = PreviewResult['bounds'][number]
@@ -7,13 +16,18 @@ export type PreviewBounds = PreviewResult['bounds'][number]
 export type PreviewTextRun = PreviewResult['textRuns'][number]
 
 /** A rendered preview frame plus the layout data returned by the same Rust shaping pass. */
-export interface DecodedPreview {
+export interface DecodedFrame<Layout> {
   width: number
   height: number
-  layout: PreviewResult
+  layout: Layout
   /** Raw row-major RGBA bytes, `width * height * 4` long. */
   rgba: Uint8Array
 }
+
+/** A v1 scene preview frame (`preview_render`). */
+export type DecodedPreview = DecodedFrame<PreviewResult>
+/** A composition preview frame (`preview_render_composition`). */
+export type DecodedCompositionPreview = DecodedFrame<CompositionPreviewResult>
 
 export interface NormalizedPoint {
   x: number
@@ -45,11 +59,11 @@ function payloadBytes(payload: PreviewPayload): Uint8Array {
 }
 
 /**
- * Decodes the binary IPC layout documented on `preview_render`:
- * `width: u32 le`, `height: u32 le`, `layoutLength: u32 le`, UTF-8 `PreviewResult`
- * JSON, then raw row-major RGBA.
+ * Decodes the binary IPC layout shared by `preview_render` and
+ * `preview_render_composition`: `width: u32 le`, `height: u32 le`,
+ * `layoutLength: u32 le`, UTF-8 layout JSON, then raw row-major RGBA.
  */
-export function decodePreviewResponse(payload: PreviewPayload): DecodedPreview {
+function decodeFrame<Layout>(payload: PreviewPayload, parse: (value: unknown) => Layout): DecodedFrame<Layout> {
   const bytes = payloadBytes(payload)
   if (bytes.length < 12) throw new Error('Preview payload is truncated')
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
@@ -77,9 +91,19 @@ export function decodePreviewResponse(payload: PreviewPayload): DecodedPreview {
   return {
     width,
     height,
-    layout: previewResultSchema.parse(parsed),
+    layout: parse(parsed),
     rgba: rgba.subarray(0, expected),
   }
+}
+
+/** Decodes a `preview_render` payload with its v1 `PreviewResult` layout. */
+export function decodePreviewResponse(payload: PreviewPayload): DecodedPreview {
+  return decodeFrame(payload, (value) => previewResultSchema.parse(value))
+}
+
+/** Decodes a `preview_render_composition` payload with its `CompositionPreviewResult` layout. */
+export function decodeCompositionPreviewResponse(payload: PreviewPayload): DecodedCompositionPreview {
+  return decodeFrame(payload, (value) => compositionPreviewResultSchema.parse(value))
 }
 
 /** Renders a scene offscreen through the native renderer. */
@@ -90,6 +114,51 @@ export async function previewRender(
 ): Promise<DecodedPreview> {
   const payload = await invoke<PreviewPayload>('preview_render', { scene, width, height })
   return decodePreviewResponse(payload)
+}
+
+/**
+ * Native preview renders share one Rust renderer behind a lock, so running
+ * many at once only queues IPC payloads. At most this many are in flight;
+ * the rest wait their turn (many screen thumbnails, Preview and Program).
+ */
+const MAX_PREVIEW_RENDERS = 2
+let previewsInFlight = 0
+const previewQueue: (() => void)[] = []
+
+async function limitPreview<T>(run: () => Promise<T>): Promise<T> {
+  // A finishing render hands its slot straight to the next waiter.
+  if (previewsInFlight >= MAX_PREVIEW_RENDERS) await new Promise<void>((resolve) => previewQueue.push(resolve))
+  else previewsInFlight += 1
+  try {
+    return await run()
+  } finally {
+    const next = previewQueue.shift()
+    if (next) next()
+    else previewsInFlight -= 1
+  }
+}
+
+/**
+ * Renders a composition offscreen through the v2 compositor: one screen with
+ * its layout, mapping, test pattern and blackout, or the bare canvas when
+ * `screen` is null. Bounds and text runs are normalized to the screen output
+ * before mapping (or to the canvas).
+ */
+export async function previewRenderComposition(
+  composition: Composition,
+  screen: Screen | null,
+  width: number,
+  height: number,
+): Promise<DecodedCompositionPreview> {
+  const payload = await limitPreview(() =>
+    invoke<PreviewPayload>('preview_render_composition', {
+      composition,
+      screen,
+      width: Math.max(1, Math.round(width)),
+      height: Math.max(1, Math.round(height)),
+    }),
+  )
+  return decodeCompositionPreviewResponse(payload)
 }
 
 function clamp01(value: number): number {
