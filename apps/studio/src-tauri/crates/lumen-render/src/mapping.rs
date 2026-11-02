@@ -8,7 +8,7 @@ use crate::composition::{
     CompositionLayer, EdgeBlend, LayerFilter, LayerTransform, Layout, LayoutText, Mapping, Mesh,
     Point, Region, Screen, Size, TextPreset,
 };
-use crate::Layer as SlideElement;
+use crate::composition::SlideElement;
 
 /// Largest render target edge; matches the wgpu default limit.
 pub const MAX_TARGET_EDGE: u32 = 8192;

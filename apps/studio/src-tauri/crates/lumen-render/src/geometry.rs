@@ -1,6 +1,6 @@
 //! Pure geometry, fit and transition math. No wgpu and no font shaping lives here.
 
-use crate::{Frame, LayerFit};
+use crate::{Fit, Frame};
 
 /// A rectangle in target pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -1,10 +1,11 @@
-//! wgpu surface renderer and offscreen preview renderer.
+//! wgpu surface renderer, offscreen preview renderer and the slide renderer.
 //!
-//! Both paths share [`SceneRenderer`], so the audience window and the editor preview use the same
-//! glyph atlas, image upload, fit math and draw pipeline.
+//! Both the audience window ([`SurfaceRenderer`]) and the preview ([`PreviewRenderer`]) draw
+//! compositions through the [`Compositor`]. The compositor draws `slide` sources with
+//! [`SlideRenderer`], which also holds the image and video textures it samples.
 
 use std::collections::HashMap;
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc;
 use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
@@ -16,18 +17,15 @@ use crate::blur::{blur_rgba, box_radius_for_sigma};
 use crate::color::ClearColor;
 use crate::composition::{Composition, Screen};
 use crate::compositor::{CompositionPreviewResult, CompositionTransition, Compositor};
-use crate::geometry::{easing_progress, fit_uv, rotate_point, rotate_vector, FrameRect, UvRect};
+use crate::composition::{AssetKind, AssetState, CompositionAsset, SlideElement};
+use crate::geometry::{fit_uv, rotate_point, rotate_vector, FrameRect, UvRect};
+use crate::slide::{SlideLayout, SlidePage};
 use crate::text::{AtlasData, DecorationDraw, GlyphDraw, TextEngine};
 use crate::video::{bc_len, VideoFrame, VideoPixels};
-use crate::{
-    AssetKind, AssetState, Layer, PreviewResult, RenderError, Scene, SceneAsset, SceneFont,
-    SceneRole, TransitionKind, TransitionPlan, Viewport,
-};
+use crate::RenderError;
 
 const CLEAR_PASS_LABEL: &str = "lumen-clear-pass";
-const SCENE_SHADER: &str = include_str!("scene.wgsl");
-const TRANSITION_SHADER: &str = include_str!("transition.wgsl");
-const TRANSITION_UNIFORM_SIZE: u64 = 16;
+const SLIDE_SHADER: &str = include_str!("slide.wgsl");
 
 /// Per-frame timing exposed to the studio.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
@@ -74,63 +72,6 @@ impl FrameTiming {
                 self.total_ms / self.frame as f64
             },
         }
-    }
-}
-
-fn layer_color(layer: &Layer) -> Option<ClearColor> {
-    match layer {
-        Layer::Shape { fill, .. } => ClearColor::parse(fill),
-        Layer::Text { color, .. } => ClearColor::parse(color),
-        Layer::Image { .. } | Layer::Video { .. } => None,
-    }
-}
-
-/// Uses the scene background layer color, falling back to opaque black.
-pub fn scene_clear_color(scene: &Scene) -> ClearColor {
-    scene
-        .background
-        .as_ref()
-        .and_then(layer_color)
-        .unwrap_or_default()
-}
-
-/// Hardcoded Phase 0.5 scene.
-pub fn spike_scene() -> Scene {
-    Scene {
-        schema_version: 1,
-        revision: 1,
-        role: SceneRole::Audience,
-        viewport: Viewport {
-            width: 1920.0,
-            height: 1080.0,
-            scale: 1.0,
-        },
-        color_space: crate::ColorSpace::Srgb,
-        background: Some(Layer::Shape {
-            id: "spike-background".into(),
-            frame: crate::Frame {
-                x: 0.0,
-                y: 0.0,
-                w: 1.0,
-                h: 1.0,
-                rotation: 0.0,
-            },
-            z: 0,
-            opacity: 1.0,
-            fill: "#101828".into(),
-            stroke: None,
-            stroke_width: 0.0,
-            radius: 0.0,
-        }),
-        layers: Vec::new(),
-        fonts: Vec::<SceneFont>::new(),
-        assets: Vec::new(),
-        safe_area: crate::SafeArea {
-            top: 0.05,
-            right: 0.05,
-            bottom: 0.05,
-            left: 0.05,
-        },
     }
 }
 
@@ -414,7 +355,7 @@ pub(crate) struct GpuTexture {
     pub(crate) height: u32,
 }
 
-/// Shader modes in `scene.wgsl` (`params.w`).
+/// Shader modes in `slide.wgsl` (`params.w`).
 pub(crate) const MODE_TEXTURE: f32 = 1.0;
 pub(crate) const MODE_YCOCG: f32 = 3.0;
 pub(crate) const MODE_OPAQUE: f32 = 4.0;
@@ -554,8 +495,10 @@ fn upload_texture(
     }
 }
 
-/// Shared scene drawing: text atlas, solid shapes, image textures, video textures and transitions.
-pub(crate) struct SceneRenderer {
+/// Draws `slide` sources (text atlas, shapes, images) for the compositor and holds the image and
+/// video textures the compositor samples. Draws clear to transparent and convert sRGB contract
+/// colours to linear light.
+pub(crate) struct SlideRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
@@ -570,22 +513,22 @@ pub(crate) struct SceneRenderer {
     pub(crate) images: HashMap<String, GpuTexture>,
     pub(crate) videos: HashMap<String, VideoTexture>,
     pub(crate) bc_supported: bool,
-    /// Clear colour of every draw; black for v1 scenes, transparent for slide sources.
-    clear: ClearColor,
-    /// Converts sRGB contract colours to linear light before drawing (composition slides).
-    linear_colors: bool,
     text: TextEngine,
     glyphs: Vec<GlyphDraw>,
     decorations: Vec<DecorationDraw>,
-    layout: PreviewResult,
+    layout: SlideLayout,
     assets: AssetLoader,
     prepared: Option<(u64, u32, u32)>,
 }
 
-impl SceneRenderer {
-    fn new(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+impl SlideRenderer {
+    pub(crate) fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        format: wgpu::TextureFormat,
+    ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("lumen-scene-bind-layout"),
+            label: Some("lumen-slide-bind-layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -606,16 +549,16 @@ impl SceneRenderer {
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("lumen-scene-pipeline-layout"),
+            label: Some("lumen-slide-pipeline-layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("lumen-scene-shader"),
-            source: wgpu::ShaderSource::Wgsl(SCENE_SHADER.into()),
+            label: Some("lumen-slide-shader"),
+            source: wgpu::ShaderSource::Wgsl(SLIDE_SHADER.into()),
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("lumen-scene-pipeline"),
+            label: Some("lumen-slide-pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -651,7 +594,7 @@ impl SceneRenderer {
             cache: None,
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("lumen-scene-sampler"),
+            label: Some("lumen-slide-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -682,33 +625,18 @@ impl SceneRenderer {
             text: TextEngine::new(),
             glyphs: Vec::new(),
             decorations: Vec::new(),
-            layout: PreviewResult::default(),
+            layout: SlideLayout::default(),
             assets: AssetLoader::new(),
             prepared: None,
-            clear: ClearColor::BLACK,
-            linear_colors: false,
         }
     }
 
-    /// A renderer for composition slide sources: transparent clear and linear-light colours.
-    pub(crate) fn for_slides(
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        format: wgpu::TextureFormat,
-    ) -> Self {
-        Self {
-            clear: ClearColor::TRANSPARENT,
-            linear_colors: true,
-            ..Self::new(device, queue, format)
-        }
-    }
-
-    /// Forgets the prepared layout so the next draw shapes its scene again.
+    /// Forgets the prepared layout so the next draw shapes its slide again.
     pub(crate) fn invalidate(&mut self) {
         self.prepared = None;
     }
 
-    pub(crate) fn preview_result(&self) -> &PreviewResult {
+    pub(crate) fn layout(&self) -> &SlideLayout {
         &self.layout
     }
 
@@ -986,15 +914,15 @@ impl SceneRenderer {
         );
     }
 
-    fn prepare(&mut self, scene: &Scene, width: u32, height: u32) -> Result<(), RenderError> {
-        let key = (scene.revision, width, height);
+    fn prepare(&mut self, slide: &SlidePage, width: u32, height: u32) -> Result<(), RenderError> {
+        let key = (slide.revision, width, height);
         if self.prepared == Some(key) {
             return Ok(());
         }
-        self.load_image_assets(&scene.assets);
-        let layout = self.text.layout(scene, width, height);
-        let scale = width as f32 / scene.viewport.width.max(1.0) as f32;
-        let radii = shadow_radii(scene, scale);
+        self.load_image_assets(&slide.assets);
+        let layout = self.text.layout(slide, width, height);
+        let scale = width as f32 / slide.size.width.max(1.0) as f32;
+        let radii = shadow_radii(&slide.elements, scale);
         let max_radius = radii.iter().copied().max().unwrap_or(0);
         let padding = if max_radius == 0 {
             1
@@ -1027,8 +955,7 @@ impl SceneRenderer {
         }
         self.glyphs = layout.glyphs;
         self.decorations = layout.decorations;
-        self.layout = PreviewResult {
-            revision: scene.revision,
+        self.layout = SlideLayout {
             bounds: layout.bounds,
             text_runs: layout.text_runs,
         };
@@ -1070,7 +997,7 @@ impl SceneRenderer {
         );
     }
 
-    pub(crate) fn load_image_assets(&mut self, assets: &[SceneAsset]) {
+    pub(crate) fn load_image_assets(&mut self, assets: &[CompositionAsset]) {
         for asset in assets {
             if asset.kind != AssetKind::Image || asset.state == AssetState::Missing {
                 continue;
@@ -1112,19 +1039,16 @@ impl SceneRenderer {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        scene: &Scene,
+        slide: &SlidePage,
         width: u32,
         height: u32,
     ) -> Result<(), RenderError> {
-        self.prepare(scene, width, height)?;
-        let clear = self.clear;
-        let mut calls = self.build_draw_calls(scene, width, height);
-        if self.linear_colors {
-            for call in &mut calls {
-                for vertex in &mut call.vertices {
-                    linearize(&mut vertex.color);
-                    linearize(&mut vertex.stroke_color);
-                }
+        self.prepare(slide, width, height)?;
+        let mut calls = self.build_draw_calls(slide, width, height);
+        for call in &mut calls {
+            for vertex in &mut call.vertices {
+                linearize(&mut vertex.color);
+                linearize(&mut vertex.stroke_color);
             }
         }
         {
@@ -1135,7 +1059,7 @@ impl SceneRenderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear.to_wgpu()),
+                        load: wgpu::LoadOp::Clear(ClearColor::TRANSPARENT.to_wgpu()),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1153,7 +1077,7 @@ impl SceneRenderer {
                     continue;
                 };
                 let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("lumen-scene-bind-group"),
+                    label: Some("lumen-slide-bind-group"),
                     layout: &self.bind_group_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
@@ -1167,7 +1091,7 @@ impl SceneRenderer {
                     ],
                 });
                 let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("lumen-scene-vertices"),
+                    label: Some("lumen-slide-vertices"),
                     size: std::mem::size_of_val(call.vertices.as_slice()) as wgpu::BufferAddress,
                     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,
@@ -1194,18 +1118,11 @@ impl SceneRenderer {
         }
     }
 
-    fn build_draw_calls(&self, scene: &Scene, width: u32, height: u32) -> Vec<DrawCall> {
+    fn build_draw_calls(&self, slide: &SlidePage, width: u32, height: u32) -> Vec<DrawCall> {
         let mut calls = Vec::new();
-        if let Some(background) = &scene.background {
-            self.push_layer_call(&mut calls, scene, background, 0, width, height);
-        }
-        // Text layout numbers layers after the background, so index 0 is the first layer
-        // when there is no background.
-        let offset = usize::from(scene.background.is_some());
-        let mut ordered: Vec<(usize, &Layer)> = scene.layers.iter().enumerate().collect();
-        ordered.sort_by_key(|(_, layer)| layer.z());
-        for (index, layer) in ordered {
-            self.push_layer_call(&mut calls, scene, layer, index + offset, width, height);
+        // Text layout numbers glyphs by element index, so the index survives the z sort.
+        for (index, element) in draw_order(&slide.elements) {
+            self.push_layer_call(&mut calls, slide, element, index, width, height);
         }
         calls
     }
@@ -1213,8 +1130,8 @@ impl SceneRenderer {
     fn push_layer_call(
         &self,
         calls: &mut Vec<DrawCall>,
-        scene: &Scene,
-        layer: &Layer,
+        slide: &SlidePage,
+        layer: &SlideElement,
         layer_index: usize,
         width: u32,
         height: u32,
@@ -1224,13 +1141,13 @@ impl SceneRenderer {
         }
         let width_f = width as f32;
         let height_f = height as f32;
-        let scale = width_f / scene.viewport.width.max(1.0) as f32;
+        let scale = width_f / slide.size.width.max(1.0) as f32;
         let frame = FrameRect::from_frame(layer.frame(), width_f, height_f);
         let opacity = layer.opacity().clamp(0.0, 1.0);
         let center = frame.center();
         let rotation = layer.frame().rotation as f32;
         match layer {
-            Layer::Shape {
+            SlideElement::Shape {
                 fill,
                 stroke,
                 stroke_width,
@@ -1274,13 +1191,13 @@ impl SceneRenderer {
                     texture: TextureKey::White,
                 });
             }
-            Layer::Image {
+            SlideElement::Image {
                 source,
                 fit,
                 radius,
                 ..
             } => {
-                let Some(asset) = scene
+                let Some(asset) = slide
                     .assets
                     .iter()
                     .find(|asset| asset.id == source.asset_id)
@@ -1319,52 +1236,7 @@ impl SceneRenderer {
                     texture: TextureKey::Image(key),
                 });
             }
-            Layer::Video { source, fit, .. } => {
-                let Some(asset) = scene
-                    .assets
-                    .iter()
-                    .find(|asset| asset.id == source.asset_id)
-                else {
-                    return;
-                };
-                let Some(video) = self.videos.get(&asset.id) else {
-                    return;
-                };
-                let (scale_u, scale_v) = video.uv_scale();
-                let mut uv = fit_uv(
-                    *fit,
-                    frame.w,
-                    frame.h,
-                    asset.intrinsic.width as f32,
-                    asset.intrinsic.height as f32,
-                );
-                uv.u0 *= scale_u;
-                uv.u1 *= scale_u;
-                uv.v0 *= scale_v;
-                uv.v1 *= scale_v;
-                let mut vertices = Vec::new();
-                push_quad(
-                    &mut vertices,
-                    QuadSpec {
-                        rect: frame,
-                        uv,
-                        color: [1.0, 1.0, 1.0, opacity as f32],
-                        stroke_color: [0.0; 4],
-                        radius: 0.0,
-                        stroke_width: 0.0,
-                        mode: video.mode,
-                        rotation,
-                        center,
-                    },
-                    width_f,
-                    height_f,
-                );
-                calls.push(DrawCall {
-                    vertices,
-                    texture: TextureKey::Video(asset.id.clone()),
-                });
-            }
-            Layer::Text {
+            SlideElement::Text {
                 shadow, outline, ..
             } => {
                 let glyphs: Vec<&GlyphDraw> = self
@@ -1504,11 +1376,18 @@ fn linearize(color: &mut [f32; 4]) {
     }
 }
 
-/// Unique non-zero box radii required by blurred shadows in this scene.
-fn shadow_radii(scene: &Scene, scale: f32) -> Vec<u32> {
+/// Elements with their index, bottom to top by `z`; equal `z` keeps element order.
+fn draw_order(elements: &[SlideElement]) -> Vec<(usize, &SlideElement)> {
+    let mut ordered: Vec<(usize, &SlideElement)> = elements.iter().enumerate().collect();
+    ordered.sort_by_key(|(_, element)| element.z());
+    ordered
+}
+
+/// Unique non-zero box radii required by blurred shadows on these elements.
+fn shadow_radii(elements: &[SlideElement], scale: f32) -> Vec<u32> {
     let mut radii = Vec::new();
-    for layer in scene.background.iter().chain(scene.layers.iter()) {
-        if let Layer::Text {
+    for layer in elements {
+        if let SlideElement::Text {
             shadow: Some(shadow),
             ..
         } = layer
@@ -1522,120 +1401,7 @@ fn shadow_radii(scene: &Scene, scale: f32) -> Vec<u32> {
     radii
 }
 
-struct TransitionState {
-    kind: u32,
-    easing: String,
-    duration_ms: f64,
-    started: Instant,
-    uniform: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
-    pipeline: wgpu::RenderPipeline,
-    _from_texture: wgpu::Texture,
-    _to_texture: wgpu::Texture,
-}
-
-impl TransitionState {
-    fn progress(&self) -> f64 {
-        if self.duration_ms <= 0.0 {
-            return 1.0;
-        }
-        (self.started.elapsed().as_secs_f64() * 1000.0 / self.duration_ms).clamp(0.0, 1.0)
-    }
-}
-
-fn transition_code(kind: TransitionKind) -> u32 {
-    match kind {
-        TransitionKind::Cut => 0,
-        TransitionKind::Fade => 1,
-        TransitionKind::Dissolve => 2,
-        TransitionKind::Slide => 3,
-        TransitionKind::Zoom => 4,
-    }
-}
-
-fn create_transition_pipeline(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-) -> (wgpu::BindGroupLayout, wgpu::RenderPipeline) {
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("lumen-transition-bind-layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("lumen-transition-pipeline-layout"),
-        bind_group_layouts: &[Some(&bind_group_layout)],
-        immediate_size: 0,
-    });
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("lumen-transition-shader"),
-        source: wgpu::ShaderSource::Wgsl(TRANSITION_SHADER.into()),
-    });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("lumen-transition-pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            buffers: &[],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format,
-                blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview_mask: None,
-        cache: None,
-    });
-    (bind_group_layout, pipeline)
-}
-
-/// Owns the wgpu surface and draws scenes.
+/// Owns the wgpu surface of one audience output and draws its composition through one screen.
 pub struct SurfaceRenderer {
     _instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
@@ -1643,27 +1409,17 @@ pub struct SurfaceRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    scene: Scene,
-    scene_renderer: SceneRenderer,
-    transition: Option<TransitionState>,
     timing: FrameTiming,
-    /// Set while the output shows a composition (render contract v2) instead of a scene.
+    /// The composition and screen on air; black until the first one arrives.
     composition: Option<(Box<Composition>, Box<Screen>)>,
-    compositor: Option<Compositor>,
-    /// Latest frame per video asset, replayed when the output switches between scenes and
-    /// compositions. Frames are reference counted, so this holds no copies.
-    latest_frames: HashMap<String, VideoFrame>,
+    compositor: Compositor,
 }
 
 impl SurfaceRenderer {
     /// Builds the adapter, device and configured surface. Call this on the render thread with a
-    /// `PendingSurface` created on the main thread.
-    pub fn new(
-        pending: PendingSurface,
-        width: u32,
-        height: u32,
-        scene: &Scene,
-    ) -> Result<Self, RenderError> {
+    /// `PendingSurface` created on the main thread. The output is black until
+    /// [`Self::set_composition`].
+    pub fn new(pending: PendingSurface, width: u32, height: u32) -> Result<Self, RenderError> {
         let PendingSurface { instance, surface } = pending;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -1708,7 +1464,7 @@ impl SurfaceRenderer {
             view_formats: Vec::new(),
         };
         surface.configure(&device, &config);
-        let scene_renderer = SceneRenderer::new(device.clone(), queue.clone(), format);
+        let compositor = Compositor::new(device.clone(), queue.clone());
 
         Ok(Self {
             _instance: instance,
@@ -1717,55 +1473,23 @@ impl SurfaceRenderer {
             device,
             queue,
             config,
-            scene: scene.clone(),
-            scene_renderer,
-            transition: None,
             timing: FrameTiming::new(),
             composition: None,
-            compositor: None,
-            latest_frames: HashMap::new(),
+            compositor,
         })
     }
 
-    pub fn set_scene(&mut self, scene: &Scene) {
-        if self.composition.take().is_some() {
-            self.replay_frames_to_scene();
-        }
-        self.scene = scene.clone();
-        self.transition = None;
-    }
-
     /// Shows a composition through one screen. Layer source changes and slide revisions use
-    /// `transition`. The output stays in composition mode until the next scene.
+    /// `transition`.
     pub fn set_composition(
         &mut self,
         composition: &Composition,
         screen: &Screen,
         transition: CompositionTransition,
     ) -> Result<(), RenderError> {
-        if self.compositor.is_none() {
-            self.compositor = Some(Compositor::new(self.device.clone(), self.queue.clone()));
-        }
-        let entering = self.composition.is_none();
-        let compositor = self
-            .compositor
-            .as_mut()
-            .ok_or_else(|| RenderError::Backend("compositor missing".into()))?;
-        if entering {
-            for (asset_id, frame) in &self.latest_frames {
-                compositor.update_video(asset_id, frame)?;
-            }
-        }
-        compositor.set_transition(transition);
+        self.compositor.set_transition(transition);
         self.composition = Some((Box::new(composition.clone()), Box::new(screen.clone())));
-        self.transition = None;
         Ok(())
-    }
-
-    fn replay_frames_to_scene(&mut self) {
-        for (asset_id, frame) in &self.latest_frames {
-            let _ = self.scene_renderer.update_video(asset_id, frame);
-        }
     }
 
     /// Replaces the surface after `Lost` or `Outdated`. The new surface must be created on the
@@ -1773,15 +1497,8 @@ impl SurfaceRenderer {
     pub fn replace_surface(&mut self, pending: PendingSurface) -> Result<(), RenderError> {
         let PendingSurface { surface, .. } = pending;
         let capabilities = surface.get_capabilities(&self.adapter);
-        let format = pick_format(&capabilities)?;
+        self.config.format = pick_format(&capabilities)?;
         self.surface = surface;
-        if format != self.config.format {
-            self.config.format = format;
-            self.scene_renderer =
-                SceneRenderer::new(self.device.clone(), self.queue.clone(), format);
-            self.replay_frames_to_scene();
-        }
-        self.transition = None;
         self.surface.configure(&self.device, &self.config);
         Ok(())
     }
@@ -1794,10 +1511,10 @@ impl SurfaceRenderer {
         }
         self.config.width = width;
         self.config.height = height;
-        self.transition = None;
         self.surface.configure(&self.device, &self.config);
     }
 
+    /// Uploads an RGBA frame for a video asset.
     pub fn update_video_frame(
         &mut self,
         asset_id: &str,
@@ -1805,119 +1522,12 @@ impl SurfaceRenderer {
         height: u32,
         rgba: &[u8],
     ) -> Result<(), RenderError> {
-        self.scene_renderer
-            .update_video_frame(asset_id, width, height, rgba)
+        self.update_video(asset_id, &VideoFrame::rgba(width, height, rgba.to_vec()))
     }
 
-    /// Uploads a decoded frame, block compressed or RGBA, to whichever renderer is showing.
+    /// Uploads a decoded frame, block compressed or RGBA.
     pub fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
-        self.latest_frames
-            .insert(asset_id.to_string(), frame.clone());
-        match (&self.composition, self.compositor.as_mut()) {
-            (Some(_), Some(compositor)) => compositor.update_video(asset_id, frame),
-            _ => self.scene_renderer.update_video(asset_id, frame),
-        }
-    }
-
-    pub fn start_transition(&mut self, plan: &TransitionPlan) -> Result<(), RenderError> {
-        if self.composition.take().is_some() {
-            self.replay_frames_to_scene();
-        }
-        if plan.kind == TransitionKind::Cut || plan.duration_ms == 0 {
-            self.set_scene(&plan.to);
-            return Ok(());
-        }
-        let width = self.config.width.max(1);
-        let height = self.config.height.max(1);
-        let size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
-        let create_target = |label: &str| {
-            self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: self.config.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-        };
-        let from_texture = create_target("lumen-transition-from");
-        let to_texture = create_target("lumen-transition-to");
-        let from_view = from_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let to_view = to_texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("lumen-transition-render"),
-            });
-        self.scene_renderer
-            .draw(&mut encoder, &from_view, &plan.from, width, height)?;
-        self.scene_renderer
-            .draw(&mut encoder, &to_view, &plan.to, width, height)?;
-        self.queue.submit([encoder.finish()]);
-
-        let (bind_group_layout, pipeline) =
-            create_transition_pipeline(&self.device, self.config.format);
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("lumen-transition-sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        let uniform = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("lumen-transition-params"),
-            size: TRANSITION_UNIFORM_SIZE,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("lumen-transition-bind-group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&from_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&to_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &uniform,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-            ],
-        });
-        self.scene = plan.to.clone();
-        self.transition = Some(TransitionState {
-            kind: transition_code(plan.kind),
-            easing: plan.easing.clone(),
-            duration_ms: plan.duration_ms as f64,
-            started: Instant::now(),
-            uniform,
-            bind_group,
-            pipeline,
-            _from_texture: from_texture,
-            _to_texture: to_texture,
-        });
-        Ok(())
+        self.compositor.update_video(asset_id, frame)
     }
 
     pub fn stats(&self) -> RenderStats {
@@ -1944,13 +1554,11 @@ impl SurfaceRenderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("lumen-scene-frame"),
+                label: Some("lumen-output-frame"),
             });
 
-        if let (Some((composition, screen)), Some(compositor)) =
-            (self.composition.as_ref(), self.compositor.as_mut())
-        {
-            compositor.render(
+        if let Some((composition, screen)) = self.composition.as_ref() {
+            self.compositor.render(
                 &mut encoder,
                 composition,
                 screen,
@@ -1959,49 +1567,23 @@ impl SurfaceRenderer {
                 self.config.width,
                 self.config.height,
             )?;
-        } else if let Some(transition) = self.transition.as_mut() {
-            let progress = easing_progress(&transition.easing, transition.progress());
-            let params = TransitionParams {
-                progress: progress as f32,
-                kind: transition.kind,
-                _pad0: 0,
-                _pad1: 0,
-            };
-            self.queue
-                .write_buffer(&transition.uniform, 0, bytemuck::bytes_of(&params));
-            {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("lumen-transition-pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_pipeline(&transition.pipeline);
-                pass.set_bind_group(0, &transition.bind_group, &[]);
-                pass.draw(0..3, 0..1);
-            }
-            if transition.progress() >= 1.0 {
-                self.transition = None;
-            }
         } else {
-            let scene = self.scene.clone();
-            self.scene_renderer.draw(
-                &mut encoder,
-                &view,
-                &scene,
-                self.config.width,
-                self.config.height,
-            )?;
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some(CLEAR_PASS_LABEL),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
         }
 
         self.queue.submit([encoder.finish()]);
@@ -2027,25 +1609,6 @@ fn pick_format(
         .ok_or_else(|| RenderError::Backend("surface reports no formats".into()))
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct TransitionParams {
-    progress: f32,
-    kind: u32,
-    _pad0: u32,
-    _pad1: u32,
-}
-
-/// A rendered preview frame: raw RGBA plus the editor layout from the same shaping pass.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewFrame {
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-    pub layout: PreviewResult,
-}
-
 /// A rendered composition frame: raw RGBA plus the editor layout from the same pass.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2056,12 +1619,10 @@ pub struct CompositionFrame {
     pub layout: CompositionPreviewResult,
 }
 
-/// Offscreen renderer used by `preview_render` and `preview_render_composition`.
+/// Offscreen renderer used by `preview_render_composition`.
 pub struct PreviewRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    scene_renderer: SceneRenderer,
-    surface: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
     /// Created on the first composition preview.
     compositor: Option<Compositor>,
     composition_surface: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
@@ -2089,13 +1650,9 @@ impl PreviewRenderer {
             trace: wgpu::Trace::Off,
         }))
         .map_err(|error| RenderError::Backend(format!("request preview device: {error}")))?;
-        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-        let scene_renderer = SceneRenderer::new(device.clone(), queue.clone(), format);
         Ok(Self {
             device,
             queue,
-            scene_renderer,
-            surface: None,
             compositor: None,
             composition_surface: None,
             latest_frames: HashMap::new(),
@@ -2193,6 +1750,7 @@ impl PreviewRenderer {
         })
     }
 
+    /// Uploads an RGBA frame for a video asset.
     pub fn update_video_frame(
         &mut self,
         asset_id: &str,
@@ -2200,81 +1758,22 @@ impl PreviewRenderer {
         height: u32,
         rgba: &[u8],
     ) -> Result<(), RenderError> {
-        self.scene_renderer
-            .update_video_frame(asset_id, width, height, rgba)
+        self.update_video(asset_id, &VideoFrame::rgba(width, height, rgba.to_vec()))
     }
 
-    /// Uploads a decoded frame, block compressed or RGBA, for scenes and compositions.
+    /// Uploads a decoded frame, block compressed or RGBA.
     pub fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
         self.latest_frames
             .insert(asset_id.to_string(), frame.clone());
-        if let Some(compositor) = self.compositor.as_mut() {
-            compositor.update_video(asset_id, frame)?;
+        match self.compositor.as_mut() {
+            Some(compositor) => compositor.update_video(asset_id, frame),
+            None => Ok(()),
         }
-        self.scene_renderer.update_video(asset_id, frame)
     }
 
-    pub fn render(
-        &mut self,
-        scene: &Scene,
-        width: u32,
-        height: u32,
-    ) -> Result<PreviewFrame, RenderError> {
-        if width == 0 || height == 0 {
-            return Ok(PreviewFrame {
-                width,
-                height,
-                rgba: Vec::new(),
-                layout: PreviewResult {
-                    revision: scene.revision,
-                    ..PreviewResult::default()
-                },
-            });
-        }
-        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-        let needs_surface = self
-            .surface
-            .as_ref()
-            .is_none_or(|(w, h, _, _)| *w != width || *h != height);
-        if needs_surface {
-            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("lumen-preview-target"),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.surface = Some((width, height, texture, view));
-        }
-        let Some((_, _, texture, view)) = self.surface.as_ref() else {
-            return Err(RenderError::Backend("preview target missing".into()));
-        };
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("lumen-preview-encoder"),
-            });
-        self.scene_renderer
-            .draw(&mut encoder, view, scene, width, height)?;
-
-        let texture = texture.clone();
-        let rgba = read_back(&self.device, &self.queue, encoder, &texture, width, height)?;
-
-        Ok(PreviewFrame {
-            width,
-            height,
-            rgba,
-            layout: self.scene_renderer.preview_result().clone(),
-        })
+    /// Whether this device uploads Hap frames as BC textures.
+    pub fn bc_supported(&mut self) -> Result<bool, RenderError> {
+        Ok(self.compositor()?.bc_supported())
     }
 }
 
@@ -2369,16 +1868,6 @@ pub(crate) fn read_back(
     drop(mapped);
     buffer.unmap();
     Ok(rgba)
-}
-
-impl crate::Renderer for PreviewRenderer {
-    fn render(&mut self, scene: &Scene) -> Result<(), RenderError> {
-        self.render(scene, 1920, 1080).map(|_| ())
-    }
-
-    fn preview(&mut self, scene: &Scene, width: u32, height: u32) -> Result<Vec<u8>, RenderError> {
-        Ok(self.render(scene, width, height)?.rgba)
-    }
 }
 
 #[cfg(test)]

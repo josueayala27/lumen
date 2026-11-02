@@ -1,8 +1,8 @@
 //! Render contract v2: composition, screens, layouts and mapping.
 //!
 //! Mirrors `packages/schema/src/composition.ts`, `packages/schema/src/slide.ts` and
-//! `packages/schema/src/screen.ts` field for field. Zod defaults are serde defaults here. See docs/architecture/02-render-contract.md and
-//! docs/architecture/10-screens-and-mapping.md.
+//! `packages/schema/src/screen.ts` field for field. Zod defaults are serde defaults here. See
+//! docs/architecture/02-render-contract.md and docs/architecture/10-screens-and-mapping.md.
 
 use std::collections::BTreeMap;
 

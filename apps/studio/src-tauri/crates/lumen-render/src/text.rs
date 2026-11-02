@@ -1,4 +1,4 @@
-//! cosmic-text shaping and CPU glyph placement for text layers.
+//! cosmic-text shaping and CPU glyph placement for slide text elements.
 
 use std::collections::{HashMap, HashSet};
 
@@ -9,9 +9,10 @@ use cosmic_text::{
 
 use crate::color::ClearColor;
 use crate::geometry::{rotated_bounds, FrameRect};
-use crate::{
-    Frame, Layer, PreviewBounds, PreviewTextRun, Scene, SceneFont, TextAlign, TextFit, TextVAlign,
+use crate::composition::{
+    CompositionFont, Frame, SlideElement, TextAlign, TextFit, TextRun, TextVAlign,
 };
+use crate::slide::{SlideBounds, SlidePage, SlideTextRun};
 
 const ATLAS_WIDTH: u32 = 2048;
 const ATLAS_HEIGHT: u32 = 2048;
@@ -41,8 +42,8 @@ pub(crate) struct DecorationDraw {
 
 #[derive(Debug, Default)]
 pub(crate) struct TextLayout {
-    pub bounds: Vec<PreviewBounds>,
-    pub text_runs: Vec<PreviewTextRun>,
+    pub bounds: Vec<SlideBounds>,
+    pub text_runs: Vec<SlideTextRun>,
     pub glyphs: Vec<GlyphDraw>,
     pub decorations: Vec<DecorationDraw>,
 }
@@ -86,29 +87,29 @@ impl TextEngine {
         }
     }
 
-    /// Shapes every text layer and returns the editor layout plus glyph quads.
-    pub(crate) fn layout(&mut self, scene: &Scene, width: u32, height: u32) -> TextLayout {
+    /// Shapes every text element and returns the editor layout plus glyph quads. Glyphs carry
+    /// the index of their element in `slide.elements`.
+    pub(crate) fn layout(&mut self, slide: &SlidePage, width: u32, height: u32) -> TextLayout {
         let mut result = TextLayout::default();
         if width == 0 || height == 0 {
             return result;
         }
-        self.register_fonts(scene);
+        self.register_fonts(&slide.fonts);
         let width = width as f32;
         let height = height as f32;
-        let scale_x = width / scene.viewport.width.max(1.0) as f32;
+        let scale_x = width / slide.size.width.max(1.0) as f32;
 
-        let layers = scene.background.iter().chain(scene.layers.iter());
-        for (layer_index, layer) in layers.enumerate() {
+        for (layer_index, layer) in slide.elements.iter().enumerate() {
             let frame = layer.frame();
             let bounds = rotated_bounds(frame, width, height);
-            result.bounds.push(PreviewBounds {
+            result.bounds.push(SlideBounds {
                 element_id: layer.id().to_string(),
                 x: bounds.x,
                 y: bounds.y,
                 width: bounds.w,
                 height: bounds.h,
             });
-            if let Layer::Text {
+            if let SlideElement::Text {
                 id,
                 frame,
                 opacity,
@@ -128,7 +129,7 @@ impl TextEngine {
             } = layer
             {
                 self.layout_text(
-                    scene,
+                    &slide.fonts,
                     layer_index as u32,
                     id,
                     *frame,
@@ -158,12 +159,12 @@ impl TextEngine {
     #[allow(clippy::too_many_arguments)]
     fn layout_text(
         &mut self,
-        scene: &Scene,
+        fonts: &[CompositionFont],
         layer_index: u32,
         id: &str,
         frame: Frame,
         opacity: f64,
-        runs: &[crate::TextRun],
+        runs: &[TextRun],
         font_id: &str,
         font_size: f64,
         weight: u32,
@@ -186,7 +187,7 @@ impl TextEngine {
         let block_y = frame_rect.y + padding_px;
         let block_w = (frame_rect.w - padding_px * 2.0).max(1.0);
         let block_h = (frame_rect.h - padding_px * 2.0).max(1.0);
-        let family = self.resolve_family(scene, font_id);
+        let family = self.resolve_family(fonts, font_id);
         let base_size = (font_size as f32 * scale).max(1.0);
         let line_height = line_height.max(0.01) as f32;
         let letter_spacing = if base_size > 0.0 {
@@ -259,7 +260,7 @@ impl TextEngine {
                 .iter()
                 .map(|x| f64::from((origin_x + *x) / width))
                 .collect();
-            result.text_runs.push(PreviewTextRun {
+            result.text_runs.push(SlideTextRun {
                 element_id: id.to_string(),
                 line: line_index as u32,
                 text: line.text.clone(),
@@ -338,7 +339,7 @@ impl TextEngine {
     fn shape(
         &mut self,
         family: &str,
-        runs: &[crate::TextRun],
+        runs: &[TextRun],
         font_size: f32,
         line_height: f32,
         weight: u32,
@@ -493,8 +494,8 @@ impl TextEngine {
         atlas
     }
 
-    fn register_fonts(&mut self, scene: &Scene) {
-        for font in &scene.fonts {
+    fn register_fonts(&mut self, fonts: &[CompositionFont]) {
+        for font in fonts {
             if self.loaded_fonts.contains(&font.path) {
                 continue;
             }
@@ -504,8 +505,8 @@ impl TextEngine {
         }
     }
 
-    fn resolve_family(&self, scene: &Scene, font_id: &str) -> String {
-        let Some(font) = scene.fonts.iter().find(|font| font.id == font_id) else {
+    fn resolve_family(&self, fonts: &[CompositionFont], font_id: &str) -> String {
+        let Some(font) = fonts.iter().find(|font| font.id == font_id) else {
             return String::new();
         };
         if self.family_exists(font) {
@@ -519,7 +520,7 @@ impl TextEngine {
         String::new()
     }
 
-    fn family_exists(&self, font: &SceneFont) -> bool {
+    fn family_exists(&self, font: &CompositionFont) -> bool {
         self.family_exists_named(&font.family)
     }
 
@@ -653,7 +654,17 @@ mod tests {
     #[test]
     fn empty_layout_has_no_bounds() {
         let mut engine = TextEngine::new();
-        let layout = engine.layout(&crate::spike_scene(), 0, 0);
+        let slide = SlidePage {
+            revision: 1,
+            size: crate::composition::Size {
+                width: 1920.0,
+                height: 1080.0,
+            },
+            elements: Vec::new(),
+            fonts: Vec::new(),
+            assets: Vec::new(),
+        };
+        let layout = engine.layout(&slide, 0, 0);
         assert!(layout.bounds.is_empty());
         assert!(layout.text_runs.is_empty());
         assert!(layout.glyphs.is_empty());
