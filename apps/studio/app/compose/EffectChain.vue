@@ -21,6 +21,10 @@ const addItems = computed<MenuEntry[]>(() =>
   EFFECT_KINDS.map((kind) => ({ id: kind, label: EFFECT_CATALOG[kind].label, icon: 'lucide:wand-sparkles' })),
 )
 
+function effectLabel(effect: Effect): string {
+  return EFFECT_CATALOG[effect.kind].label
+}
+
 function onMove(move: SortableMove): void {
   const effect = props.effects[move.from.index]
   if (effect) emit('move', effect.id, move.to.index)
@@ -51,7 +55,7 @@ const empty = css({ textStyle: 'ui.xs', color: 'fg.subtle', py: '1' })
       :list-id="listId"
       :group="listId"
       item-key="id"
-      :item-label="(effect) => EFFECT_CATALOG[effect.kind].label"
+      :item-label="effectLabel"
       aria-label="Effects"
       @move="onMove"
     >

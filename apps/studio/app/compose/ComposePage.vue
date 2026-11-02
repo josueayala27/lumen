@@ -212,7 +212,7 @@ const grid = css({
 const column = css({ display: 'flex', flexDirection: 'column', gap: '3', minH: '0' })
 const half = css({ flex: '1', minH: '0' })
 const centre = css({ display: 'flex', flexDirection: 'column', gap: '2', minH: '0', minW: '0' })
-const note = css({ display: 'flex', alignItems: 'center', gap: '2', textStyle: 'ui.xs', color: 'fg.subtle' })
+const note = css({ display: 'flex', flexDirection: 'column', gap: '0.5', textStyle: 'ui.xs', color: 'fg.subtle' })
 const inspector = css({ flex: '1', minH: '0', overflowY: 'auto', px: '3' })
 const actions = css({ display: 'flex', alignItems: 'center', gap: '1' })
 </script>

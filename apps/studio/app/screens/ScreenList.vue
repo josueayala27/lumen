@@ -68,7 +68,8 @@ const meta = css({ flex: '1', minW: '0', display: 'flex', flexDirection: 'column
 const name = css({ textStyle: 'ui.sm', color: 'fg.default', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
 const sub = css({ textStyle: 'ui.xs', color: 'fg.subtle', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
 const icon = css({ color: 'fg.subtle', flexShrink: '0' })
-const actions = css({ display: 'flex', alignItems: 'center', gap: '0.5', flexShrink: '0' })
+const item = css({ display: 'flex', flexDirection: 'column', flex: '1', minW: '0' })
+const actions = css({ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.5', px: '1', pb: '1' })
 const empty = css({ p: '3', textStyle: 'ui.xs', color: 'fg.subtle' })
 </script>
 
@@ -91,30 +92,32 @@ const empty = css({ p: '3', textStyle: 'ui.xs', color: 'fg.subtle' })
       @move="onMove"
     >
       <template #default="{ item: screen }">
-        <div
-          role="button"
-          tabindex="0"
-          :class="cx(row, screen.id === selectedId && selectedRow, !screen.enabled && disabledRow)"
-          :aria-current="screen.id === selectedId || undefined"
-          @click="emit('select', screen.id)"
-          @keydown.enter="emit('select', screen.id)"
-        >
-          <Icon
-            :name="screen.target.kind === 'display' ? 'lucide:monitor' : screen.role === 'stage' ? 'lucide:presentation' : 'lucide:square-dashed'"
-            :size="16"
-            :class="icon"
-            aria-hidden="true"
-          />
-          <div :class="meta">
-            <span :class="name">{{ screen.name || 'Screen' }}</span>
-            <span :class="sub">{{ screen.size.width }}×{{ screen.size.height }} · {{ screen.role === 'stage' ? 'Stage' : 'Audience' }}</span>
+        <div :class="item">
+          <div
+            role="button"
+            tabindex="0"
+            :class="cx(row, screen.id === selectedId && selectedRow, !screen.enabled && disabledRow)"
+            :aria-current="screen.id === selectedId || undefined"
+            @click="emit('select', screen.id)"
+            @keydown.enter="emit('select', screen.id)"
+          >
+            <Icon
+              :name="screen.target.kind === 'display' ? 'lucide:monitor' : screen.role === 'stage' ? 'lucide:presentation' : 'lucide:square-dashed'"
+              :size="16"
+              :class="icon"
+              aria-hidden="true"
+            />
+            <div :class="meta">
+              <span :class="name">{{ screen.name || 'Screen' }}</span>
+              <span :class="sub">{{ screen.size.width }}×{{ screen.size.height }} · {{ screen.role === 'stage' ? 'Stage' : 'Audience' }}</span>
+            </div>
+            <Badge
+              :tone="tones[screenStatus(screen, outputs.displays.value, outputs.outputFor).kind]"
+              dot
+              :label="screenStatus(screen, outputs.displays.value, outputs.outputFor).label"
+            />
           </div>
-          <Badge
-            :tone="tones[screenStatus(screen, outputs.displays.value, outputs.outputFor).kind]"
-            dot
-            :label="screenStatus(screen, outputs.displays.value, outputs.outputFor).label"
-          />
-          <div :class="actions" @click.stop>
+          <div v-if="screen.id === selectedId" :class="actions">
             <IconButton
               icon="lucide:scan-eye"
               label="Identify"

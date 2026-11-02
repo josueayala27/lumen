@@ -129,8 +129,8 @@ onBeforeUnmount(() => {
   onPointerUp()
 })
 
-function fallbackStyle(source: Source | null, opacity: number): Record<string, string> {
-  const background = source ? sourceCss(source) : null
+function fallbackStyle(source: Source, opacity: number): Record<string, string> {
+  const background = sourceCss(source)
   return { ...(background ? { background } : {}), opacity: String(opacity * props.composition.master.opacity) }
 }
 
@@ -188,17 +188,18 @@ const handleClass = css({
       <div :class="clip">
         <canvas v-if="rendered" ref="canvas" :class="canvasClass" aria-label="Composition preview" />
         <template v-else>
-          <div
-            v-for="{ layer, source } in visibleLayers"
-            :key="layer.id"
-            :class="cx(box, (!source || !sourceCss(source)) && placeholder)"
-            :style="{ ...transformStyle(layer.transform), ...fallbackStyle(source, layer.opacity) }"
-          >
-            <template v-if="!source || !sourceCss(source)">
-              <Icon v-if="source" :name="sourceIcon(source)" :size="14" aria-hidden="true" />
-              {{ source ? sourceLabel(source) : layer.name }}
-            </template>
-          </div>
+          <template v-for="{ layer, source } in visibleLayers" :key="layer.id">
+            <div
+              v-if="source"
+              :class="cx(box, !sourceCss(source) && placeholder)"
+              :style="{ ...transformStyle(layer.transform), ...fallbackStyle(source, layer.opacity) }"
+            >
+              <template v-if="!sourceCss(source)">
+                <Icon :name="sourceIcon(source)" :size="14" aria-hidden="true" />
+                {{ sourceLabel(source) }}
+              </template>
+            </div>
+          </template>
         </template>
       </div>
       <div

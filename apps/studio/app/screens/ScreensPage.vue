@@ -98,7 +98,7 @@ const page = css({
 })
 const left = css({ display: 'flex', flexDirection: 'column', minH: '0', borderRightWidth: '1px', borderColor: 'border.default', bg: 'bg.panel', overflowY: 'auto' })
 const monitors = css({ p: '2', borderTopWidth: '1px', borderColor: 'border.default' })
-const centre = css({ display: 'flex', flexDirection: 'column', minW: '0', minH: '0' })
+const centre = css({ display: 'flex', flexDirection: 'column', minW: '0', minH: '0', overflow: 'hidden' })
 const toolbar = css({
   display: 'flex',
   alignItems: 'center',
@@ -111,7 +111,7 @@ const toolbar = css({
   flexShrink: '0',
 })
 const title = css({ textStyle: 'ui.sm', color: 'fg.default', fontWeight: 'semibold', mr: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
-const segment = css({ w: '[200px]' })
+const segment = css({ w: '[200px]', flexShrink: '0' })
 const body = css({ flex: '1', minH: '0', display: 'flex', flexDirection: 'column' })
 const right = css({ minH: '0', overflowY: 'auto', borderLeftWidth: '1px', borderColor: 'border.default', bg: 'bg.panel' })
 const notice = css({ px: '3', pt: '2' })
@@ -128,10 +128,12 @@ const notice = css({ px: '3', pt: '2' })
 
     <section :class="centre" aria-label="Screen canvas">
       <div :class="toolbar">
-        <h1 :class="title">{{ view === 'canvas' ? 'Canvas' : selected ? `${selected.name || 'Screen'} output` : 'Output' }}</h1>
+        <h1 :class="title">{{ view === 'output' && selected ? selected.name || 'Screen' : 'Screens' }}</h1>
         <IconButton icon="lucide:undo-2" label="Undo" shortcut="Mod+Z" size="sm" :disabled="!showDocument.canUndo.value" @click="showDocument.undo()" />
         <IconButton icon="lucide:redo-2" label="Redo" shortcut="Mod+Shift+Z" size="sm" :disabled="!showDocument.canRedo.value" @click="showDocument.redo()" />
-        <SegmentedControl v-model="view" :options="viewOptions" size="sm" aria-label="View" :class="segment" />
+        <div :class="segment">
+          <SegmentedControl v-model="view" :options="viewOptions" size="sm" aria-label="View" />
+        </div>
       </div>
       <div v-if="error || showDocument.error.value" :class="notice">
         <ErrorNotice :message="error || showDocument.error.value" />

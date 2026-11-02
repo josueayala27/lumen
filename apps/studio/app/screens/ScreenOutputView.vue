@@ -156,7 +156,7 @@ function handleStyle(point: Point): Record<string, string> {
 function blendStyle(side: 'left' | 'right' | 'top' | 'bottom', width: number): Record<string, string> {
   const percent = `${width * 100}%`
   const direction = { left: 'to right', right: 'to left', top: 'to bottom', bottom: 'to top' }[side]
-  const box =
+  const box: Record<string, string> =
     side === 'left' || side === 'right'
       ? { top: '0', bottom: '0', width: percent, [side]: '0' }
       : { left: '0', right: '0', height: percent, [side]: '0' }
@@ -171,7 +171,7 @@ const blendSides = computed(() => {
 
 const root = css({ flex: '1', minH: '0', display: 'flex', flexDirection: 'column' })
 const bar = css({ display: 'flex', alignItems: 'center', gap: '3', px: '3', py: '2', flexWrap: 'wrap' })
-const modeControl = css({ w: '[200px]' })
+const modeControl = css({ w: '[200px]', flexShrink: '0' })
 const toggle = css({ display: 'flex', alignItems: 'center', gap: '1.5', textStyle: 'ui.xs', color: 'fg.muted' })
 const note = css({ display: 'flex', alignItems: 'center', gap: '1.5', px: '3', pb: '2', textStyle: 'ui.xs', color: 'fg.subtle' })
 const stage = css({ flex: '1', minH: '0', display: 'flex', alignItems: 'center', justifyContent: 'center', p: '12', overflow: 'hidden', containerType: 'size' })
@@ -205,7 +205,7 @@ const handle = css({
   cursor: 'grab',
   touchAction: 'none',
   outline: 'none',
-  zIndex: '2',
+  zIndex: '[2]',
   _focusVisible: { boxShadow: '[0 0 0 3px var(--colors-accent-muted)]' },
   _active: { cursor: 'grabbing' },
 })
@@ -218,7 +218,9 @@ const meshHandle = css({ w: '[10px]', h: '[10px]', ml: '[-5px]', mt: '[-5px]', b
   </div>
   <div v-else :class="root">
     <div :class="bar">
-      <SegmentedControl v-model="mode" :options="modeOptions" size="sm" aria-label="Handles" :class="modeControl" />
+      <div :class="modeControl">
+        <SegmentedControl v-model="mode" :options="modeOptions" size="sm" aria-label="Handles" />
+      </div>
       <label :class="toggle">
         <Switch v-model="showGrid" size="sm" aria-label="Show warp grid" />
         Warp grid

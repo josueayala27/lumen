@@ -151,7 +151,7 @@ function sizeLabel(region: Region): string {
 const root = css({ flex: '1', minH: '0', display: 'flex', flexDirection: 'column' })
 const bar = css({ display: 'flex', alignItems: 'center', gap: '2', px: '3', py: '2', flexWrap: 'wrap' })
 const hint = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
-const overlapField = css({ w: '[96px]' })
+const overlapField = css({ w: '[120px]', flexShrink: '0' })
 const stage = css({ flex: '1', minH: '0', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '3', p: '8', overflow: 'hidden', containerType: 'size' })
 const canvas = css({
   position: 'relative',
@@ -173,7 +173,7 @@ const region = css({
   outline: 'none',
   _focusVisible: { boxShadow: '[0 0 0 2px var(--colors-accent-default)]' },
 })
-const regionSelected = css({ borderWidth: '2px', bg: 'accent.muted', zIndex: '1' })
+const regionSelected = css({ borderWidth: '2px', bg: 'accent.muted', zIndex: '[1]' })
 const regionOff = css({ borderStyle: 'dashed', borderColor: 'border.strong', bg: 'transparent' })
 const label = css({
   position: 'absolute',
@@ -207,7 +207,7 @@ const handle = css({
   bg: 'bg.panel',
   touchAction: 'none',
 })
-const guide = css({ position: 'absolute', bg: 'accent.default', pointerEvents: 'none', zIndex: '2' })
+const guide = css({ position: 'absolute', bg: 'accent.default', pointerEvents: 'none', zIndex: '[2]' })
 const empty = css({ textStyle: 'ui.sm', color: 'fg.subtle' })
 </script>
 
@@ -219,17 +219,18 @@ const empty = css({ textStyle: 'ui.sm', color: 'fg.subtle' })
           Split side by side
         </Button>
       </Tooltip>
-      <NumberField
-        v-model="overlapPercent"
-        :units="['%']"
-        :min="0"
-        :max="50"
-        :decimals="1"
-        label="Overlap"
-        size="sm"
-        aria-label="Overlap between neighbours"
-        :class="overlapField"
-      />
+      <div :class="overlapField">
+        <NumberField
+          v-model="overlapPercent"
+          :units="['%']"
+          :min="0"
+          :max="50"
+          :decimals="1"
+          label="Overlap"
+          size="sm"
+          aria-label="Overlap between neighbours"
+        />
+      </div>
       <Button size="sm" variant="ghost" icon="lucide:maximize" :disabled="enabledScreens.length === 0" @click="fillCanvas">Fill canvas</Button>
       <span :class="hint">
         Canvas {{ composition.canvas.width }}×{{ composition.canvas.height }} · drag to move, handles to resize · Alt turns snapping off

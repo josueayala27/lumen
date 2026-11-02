@@ -56,7 +56,7 @@ const failure = css({ mt: '2', textStyle: 'ui.xs', color: 'danger.default' })
 </script>
 
 <template>
-  <Panel title="Screens" bordered="all" :class="panel">
+  <Panel title="Monitors" bordered="all" :class="panel">
     <template #actions>
       <Button variant="ghost" size="sm" icon="lucide:refresh-cw" :loading="loading" @click="refresh">Refresh</Button>
     </template>
