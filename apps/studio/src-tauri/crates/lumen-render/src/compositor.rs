@@ -2057,7 +2057,7 @@ mod tests {
                 .expect("output");
             let bgra = crate::renderer::read_back(&device, &queue, encoder, &target.texture, 480, 270).expect("readback");
             let mut worst = 0u8;
-            for (rgba, bgra) in expected.rgba.chunks_exact(4).zip(bgra.chunks_exact(4)) {
+            for (rgba, bgra) in expected.rgba.as_chunks::<4>().0.iter().zip(bgra.as_chunks::<4>().0) {
                 for (a, b) in [(rgba[0], bgra[2]), (rgba[1], bgra[1]), (rgba[2], bgra[0])] {
                     worst = worst.max(a.abs_diff(b));
                 }

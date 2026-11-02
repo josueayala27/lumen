@@ -18,7 +18,7 @@ pub fn layer_matches(filter: &LayerFilter, layer: &CompositionLayer) -> bool {
     match filter {
         LayerFilter::All => true,
         LayerFilter::Only { ids, tags } => {
-            ids.iter().any(|id| *id == layer.id) || layer.tags.iter().any(|tag| tags.contains(tag))
+            ids.contains(&layer.id) || layer.tags.iter().any(|tag| tags.contains(tag))
         }
     }
 }
@@ -641,7 +641,7 @@ mod tests {
         let (_, y) = apply_homography(&matrix, 0.5, 0.5);
         assert!(y < 0.5, "the narrow far half is compressed: {y}");
         let collapsed = pin([(0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]);
-        assert!(homography(&collapsed).map_or(true, |m| m.iter().all(|v| v.is_finite())));
+        assert!(homography(&collapsed).is_none_or(|m| m.iter().all(|v| v.is_finite())));
     }
 
     #[test]
