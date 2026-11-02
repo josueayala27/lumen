@@ -3,7 +3,7 @@
 A screen is one output: a physical display, an NDI stream or a virtual screen. Each screen shows the composition from `02-render-contract.md` through its own **layout** and **mapping**. Content never knows which screen shows it.
 
 - TypeScript: `packages/schema/src/screen.ts`.
-- Rust: monitor and window code in `lumen-output`; layout and mapping passes in `lumen-render`.
+- Rust: monitor and window code in `lumen-output`; layout and mapping passes in `lumen-render` (`mapping.rs`, `screen.wgsl`).
 - Roadmap: Wave B (B1 screen manager, B2 layouts, B3 mapping).
 
 ## Screen
@@ -83,7 +83,20 @@ Mapping {
 - Mapping handles show on the real output while editing, so the operator aligns to the physical surface.
 - Every mapping parameter is a plain value on a stable path, such as `screens.<id>.mapping.color.brightness`. The command bus and DMX can drive them.
 
+## Implementation (A2)
+
+- `mapping.rs` holds the pure maths: layer filter, screen grouping, canvas render size, region crop, text preset re-layout, corner-pin homography, mesh interpolation, warp grid and edge-blend ramp.
+- `Compositor::render_screens` groups screens by layer filter and text override. Presets placed in output space (`lowerThird`, `strip`) also group by region. Each group renders the canvas once, at the size its largest region needs.
+- Text presets match `restyleText` in the TS adapter. Preset frames are mapped back into slide space, so text outside the layer box is clipped.
+- The screen stage is one pass. Corner pin and mesh become a warped 32 × 32 grid; a mesh wins over the corner pin because its points already include the pin. Outside the warped surface is black.
+- Edge blend runs on content coordinates. The ramp is a linear-light multiplier: with gamma 2.2 two overlapping projectors sum to one. `power` shapes the S-curve.
+- Output masks hide the area they cover; `invert` keeps only that area. The pass takes up to 4 rect or polygon masks with up to 14 points each. Image masks are skipped for now.
+- Colour correction works on sRGB values: brightness and contrast, then gamma, then the red, green and blue gains.
+- Test patterns (`grid`, `bars`, `identify`) and blackout fill the whole output, unwarped. A disabled screen renders black.
+- Each native output has its own render thread and wgpu device and renders only its own screen. Decoded video frames are shared between outputs; GPU textures are not.
+
 ## Tests
 
 - TypeScript: layout layer filtering, region maths, text preset resolution.
-- Rust unit tests: corner-pin and mesh maths, edge-blend ramp, region crop. No GPU tests in CI.
+- Rust unit tests: corner-pin and mesh maths, edge-blend ramp, region crop, layer filter, grouping, text presets. No GPU tests in CI.
+- Ignored GPU tests (`cargo test --release -p lumen-render -- --ignored`): blend modes, masks, mattes, region crop, corner pin, blackout, test patterns, grouped screens, crossfade, and preview against output pixels.

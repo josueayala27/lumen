@@ -3,7 +3,8 @@
 The render contract is the only interface between the Vue control app and the Rust renderer. Version 2 replaces the single-slide `Scene` with a **composition** (what to draw) and a list of **screens** (where and how to show it). The model comes from `07-roadmap.md` § Core model.
 
 - TypeScript: `packages/schema/src/composition.ts` (v2) and `packages/schema/src/scene.ts` (v1, kept until A2 lands).
-- Rust mirror: `apps/studio/src-tauri/crates/lumen-render/src/lib.rs`.
+- Rust mirror: `lumen-render/src/lib.rs` (v1) and `lumen-render/src/composition.rs` (v2, with screens). Fixture tests parse JSON produced by the Zod schemas (`lumen-render/fixtures/`).
+- Rust compositor: `lumen-render/src/compositor.rs`, `compositor.wgsl` and `screen.wgsl`. Effect and generator parameters: `effects.rs`. Layout and mapping maths: `mapping.rs`.
 - Screens, layouts and mapping: `10-screens-and-mapping.md`.
 
 ## Rules
@@ -110,6 +111,31 @@ Mask coordinates are normalized to the layer.
 
 The stage window is a Tauri webview with Vue chrome. Current and next images come from the Rust renderer, rendered from a stage screen layout. Notes, clock, timers and controls are Vue. There is no second text renderer for slide content.
 
+## Implementation (A2)
+
+The Rust compositor implements this contract. Notes on how it reads the contract:
+
+- Every intermediate texture holds premultiplied linear RGBA in `Rgba16Float`. Contract colours are sRGB and are converted to linear light. Blending runs in WGSL with ping-pong targets.
+- Each used source renders once per frame. Videos and images convert once per new frame. Solids and gradients are cached until they change. Slides re-render only when their layout, size or text override changes. Shader generators render every frame.
+- Slide sources render at the layer box size through the v1 scene renderer, so slide pixels stretch to the box like the TS adapter. Text layout comes from the same pass.
+- Gradients interpolate in sRGB, like CSS. They keep the first 8 stops.
+- Effects run in canvas space, after the source is placed with `fit` and `transform`. The mask applies after the effects, as in the pipeline above.
+- `alpha` multiplies the layer directly below by this layer's alpha: where the matte is clear, the canvas from before that layer shows.
+- Image masks use the luminance of the image. Polygon masks keep the first 48 points.
+- Unknown effect kinds, unknown shader ids and `ndi`/`camera` sources are skipped with one warning.
+- Blur radius is in canvas pixels. Colour and key adjustments work on sRGB values, like the editor sliders.
+
+### Desktop commands
+
+- `preview_render_composition { composition, screen?, width, height }` returns the same binary layout as `preview_render`. The layout JSON is a `CompositionPreviewResult`: `bounds` (one per drawn layer with `elementId: null`, one per slide element) and `textRuns`, keyed by `layerId`, `sourceId` and `elementId`, normalized to the screen output before mapping (or to the canvas when `screen` is omitted).
+- `apply_composition { composition, screens, transition? }` drives one native output per enabled `display` screen. It matches the monitor by name and position, opens the output if needed and returns `{ screenId, label, error }` per screen. `transition` is `{ kind, durationMs, easing }` and defaults to a cut.
+- Composition videos decode under the same per-caller demand as scene video layers. The v1 commands are unchanged; an output shows the last scene or composition it received.
+
+### Transitions as implemented
+
+- A layer whose `sourceId` changes crossfades from the old source over `transition.durationMs` with `transition.easing`. A cut or zero duration switches at once.
+- A `slide` source whose `revision` changes runs `transition.kind` (`fade`, `dissolve`, `slide`, `zoom`) between the old and new slide textures. Fades go through transparent, not black. The v1 `TransitionPlan` with full scenes is not used for v2.
+
 ## Migration from v1
 
 `sceneToComposition(scene)` in `packages/core` converts a v1 `Scene`:
@@ -118,4 +144,4 @@ The stage window is a Tauri webview with Vue chrome. Current and next images com
 - v1 `layers` become one `slide` source on a layer tagged `content`, or `lyrics` for songs.
 - `role: audience` becomes the default audience screen. `role: stage` becomes a stage screen.
 
-Rust renders v1 through the same adapter until A2 is complete. After that, `Scene` v1 is read only for import and old saved timelines.
+Rust still renders v1 scenes for the existing commands. The compositor renders v2 directly. When the studio moves to `apply_composition`, `Scene` v1 is read only for import and old saved timelines.
