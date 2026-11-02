@@ -28,7 +28,11 @@ use lumen_media::util::{
 };
 use lumen_media::{FileProbe, MediaBackend};
 use lumen_output::OutputManager;
-use lumen_render::{AssetKind, AssetState, Layer, Scene, VideoFrame, VideoPixels};
+use lumen_render::composition::Source as SourceV2;
+use lumen_render::mapping::layer_matches;
+use lumen_render::{
+    AssetKind, AssetState, Composition, Layer, Scene, Screen, VideoFrame, VideoPixels,
+};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
@@ -240,6 +244,58 @@ pub fn scene_video_sources(scene: &Scene) -> Vec<VideoSource> {
         .collect()
 }
 
+/// Video assets that a composition plays: video sources of enabled layers that at least one
+/// enabled screen draws (every enabled layer when `screens` is empty), in layer order and
+/// de-duplicated by asset. `inMs` becomes the start position.
+pub fn composition_video_sources(composition: &Composition, screens: &[Screen]) -> Vec<VideoSource> {
+    let drawn = |layer: &lumen_render::composition::CompositionLayer| {
+        screens.is_empty()
+            || screens
+                .iter()
+                .any(|screen| screen.enabled && layer_matches(&screen.layout.layers, layer))
+    };
+    let mut seen = HashSet::new();
+    let mut sources = Vec::new();
+    for layer in composition.layers.iter().filter(|layer| layer.enabled && drawn(layer)) {
+        let Some(SourceV2::Video {
+            asset,
+            loop_,
+            in_ms,
+            ..
+        }) = layer.source_id.as_deref().and_then(|id| composition.source(id))
+        else {
+            continue;
+        };
+        if !seen.insert(asset.asset_id.as_str()) {
+            continue;
+        }
+        let Some(scene_asset) = composition.asset(&asset.asset_id) else {
+            continue;
+        };
+        if scene_asset.kind != AssetKind::Video || scene_asset.state != AssetState::Ready {
+            continue;
+        }
+        let Some(local_path) = scene_asset.local_path.as_deref().and_then(local_scene_path) else {
+            continue;
+        };
+        let (Some(width), Some(height)) = (
+            intrinsic_edge(scene_asset.intrinsic.width),
+            intrinsic_edge(scene_asset.intrinsic.height),
+        ) else {
+            continue;
+        };
+        sources.push(VideoSource {
+            asset_id: asset.asset_id.clone(),
+            local_path,
+            width,
+            height,
+            start_ms: if in_ms.is_finite() { in_ms.max(0.0) as u64 } else { 0 },
+            loop_playback: *loop_,
+        });
+    }
+    sources
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Backend {
     Ffmpeg,
@@ -361,7 +417,16 @@ impl VideoPlaybackManager {
                 }
             }
         }
+        self.sync_sources(app, owner, sources);
+    }
 
+    /// Composition version of [`Self::sync_owner`]: video sources decode like scene video
+    /// layers, under the same per-caller demand.
+    pub fn sync_composition(&self, app: &AppHandle, owner: &str, composition: &Composition, screens: &[Screen]) {
+        self.sync_sources(app, owner, composition_video_sources(composition, screens));
+    }
+
+    fn sync_sources(&self, app: &AppHandle, owner: &str, sources: Vec<VideoSource>) {
         let mut state = self.state();
         state.demand.set(owner, sources);
         let wanted = state.demand.wanted();
