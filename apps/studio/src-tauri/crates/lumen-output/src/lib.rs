@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use lumen_render::composition::{ScreenRef, ScreenTarget};
 use lumen_render::{
-    Composition, CompositionTransition, PendingSurface, RenderError, RenderStats, Scene, Screen,
-    SurfaceFactory, SurfaceRenderer, TransitionPlan, VideoFrame,
+    Composition, CompositionTransition, PendingSurface, RenderError, RenderStats, Screen,
+    SurfaceFactory, SurfaceRenderer, VideoFrame,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -182,13 +182,11 @@ pub fn open_audience_window(app: &AppHandle, display_index: usize) -> Result<Out
 }
 
 enum OutputCommand {
-    Scene(Box<Scene>),
     Composition {
         composition: Box<Composition>,
         screen: Box<Screen>,
         transition: CompositionTransition,
     },
-    Transition(Box<TransitionPlan>),
     VideoFrame {
         asset_id: String,
         frame: VideoFrame,
@@ -225,10 +223,6 @@ impl RenderThread {
         }
     }
 
-    fn apply_scene(&self, scene: Scene) {
-        let _ = self.commands.send(OutputCommand::Scene(Box::new(scene)));
-    }
-
     fn apply_composition(
         &self,
         composition: Composition,
@@ -240,12 +234,6 @@ impl RenderThread {
             screen: Box::new(screen),
             transition,
         });
-    }
-
-    fn apply_transition(&self, plan: TransitionPlan) {
-        let _ = self
-            .commands
-            .send(OutputCommand::Transition(Box::new(plan)));
     }
 
     fn video_frame(&self, asset_id: String, frame: VideoFrame) {
@@ -297,7 +285,6 @@ fn spawn_renderer(
     app: AppHandle,
     factory: SurfaceFactory,
     pending: PendingSurface,
-    scene: Scene,
     width: u32,
     height: u32,
 ) -> Result<RenderThread, String> {
@@ -309,7 +296,7 @@ fn spawn_renderer(
     let join = thread::Builder::new()
         .name("lumen-output-render".into())
         .spawn(move || {
-            let mut renderer = match SurfaceRenderer::new(pending, width, height, &scene) {
+            let mut renderer = match SurfaceRenderer::new(pending, width, height) {
                 Ok(renderer) => {
                     let _ = ready_sender.send(Ok(()));
                     renderer
@@ -322,10 +309,6 @@ fn spawn_renderer(
 
             loop {
                 match receiver.try_recv() {
-                    Ok(OutputCommand::Scene(scene)) => {
-                        renderer.set_scene(&scene);
-                        continue;
-                    }
                     Ok(OutputCommand::Composition {
                         composition,
                         screen,
@@ -335,12 +318,6 @@ fn spawn_renderer(
                             renderer.set_composition(&composition, &screen, transition)
                         {
                             eprintln!("lumen-output: composition failed: {error}");
-                        }
-                        continue;
-                    }
-                    Ok(OutputCommand::Transition(plan)) => {
-                        if let Err(error) = renderer.start_transition(&plan) {
-                            eprintln!("lumen-output: transition failed: {error}");
                         }
                         continue;
                     }
@@ -451,7 +428,7 @@ impl OutputManager {
     }
 
     /// Opens a window and starts its render thread. Surface creation is marshalled to the main
-    /// thread because wgpu requires it on macOS. A hardcoded spike scene is applied immediately.
+    /// thread because wgpu requires it on macOS. The output is black until it gets a composition.
     pub fn open(&self, display_index: usize) -> Result<OutputWindow, String> {
         if thread::current().id() == self.inner.main_thread {
             return self.open_on_main_thread(display_index);
@@ -501,7 +478,6 @@ impl OutputManager {
             self.inner.app.clone(),
             factory,
             pending,
-            lumen_render::spike_scene(),
             output.width,
             output.height,
         ) {
@@ -564,27 +540,6 @@ impl OutputManager {
             .collect();
         outputs.sort_by_key(|output| output.display_index);
         outputs
-    }
-
-    pub fn apply_scene(&self, label: Option<&str>, scene: Scene) -> Result<(), String> {
-        let outputs = self.outputs();
-        match label {
-            Some(label) => {
-                let output = outputs
-                    .get(label)
-                    .ok_or_else(|| format!("no output named {label}"))?;
-                output.renderer.apply_scene(scene);
-            }
-            None => {
-                if outputs.is_empty() {
-                    return Err("no audience output is open".into());
-                }
-                for output in outputs.values() {
-                    output.renderer.apply_scene(scene.clone());
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Sends a composition and the screen it shows to one open output.
@@ -654,31 +609,6 @@ impl OutputManager {
                 }
             })
             .collect()
-    }
-
-    pub fn apply_transition(
-        &self,
-        label: Option<&str>,
-        plan: TransitionPlan,
-    ) -> Result<(), String> {
-        let outputs = self.outputs();
-        match label {
-            Some(label) => {
-                let output = outputs
-                    .get(label)
-                    .ok_or_else(|| format!("no output named {label}"))?;
-                output.renderer.apply_transition(plan);
-            }
-            None => {
-                if outputs.is_empty() {
-                    return Err("no audience output is open".into());
-                }
-                for output in outputs.values() {
-                    output.renderer.apply_transition(plan.clone());
-                }
-            }
-        }
-        Ok(())
     }
 
     pub fn update_video_frame(

@@ -87,14 +87,14 @@ Mapping {
 
 - `mapping.rs` holds the pure maths: layer filter, screen grouping, canvas render size, region crop, text preset re-layout, corner-pin homography, mesh interpolation, warp grid and edge-blend ramp.
 - `Compositor::render_screens` groups screens by layer filter and text override. Presets placed in output space (`lowerThird`, `strip`) also group by region. Each group renders the canvas once, at the size its largest region needs.
-- Text presets match `restyleText` in the TS adapter. Preset frames are mapped back into slide space, so text outside the layer box is clipped.
+- Text presets match the browser schematic (`apps/studio/app/show/schematic.ts`). Preset frames are mapped back into slide space, so text outside the layer box is clipped.
 - The screen stage is one pass. Corner pin and mesh become a warped 32 × 32 grid; a mesh wins over the corner pin because its points already include the pin. Outside the warped surface is black.
 - Edge blend runs on content coordinates. The ramp is a linear-light multiplier: with gamma 2.2 two overlapping projectors sum to one. `power` shapes the S-curve.
 - Output masks hide the area they cover; `invert` keeps only that area. The pass takes up to 4 rect or polygon masks with up to 14 points each. Image masks are skipped for now.
 - Colour correction works on sRGB values: brightness and contrast, then gamma, then the red, green and blue gains.
 - Test patterns (`grid`, `bars`, `identify`) and blackout fill the whole output, unwarped. A disabled screen renders black.
 - Each native output has its own render thread and wgpu device and renders only its own screen. Decoded video frames are shared between outputs; GPU textures are not.
-- The studio renders the Screens output view and the Show outputs through this pass (`preview_render_composition` with the screen, `apply_composition`). The browser build shows an unmapped schematic. Still not rendered: image output masks and stage layouts.
+- The studio renders the Screens output view and the Show outputs through this pass (`preview_render_composition` with the screen, `apply_composition`). The browser build shows an unmapped schematic drawn from the composition and screen. Stage layouts (`layout.stage`) are read by the stage window, which renders its slide images through the compositor; Rust does not lay out stage parts. Still not rendered: image output masks.
 
 ## Tests
 

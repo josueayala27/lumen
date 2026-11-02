@@ -86,7 +86,7 @@ const audienceOutput = computed(() => {
   return outputs.value.find((output) => output.display_index === display.index) ?? null
 })
 const audienceOnline = computed(() => audienceOutput.value !== null)
-/** Window label used by `apply_scene` and `apply_transition`; null until opened. */
+/** Native output window label that `apply_composition` drives; null until opened. */
 const audienceLabel = computed(() => audienceOutput.value?.label ?? null)
 
 function outputFor(displayIndex: number): OutputWindow | null {

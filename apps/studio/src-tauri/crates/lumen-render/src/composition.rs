@@ -8,7 +8,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-
 /// Pixel or slide size.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct Size {
@@ -113,7 +112,7 @@ pub enum Source {
         /// Bumps when the slide content changes; drives slide transitions.
         #[serde(default)]
         revision: u64,
-        /// Text, shape and image elements with the v1 layer shapes.
+        /// Text, shape and image elements, bottom to top by `z`.
         elements: Vec<SlideElement>,
         safe_area: Insets,
         size: Size,
@@ -912,6 +911,117 @@ mod tests {
     const SHOW_DOC: &str = include_str!("../fixtures/show-doc.json");
     /// Every source kind, blend mode, mask kind and mapping field, parsed by the Zod schemas.
     const FULL: &str = include_str!("../fixtures/full-composition.json");
+
+    #[test]
+    fn deserializes_slide_elements_fonts_and_assets_exactly() {
+        let json = r##"{
+            "schemaVersion": 2, "revision": 7, "canvas": { "width": 1920, "height": 1080 },
+            "sources": [{
+                "kind": "slide", "id": "words", "revision": 3,
+                "safeArea": { "top": 0.05, "right": 0.05, "bottom": 0.05, "left": 0.05 },
+                "size": { "width": 1920, "height": 1080 },
+                "elements": [
+                    {
+                        "kind": "shape", "id": "bg",
+                        "frame": { "x": 0, "y": 0, "w": 1, "h": 1, "rotation": 0 },
+                        "z": -1000, "opacity": 1, "fill": "#101828", "stroke": null, "strokeWidth": 0, "radius": 12
+                    },
+                    {
+                        "kind": "text", "id": "title",
+                        "frame": { "x": 0.1, "y": 0.2, "w": 0.8, "h": 0.3, "rotation": 15 },
+                        "z": 2, "opacity": 0.9,
+                        "runs": [{ "text": "Hello", "bold": true, "italic": false, "underline": true, "color": "#ffffff" }],
+                        "fontId": "inter", "fontSize": 64, "weight": 700, "color": "#ffffff",
+                        "align": "left", "vAlign": "bottom", "lineHeight": 1.4, "letterSpacing": 1.5,
+                        "fit": "shrink", "padding": 8, "maxLines": 3,
+                        "shadow": { "color": "#00000080", "blur": 4, "offsetX": 1, "offsetY": 2 },
+                        "outline": { "color": "#000000", "width": 2 }
+                    },
+                    {
+                        "kind": "image", "id": "photo",
+                        "frame": { "x": 0, "y": 0, "w": 1, "h": 1 },
+                        "source": { "assetId": "asset_photo", "hash": "photo-hash" }, "fit": "contain", "radius": 24
+                    },
+                    { "kind": "text", "id": "bare", "frame": { "x": 0, "y": 0, "w": 1, "h": 1 }, "runs": [], "fontId": "inter", "fontSize": 10, "color": "#fff" }
+                ]
+            }],
+            "layers": [{ "id": "lyrics", "sourceId": "words", "transform": {} }],
+            "master": {},
+            "fonts": [{ "id": "inter", "family": "Inter", "path": "/tmp/Inter.ttf", "hash": "f1", "fallback": ["Helvetica", "Arial"] }],
+            "assets": [
+                { "id": "asset_photo", "hash": "photo-hash", "kind": "image", "localPath": "/tmp/photo.png", "url": null, "intrinsic": { "width": 1920, "height": 1080 }, "state": "ready" },
+                { "id": "asset_clip", "hash": "clip-hash", "kind": "video", "url": "https://example.test/clip.mp4", "intrinsic": { "width": 1280, "height": 720 }, "state": "missing" }
+            ]
+        }"##;
+        let composition: Composition = serde_json::from_str(json).expect("composition");
+        assert_eq!(composition.color_space, ColorSpace::Srgb);
+        assert_eq!(composition.fonts[0].fallback, vec!["Helvetica", "Arial"]);
+        assert_eq!(composition.assets[0].intrinsic.width, 1920.0);
+        assert_eq!(composition.assets[1].state, AssetState::Missing);
+        assert!(composition.assets[1].local_path.is_none());
+        let Some(Source::Slide {
+            elements,
+            safe_area,
+            revision,
+            ..
+        }) = composition.source("words")
+        else {
+            panic!("expected a slide source");
+        };
+        assert_eq!(*revision, 3);
+        assert_eq!(safe_area.top, 0.05);
+        assert_eq!(elements.len(), 4);
+        assert_eq!(elements[1].frame().rotation, 15.0);
+        assert_eq!(elements[0].z(), -1000);
+        match &elements[1] {
+            SlideElement::Text {
+                fit,
+                v_align,
+                max_lines,
+                weight,
+                shadow,
+                ..
+            } => {
+                assert_eq!(*fit, TextFit::Shrink);
+                assert_eq!(*v_align, TextVAlign::Bottom);
+                assert_eq!(*max_lines, Some(3));
+                assert_eq!(*weight, 700);
+                assert_eq!(shadow.as_ref().map(|shadow| shadow.offset_y), Some(2.0));
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
+        match &elements[2] {
+            SlideElement::Image {
+                fit,
+                radius,
+                z,
+                opacity,
+                ..
+            } => {
+                assert_eq!(*fit, Fit::Contain);
+                assert_eq!(*radius, 24.0);
+                assert_eq!((*z, *opacity), (0, 1.0));
+            }
+            other => panic!("expected image, got {other:?}"),
+        }
+        match &elements[3] {
+            SlideElement::Text {
+                weight,
+                line_height,
+                align,
+                v_align,
+                fit,
+                ..
+            } => {
+                assert_eq!((*weight, *line_height), (400, 1.2));
+                assert_eq!(
+                    (*align, *v_align, *fit),
+                    (TextAlign::Center, TextVAlign::Middle, TextFit::Wrap)
+                );
+            }
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
 
     #[test]
     fn deserializes_the_default_show_document() {

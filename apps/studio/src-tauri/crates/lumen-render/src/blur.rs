@@ -1,7 +1,7 @@
 //! Separable box blur used for text shadow rasterization.
 //!
 //! Three box passes approximate a Gaussian closely enough for drop shadows while staying O(pixels)
-//! per pass. This runs on the CPU only when a scene revision contains a blurred shadow.
+//! per pass. This runs on the CPU only when a slide contains a blurred shadow.
 
 const BOX_PASSES: f64 = 3.0;
 const MAX_BOX_RADIUS: u32 = 256;

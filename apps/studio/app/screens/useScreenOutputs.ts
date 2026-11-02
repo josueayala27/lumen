@@ -51,7 +51,7 @@ export function useScreenOutputs() {
 /**
  * The test pattern each screen shows on which output, keyed by screen id.
  * Screens without a pattern or without an open output are left out, so a
- * change of key means the output needs a new scene.
+ * change of key means the output needs the composition again.
  */
 export function testPatternKeys(screens: readonly Screen[], outputLabel: (screen: Screen) => string | null): Map<string, string> {
   const keys = new Map<string, string>()

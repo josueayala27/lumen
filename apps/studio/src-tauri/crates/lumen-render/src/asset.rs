@@ -1,6 +1,6 @@
 //! Asset source validation and a bounded byte cache for local and remote assets.
 //!
-//! The scene contract carries either a local path or an http(s) URL. Remote bytes are fetched with
+//! The render contract carries either a local path or an http(s) URL. Remote bytes are fetched with
 //! a hard size limit and kept in an LRU-ish cache so repeated revisions do not re-download a file.
 
 use std::collections::{HashMap, VecDeque};

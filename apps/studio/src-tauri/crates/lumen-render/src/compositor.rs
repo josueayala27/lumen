@@ -25,15 +25,16 @@ use crate::mapping::{
     canvas_render_size, layer_matches, rect_in_region, resolve_text, slide_elements_for_layout,
     warp_grid, CanvasKey, WarpVertex,
 };
-use crate::renderer::{asset_key, SceneRenderer, MODE_OPAQUE, MODE_YCOCG};
+use crate::renderer::{asset_key, SlideRenderer, MODE_OPAQUE, MODE_YCOCG};
+use crate::slide::{SlideLayout, SlidePage};
 use crate::video::VideoFrame;
-use crate::{LayerFit, PreviewResult, RenderError, Scene, SceneRole, TransitionKind, Viewport};
+use crate::{Fit, RenderError, TransitionKind};
 
 const SHADER: &str = include_str!("compositor.wgsl");
 const SCREEN_SHADER: &str = include_str!("screen.wgsl");
 /// Canvas, layer and effect targets.
 const WORK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// Slide sources render through the v1 scene renderer into this format.
+/// Slide sources render through the slide renderer into this format.
 const SLIDE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Largest source texture edge for generators and slides.
 const MAX_SOURCE_EDGE: u32 = 4096;
@@ -109,7 +110,8 @@ pub struct CompositionTextRun {
     pub caret_stops: Vec<f64>,
 }
 
-/// `PreviewResult` for a composition: the v1 shape keyed by layer, source and element.
+/// Editor layout of a composition preview: bounds and text runs keyed by layer, source and
+/// element.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CompositionPreviewResult {
@@ -199,7 +201,7 @@ struct SlideCache {
     key: u64,
     revision: u64,
     target: Target,
-    layout: PreviewResult,
+    layout: SlideLayout,
     previous: Option<(Target, f64)>,
 }
 
@@ -280,7 +282,7 @@ fn box_pixels(layer: &CompositionLayer, canvas_w: u32, canvas_h: u32) -> (u32, u
 pub struct Compositor {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    slides: SceneRenderer,
+    slides: SlideRenderer,
     bind_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
     module: wgpu::ShaderModule,
@@ -371,7 +373,7 @@ impl Compositor {
             ..Default::default()
         });
         let blank = create_target(&device, "lumen-blank", 1, 1, WORK_FORMAT);
-        let slides = SceneRenderer::for_slides(device.clone(), queue.clone(), SLIDE_FORMAT);
+        let slides = SlideRenderer::new(device.clone(), queue.clone(), SLIDE_FORMAT);
         Self {
             device,
             queue,
@@ -798,7 +800,7 @@ impl Compositor {
             );
             let fit_rect = |view: &SourceView| {
                 let fit = if view.stretch {
-                    LayerFit::Stretch
+                    Fit::Stretch
                 } else {
                     layer.fit
                 };
@@ -1135,8 +1137,8 @@ impl Compositor {
                 let view = ctx
                     .composition
                     .asset(&asset.asset_id)
-                    .and_then(|scene_asset| {
-                        self.image_view(encoder, &scene_asset.id, &scene_asset.hash)
+                    .and_then(|media_asset| {
+                        self.image_view(encoder, &media_asset.id, &media_asset.hash)
                     });
                 if view.is_none() {
                     // Missing mask image: hide nothing rather than everything.
@@ -1294,8 +1296,8 @@ impl Compositor {
             Source::Image { asset, .. } => {
                 ctx.composition
                     .asset(&asset.asset_id)
-                    .and_then(|scene_asset| {
-                        self.image_view(encoder, &scene_asset.id, &scene_asset.hash)
+                    .and_then(|media_asset| {
+                        self.image_view(encoder, &media_asset.id, &media_asset.hash)
                     })
             }
             Source::Video { asset, .. } => self.video_view(encoder, source_id, &asset.asset_id),
@@ -1487,7 +1489,6 @@ impl Compositor {
             id,
             revision,
             elements,
-            safe_area,
             size,
             ..
         } = source
@@ -1495,18 +1496,13 @@ impl Compositor {
             return Ok(None);
         };
         let text = resolve_text(&ctx.screen.layout);
-        let scene = Scene {
-            schema_version: 1,
+        let page = SlidePage {
             revision: *revision,
-            role: SceneRole::Preview,
-            viewport: Viewport {
+            size: crate::composition::Size {
                 width: size.width.max(1.0),
                 height: size.height.max(1.0),
-                scale: 1.0,
             },
-            color_space: ctx.composition.color_space,
-            background: None,
-            layers: slide_elements_for_layout(
+            elements: slide_elements_for_layout(
                 elements,
                 &layer.transform,
                 ctx.composition.canvas,
@@ -1516,11 +1512,10 @@ impl Compositor {
             ),
             fonts: ctx.composition.fonts.clone(),
             assets: ctx.composition.assets.clone(),
-            safe_area: *safe_area,
         };
         let (width, height) = box_pixels(layer, ctx.canvas_w, ctx.canvas_h);
         let key = hash_of((
-            serde_json::to_string(&scene).unwrap_or_default(),
+            serde_json::to_string(&page).unwrap_or_default(),
             width,
             height,
         ));
@@ -1546,9 +1541,9 @@ impl Compositor {
                         label: Some("lumen-slide-source"),
                     });
             self.slides
-                .draw(&mut slide_encoder, &target.view, &scene, width, height)?;
+                .draw(&mut slide_encoder, &target.view, &page, width, height)?;
             self.queue.submit([slide_encoder.finish()]);
-            let layout = self.slides.preview_result().clone();
+            let layout = self.slides.layout().clone();
             let previous = match self.slide_cache.remove(id) {
                 Some(old) if old.revision != *revision && self.transition.animates() => {
                     Some((old.target, ctx.now))

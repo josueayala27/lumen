@@ -15,7 +15,7 @@ use crate::MediaError;
 
 /// Environment variable that overrides the decoder executable.
 pub const DECODER_ENV: &str = "LUMEN_FFMPEG";
-/// Default frame rate used when a scene does not provide one.
+/// Default frame rate used when the source does not provide one.
 pub const DEFAULT_DECODER_FPS: u32 = 30;
 /// Largest decoded edge accepted. Larger requests are clamped.
 pub const MAX_DECODE_EDGE: u32 = 8192;

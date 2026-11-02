@@ -30,9 +30,7 @@ use lumen_media::{FileProbe, MediaBackend};
 use lumen_output::OutputManager;
 use lumen_render::composition::Source as SourceV2;
 use lumen_render::mapping::layer_matches;
-use lumen_render::{
-    AssetKind, AssetState, Composition, Layer, Scene, Screen, VideoFrame, VideoPixels,
-};
+use lumen_render::{AssetKind, AssetState, Composition, Screen, VideoFrame, VideoPixels};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
@@ -168,7 +166,7 @@ fn import_blocking(app: &AppHandle, source: &str) -> Result<ImportedMedia, Strin
     })
 }
 
-/// A video reference found in a scene, resolved to a local file.
+/// A video source of a composition, resolved to a local file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoSource {
     pub asset_id: String,
@@ -179,18 +177,6 @@ pub struct VideoSource {
     pub loop_playback: bool,
 }
 
-fn layer_video_source(layer: &Layer) -> Option<(&str, bool, u64)> {
-    match layer {
-        Layer::Video {
-            source,
-            loop_,
-            start_ms,
-            ..
-        } => Some((source.asset_id.as_str(), *loop_, *start_ms)),
-        _ => None,
-    }
-}
-
 fn intrinsic_edge(value: f64) -> Option<u32> {
     if !value.is_finite() || value < 1.0 {
         return None;
@@ -199,49 +185,9 @@ fn intrinsic_edge(value: f64) -> Option<u32> {
     u32::try_from(clamped as u64).ok().filter(|edge| *edge > 0)
 }
 
-fn local_scene_path(raw: &str) -> Option<String> {
+fn local_media_path(raw: &str) -> Option<String> {
     let path = raw.strip_prefix("file://").unwrap_or(raw);
     is_local_file_path(path).then(|| path.to_string())
-}
-
-/// Video assets referenced by the current scene, in draw order and de-duplicated.
-/// Whole-document asset lists are ignored so slides that are not on screen do
-/// not consume a decoder.
-pub fn scene_video_sources(scene: &Scene) -> Vec<VideoSource> {
-    let mut references: Vec<(&str, bool, u64)> = Vec::new();
-    let mut seen = HashSet::new();
-    for layer in scene.background.iter().chain(scene.layers.iter()) {
-        let Some((asset_id, loop_playback, start_ms)) = layer_video_source(layer) else {
-            continue;
-        };
-        if seen.insert(asset_id) {
-            references.push((asset_id, loop_playback, start_ms));
-        }
-    }
-
-    let assets = scene
-        .assets
-        .iter()
-        .map(|asset| (asset.id.as_str(), asset))
-        .collect::<HashMap<_, _>>();
-    references
-        .into_iter()
-        .filter_map(|(asset_id, loop_playback, start_ms)| {
-            let asset = assets.get(asset_id)?;
-            if asset.kind != AssetKind::Video || asset.state != AssetState::Ready {
-                return None;
-            }
-            let local_path = local_scene_path(asset.local_path.as_deref()?)?;
-            Some(VideoSource {
-                asset_id: asset_id.to_string(),
-                local_path,
-                width: intrinsic_edge(asset.intrinsic.width)?,
-                height: intrinsic_edge(asset.intrinsic.height)?,
-                start_ms,
-                loop_playback,
-            })
-        })
-        .collect()
 }
 
 /// Video assets that a composition plays: video sources of enabled layers that at least one
@@ -279,18 +225,18 @@ pub fn composition_video_sources(
         if !seen.insert(asset.asset_id.as_str()) {
             continue;
         }
-        let Some(scene_asset) = composition.asset(&asset.asset_id) else {
+        let Some(media) = composition.asset(&asset.asset_id) else {
             continue;
         };
-        if scene_asset.kind != AssetKind::Video || scene_asset.state != AssetState::Ready {
+        if media.kind != AssetKind::Video || media.state != AssetState::Ready {
             continue;
         }
-        let Some(local_path) = scene_asset.local_path.as_deref().and_then(local_scene_path) else {
+        let Some(local_path) = media.local_path.as_deref().and_then(local_media_path) else {
             continue;
         };
         let (Some(width), Some(height)) = (
-            intrinsic_edge(scene_asset.intrinsic.width),
-            intrinsic_edge(scene_asset.intrinsic.height),
+            intrinsic_edge(media.intrinsic.width),
+            intrinsic_edge(media.intrinsic.height),
         ) else {
             continue;
         };
@@ -382,10 +328,10 @@ struct PlaybackState {
 
 const MAX_PENDING_COMMANDS: usize = 64;
 
-/// Owns decoder threads for every scene sent to a preview or an output.
+/// Owns decoder threads for every composition sent to a preview or an output.
 ///
-/// Scenes are the source of truth: each caller (output, preview, preload)
-/// reports the videos its scenes reference, a video decodes while any caller
+/// Compositions are the source of truth: each caller (output, preview, preload)
+/// reports the videos its composition plays, a video decodes while any caller
 /// wants it, and videos nobody wants stop. Each decoder follows its own
 /// transport, which the show drives with play, pause, seek and rate.
 #[derive(Default)]
@@ -420,22 +366,9 @@ impl VideoPlaybackManager {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Replaces the videos `owner` wants, starts new decoders and stops unwanted ones.
-    pub fn sync_owner(&self, app: &AppHandle, owner: &str, scenes: &[&Scene]) {
-        let mut sources: Vec<VideoSource> = Vec::new();
-        let mut seen = HashSet::new();
-        for scene in scenes {
-            for source in scene_video_sources(scene) {
-                if seen.insert(source.asset_id.clone()) {
-                    sources.push(source);
-                }
-            }
-        }
-        self.sync_sources(app, owner, sources);
-    }
-
-    /// Composition version of [`Self::sync_owner`]: video sources decode like scene video
-    /// layers, under the same per-caller demand.
+    /// Replaces the videos `owner` wants with the video sources the composition plays on these
+    /// screens (every enabled layer when `screens` is empty), starts new decoders and stops
+    /// unwanted ones.
     pub fn sync_composition(
         &self,
         app: &AppHandle,
@@ -444,6 +377,11 @@ impl VideoPlaybackManager {
         screens: &[Screen],
     ) {
         self.sync_sources(app, owner, composition_video_sources(composition, screens));
+    }
+
+    /// Drops every video `owner` wants; videos no other caller wants stop.
+    pub fn release(&self, app: &AppHandle, owner: &str) {
+        self.sync_sources(app, owner, Vec::new());
     }
 
     fn sync_sources(&self, app: &AppHandle, owner: &str, sources: Vec<VideoSource>) {

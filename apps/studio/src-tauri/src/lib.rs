@@ -5,8 +5,7 @@ use std::sync::Mutex;
 
 use lumen_output::{DisplayInfo, OutputManager, OutputWindow, ScreenOutputStatus};
 use lumen_render::{
-    Composition, CompositionTransition, PreviewRenderer, RenderStats, Scene, Screen,
-    TransitionPlan, VideoFrame,
+    Composition, CompositionTransition, PreviewRenderer, RenderStats, Screen, VideoFrame,
 };
 use tauri::{Manager, State};
 
@@ -53,43 +52,18 @@ fn list_outputs(outputs: State<'_, OutputManager>) -> Vec<OutputWindow> {
     outputs.open_outputs()
 }
 
+/// Starts the videos of the next cue's composition paused on their first frame, under the
+/// `preload` caller's decoder demand, or releases them with `None`. Every video source on an
+/// enabled layer is preloaded.
 #[tauri::command]
-fn apply_scene(
-    app: tauri::AppHandle,
-    outputs: State<'_, OutputManager>,
-    label: Option<String>,
-    scene: Scene,
-) -> Result<(), String> {
-    let playback_scene = scene.clone();
-    outputs.apply_scene(label.as_deref(), scene)?;
+fn preload_composition(app: tauri::AppHandle, composition: Option<Composition>) {
     if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
-        playback.sync_owner(&app, media::OWNER_OUTPUT, &[&playback_scene]);
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn apply_transition(
-    app: tauri::AppHandle,
-    outputs: State<'_, OutputManager>,
-    label: Option<String>,
-    plan: TransitionPlan,
-) -> Result<(), String> {
-    let from = plan.from.clone();
-    let to = plan.to.clone();
-    outputs.apply_transition(label.as_deref(), plan)?;
-    if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
-        playback.sync_owner(&app, media::OWNER_OUTPUT, &[&from, &to]);
-    }
-    Ok(())
-}
-
-/// Starts the next cue's videos paused on their first frame, or releases them with `None`.
-#[tauri::command]
-fn preload_scene(app: tauri::AppHandle, scene: Option<Scene>) {
-    if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
-        let scenes: Vec<&Scene> = scene.iter().collect();
-        playback.sync_owner(&app, media::OWNER_PRELOAD, &scenes);
+        match composition {
+            Some(composition) => {
+                playback.sync_composition(&app, media::OWNER_PRELOAD, &composition, &[])
+            }
+            None => playback.release(&app, media::OWNER_PRELOAD),
+        }
     }
 }
 
@@ -124,14 +98,6 @@ fn update_output_video_frame(
     rgba: Vec<u8>,
 ) -> Result<(), String> {
     outputs.update_video_frame(label.as_deref(), asset_id, width, height, rgba)
-}
-
-#[tauri::command]
-fn apply_hardcoded_scene(
-    outputs: State<'_, OutputManager>,
-    label: Option<String>,
-) -> Result<(), String> {
-    outputs.apply_scene(label.as_deref(), lumen_render::spike_scene())
 }
 
 #[tauri::command]
@@ -184,9 +150,9 @@ fn preview_payload(
 }
 
 /// Renders a composition offscreen: the bare canvas, or one screen with its layout and
-/// mapping. Same binary layout as `preview_render`; the layout JSON is a
+/// mapping. Returns the binary payload of [`preview_payload`]; the layout JSON is a
 /// `CompositionPreviewResult` keyed by `layerId`, `sourceId` and `elementId`, normalized to the
-/// screen output (or the canvas).
+/// screen output (or the canvas). Binary avoids serializing megabytes of pixels as JSON.
 #[tauri::command]
 fn preview_render_composition(
     app: tauri::AppHandle,
@@ -216,7 +182,7 @@ fn preview_render_composition(
 }
 
 /// Drives one native output per enabled display screen with the composition. Opens missing
-/// outputs, keeps the v1 scene commands untouched, and decodes the composition's videos.
+/// outputs and decodes the composition's videos under the `output` caller's demand.
 #[tauri::command]
 fn apply_composition(
     app: tauri::AppHandle,
@@ -231,38 +197,6 @@ fn apply_composition(
         playback.sync_composition(&app, media::OWNER_OUTPUT, &composition, &screens);
     }
     statuses
-}
-
-/// Renders the scene offscreen and returns a binary IPC response.
-///
-/// Layout: `width: u32 le`, `height: u32 le`, `layoutJsonLength: u32 le`, the UTF-8
-/// `PreviewResult` JSON, then raw row-major RGBA bytes. This avoids serializing several
-/// megabytes of pixels as a JSON number array.
-#[tauri::command]
-fn preview_render(
-    app: tauri::AppHandle,
-    preview: State<'_, PreviewState>,
-    scene: Scene,
-    width: u32,
-    height: u32,
-) -> Result<tauri::ipc::Response, String> {
-    if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
-        playback.sync_owner(&app, media::OWNER_PREVIEW, &[&scene]);
-    }
-    let mut renderer = preview
-        .0
-        .lock()
-        .map_err(|_| "preview renderer lock poisoned".to_string())?;
-    if renderer.is_none() {
-        *renderer = Some(PreviewRenderer::new().map_err(|error| error.to_string())?);
-    }
-    let frame = renderer
-        .as_mut()
-        .ok_or_else(|| "preview renderer missing".to_string())?
-        .render(&scene, width, height)
-        .map_err(|error| error.to_string())?;
-    let payload = preview_payload(frame.width, frame.height, &frame.layout, &frame.rgba)?;
-    Ok(tauri::ipc::Response::new(payload))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -293,14 +227,10 @@ pub fn run() {
             open_output,
             close_output,
             list_outputs,
-            apply_scene,
-            apply_transition,
             update_output_video_frame,
-            preload_scene,
+            preload_composition,
             video_transport,
-            apply_hardcoded_scene,
             output_stats,
-            preview_render,
             preview_render_composition,
             apply_composition,
             update_preview_video_frame,

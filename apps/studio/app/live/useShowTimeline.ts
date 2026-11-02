@@ -98,7 +98,7 @@ function actionLabel(action: TimelineAction): string {
 /**
  * Runs a show timeline in the live view: an internal clock or an external
  * LTC/MTC lock moves the playhead, armed markers and clips drive live
- * commands, active media and keyframes feed the audience scene, and audio
+ * commands, active media and keyframes feed the program composition, and audio
  * clips play in the control window.
  */
 export function useShowTimeline(options: ShowTimelineOptions) {

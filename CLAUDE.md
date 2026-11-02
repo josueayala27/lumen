@@ -3,7 +3,7 @@
 ## Read first
 
 - `docs/architecture/README.md` and the document for the area you touch.
-- `docs/architecture/02-render-contract.md` and `packages/schema/src/scene.ts` before any renderer change.
+- `docs/architecture/02-render-contract.md` and `packages/schema/src/composition.ts` (with `slide.ts` and `screen.ts`) before any renderer change.
 - `docs/architecture/10-screens-and-mapping.md` before any screen, layout or mapping change.
 - `docs/architecture/11-ui.md` before any workspace, route or navigation change.
 - `packages/core/src/live.ts` before any live-control change.

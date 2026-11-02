@@ -17,7 +17,7 @@ Phase 0 foundation:
 - Hono API with Better Auth, workspaces, libraries, presentations, sync, media presign and live sessions.
 - Durable Object live relay with hibernatable WebSockets.
 - Tauri shell with native borderless audience-window creation and display placement.
-- Rust crates for scene, media clock and output placement.
+- Rust crates for the compositor, media clock and output placement.
 
 Not yet implemented: wgpu rendering, cosmic-text layout, media decode, local SQLite repo and sync engine, desktop auth handoff, signed installers.
 
@@ -61,8 +61,8 @@ apps/
   api/         Hono Worker
   realtime/    Durable Object live relay
 packages/
-  schema/      Zod presentation, scene and live protocol
-  core/        Song splitting, scene build, live reducer
+  schema/      Zod presentation, composition, screen and live protocol
+  core/        Song splitting, slide content, show model, live reducer
   db/          Drizzle schema and migrations
   auth-token/  HMAC tokens for realtime and remote
   design/      Shared Panda preset copied from Builder

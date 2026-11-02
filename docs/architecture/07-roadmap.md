@@ -33,9 +33,9 @@ The audience path stays native (invariant 1) and runs with no network (invariant
 ## Done
 
 - **Foundation:** monorepo, design system, Tauri shell, CI, local SQLite library, native `wgpu` output window with surface recovery.
-- **Presenter core:** scene renderer (text, shape, image, video background), editor (layers, undo/redo, snapping, autosave), themes, playlists with live state and crash resume, stage window, media import/probe/relink, ffmpeg video playback. Manual desktop acceptance still open.
+- **Presenter core:** slide renderer (text, shape, image, video background), editor (layers, undo/redo, snapping, autosave), themes, playlists with live state and crash resume, stage window, media import/probe/relink, ffmpeg video playback. Manual desktop acceptance still open.
 - **Songs:** lyric split into slides, song editor.
-- **Timeline (T1–T6):** `ShowTimeline` model, playback engine, live runner (internal clock or LTC/MTC), marker and clip cues, keyframes on the output scene, media and audio clips, timeline editor with undo/redo, copy/paste, playback, JSON import/export.
+- **Timeline (T1–T6):** `ShowTimeline` model, playback engine, live runner (internal clock or LTC/MTC), marker and clip cues, keyframes on the program composition, media and audio clips, timeline editor with undo/redo, copy/paste, playback, JSON import/export.
 - **Show control:** MIDI input bindings, MTC and LTC decode.
 
 ## Wave A — Visual engine
@@ -53,18 +53,18 @@ Status: A1 done, A2 compositor done in Rust and the studio renders through it. A
 
 Exit: eight HAP layers loop at 1080p60 without dropped frames; seeking to a frame lands on that frame.
 
-### A2 Compositor and scene contract v2
+### A2 Compositor and render contract v2
 
 Contract: `02-render-contract.md`. Screens: `10-screens-and-mapping.md`. UI: `11-ui.md`.
 
-- Scene contract v2 (`02-render-contract.md`): layers reference sources; blend modes (add, screen, multiply, overlay, difference, alpha); per-layer masks.
+- Render contract v2 (`02-render-contract.md`): layers reference sources; blend modes (add, screen, multiply, overlay, difference, alpha); per-layer masks.
 - Effects chain per layer and per composition as WGSL shaders with typed parameters: colour, blur, keying, transform, kaleidoscope, feedback.
 - Generators: shader sources with parameters, solid, gradient, noise.
 - Text and lyrics render as a source like any other.
 
 Exit: lyrics over a keyed video over a generator, with three effects, render at 60 fps; preview and output match.
 
-Status: the Rust side is done. The contract mirror, compositor, effects, generators, per-screen stage, transitions and the `preview_render_composition` and `apply_composition` commands are in `lumen-render`, `lumen-output` and the desktop crate. The exit scene renders in 2.4 ms GPU per frame at 1080p on an Apple M1 Pro (5.4 ms with preview readback), and preview pixels match output pixels exactly. The studio now renders through the compositor: Show outputs use `apply_composition`; Preview, Program, screen thumbnails, the Screens output view and the Compose canvas use `preview_render_composition`; timeline keyframes apply to compositions. The v1 adapter stays for the browser schematic and next-cue preload; the stage window and slide editor stay on v1 scenes. Open: slide-transition, blur and feedback GPU tests; image masks in mapping; stage layouts in Rust; video `rate`/`reverse`/`outMs` in the compositor; real-footage check of the budget.
+Status: the Rust side is done. The contract mirror, compositor, effects, generators, per-screen stage, transitions and the `preview_render_composition` and `apply_composition` commands are in `lumen-render`, `lumen-output` and the desktop crate. The exit scene renders in 2.4 ms GPU per frame at 1080p on an Apple M1 Pro (5.4 ms with preview readback), and preview pixels match output pixels exactly. The studio renders only through the compositor: Show outputs use `apply_composition`; Preview, Program, screen thumbnails, the Screens output view, the Compose canvas, the slide editor and the stage window use `preview_render_composition`; the next cue preloads with `preload_composition`; timeline keyframes apply to compositions. Render contract v1 (`Scene`, `preview_render`, `apply_scene`, `apply_transition`, `preload_scene`, the v1 renderer paths and the TS adapters) is removed; the browser draws a schematic straight from the composition. 8 × Hap Q 1080p through the compositor: 9.3 ms per frame with upload and preview readback. Open: slide-transition, blur and feedback GPU tests; image masks in mapping; video `rate`/`reverse`/`outMs` in the compositor; real-footage check of the budget.
 
 ### A3 Studio UI rewrite
 
@@ -186,7 +186,7 @@ Exit: a show with backing tracks, stingers and video stays in sync across a 30-m
 ## Wave G — Cloud, packs and release
 
 - **Cloud:** accounts, workspaces, sync, shared libraries, collaboration.
-- **Packs:** Worship (CCLI/SongSelect, Bible, Planning Center, MultiTracks); Events (agenda timers, speaker tools); Broadcast (graphics playout). Packs never change the scene contract.
+- **Packs:** Worship (CCLI/SongSelect, Bible, Planning Center, MultiTracks); Events (agenda timers, speaker tools); Broadcast (graphics playout). Packs never change the render contract.
 - **Outputs:** SDI (DeckLink), Syphon/Spout, alpha key.
 - **Release:** soak tests, GPU matrix, signed installers, updater channels, telemetry, security and licence review.
 
@@ -195,7 +195,7 @@ Exit: signed macOS and Windows builds run a full show offline; cloud sync and pa
 ## Sequencing rules
 
 1. A1 and A2 before C: live visuals need the video engine and compositor.
-2. A2 before B2: layouts filter layers of the v2 scene.
+2. A2 before B2: layouts filter layers of the v2 composition.
 3. A2 schemas before A3 workspaces: the UI edits v2 documents, rendered through the compositor.
 4. D1 before D2, E1 and E3: every control path goes through the command bus.
 5. D3 before E1 and F: one clock for cues, timeline and audio.

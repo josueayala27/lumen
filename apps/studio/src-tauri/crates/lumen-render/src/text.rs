@@ -8,10 +8,10 @@ use cosmic_text::{
 };
 
 use crate::color::ClearColor;
-use crate::geometry::{rotated_bounds, FrameRect};
 use crate::composition::{
     CompositionFont, Frame, SlideElement, TextAlign, TextFit, TextRun, TextVAlign,
 };
+use crate::geometry::{rotated_bounds, FrameRect};
 use crate::slide::{SlideBounds, SlidePage, SlideTextRun};
 
 const ATLAS_WIDTH: u32 = 2048;

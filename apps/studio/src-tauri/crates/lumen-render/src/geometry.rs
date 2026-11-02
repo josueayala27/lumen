@@ -39,18 +39,12 @@ pub struct UvRect {
 
 /// Computes UVs for `cover`, `contain` and `stretch`. Pixels outside the image are marked for
 /// discard so a clamped sampler never smears edge texels into a letterbox.
-pub fn fit_uv(
-    fit: LayerFit,
-    frame_w: f32,
-    frame_h: f32,
-    intrinsic_w: f32,
-    intrinsic_h: f32,
-) -> UvRect {
+pub fn fit_uv(fit: Fit, frame_w: f32, frame_h: f32, intrinsic_w: f32, intrinsic_h: f32) -> UvRect {
     if frame_w <= 0.0
         || frame_h <= 0.0
         || intrinsic_w <= 0.0
         || intrinsic_h <= 0.0
-        || fit == LayerFit::Stretch
+        || fit == Fit::Stretch
     {
         return UvRect {
             u0: 0.0,
@@ -64,9 +58,9 @@ pub fn fit_uv(
     let scale_x = frame_w / intrinsic_w;
     let scale_y = frame_h / intrinsic_h;
     let scale = match fit {
-        LayerFit::Cover => scale_x.max(scale_y),
-        LayerFit::Contain => scale_x.min(scale_y),
-        LayerFit::Stretch => 1.0,
+        Fit::Cover => scale_x.max(scale_y),
+        Fit::Contain => scale_x.min(scale_y),
+        Fit::Stretch => 1.0,
     };
     let draw_w = intrinsic_w * scale;
     let draw_h = intrinsic_h * scale;
@@ -173,7 +167,7 @@ mod tests {
 
     #[test]
     fn stretches_when_intrinsic_size_is_missing() {
-        let uv = fit_uv(LayerFit::Cover, 100.0, 100.0, 0.0, 10.0);
+        let uv = fit_uv(Fit::Cover, 100.0, 100.0, 0.0, 10.0);
         assert_eq!(uv.u0, 0.0);
         assert_eq!(uv.v1, 1.0);
         assert!(!uv.discard_outside);
@@ -181,20 +175,20 @@ mod tests {
 
     #[test]
     fn cover_crops_and_stretch_does_not() {
-        let cover = fit_uv(LayerFit::Cover, 100.0, 50.0, 100.0, 100.0);
+        let cover = fit_uv(Fit::Cover, 100.0, 50.0, 100.0, 100.0);
         assert!((cover.u0 - 0.0).abs() < 1e-6);
         assert!((cover.v0 - 0.25).abs() < 1e-6);
         assert!((cover.v1 - 0.75).abs() < 1e-6);
         assert!(cover.discard_outside);
 
-        let stretch = fit_uv(LayerFit::Stretch, 100.0, 50.0, 100.0, 100.0);
+        let stretch = fit_uv(Fit::Stretch, 100.0, 50.0, 100.0, 100.0);
         assert_eq!(stretch.v1, 1.0);
         assert!(!stretch.discard_outside);
     }
 
     #[test]
     fn contain_letterboxes_inside_the_frame() {
-        let contain = fit_uv(LayerFit::Contain, 100.0, 50.0, 100.0, 100.0);
+        let contain = fit_uv(Fit::Contain, 100.0, 50.0, 100.0, 100.0);
         assert!((contain.u0 - -0.5).abs() < 1e-6);
         assert!((contain.u1 - 1.5).abs() < 1e-6);
         assert!((contain.v0 - 0.0).abs() < 1e-6);

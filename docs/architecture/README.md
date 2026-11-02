@@ -20,7 +20,7 @@ Read these before changing a subsystem. The approved implementation plan is `~/.
 
 1. The audience output is never a webview.
 2. Live output works with no network.
-3. `Composition` plus `Screen[]` is the only renderer contract (`Scene` v1 until A2 lands); Rust never calls the API.
+3. `Composition` plus `Screen[]` is the only renderer contract; Rust never calls the API.
 8. Content never knows which screen shows it; layouts and mapping live on the screen.
 4. SQLite is authoritative during a service; cloud sync is background.
 5. One writer per document in MVP; conflicts are surfaced, never merged silently.

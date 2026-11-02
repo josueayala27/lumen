@@ -4,11 +4,11 @@
 //! mesh interpolation, warp grids and the edge-blend ramp. The WGSL passes in `compositor.wgsl`
 //! use the same formulas.
 
+use crate::composition::SlideElement;
 use crate::composition::{
     CompositionLayer, EdgeBlend, LayerFilter, LayerTransform, Layout, LayoutText, Mapping, Mesh,
     Point, Region, Screen, Size, TextPreset,
 };
-use crate::composition::SlideElement;
 
 /// Largest render target edge; matches the wgpu default limit.
 pub const MAX_TARGET_EDGE: u32 = 8192;
@@ -132,13 +132,14 @@ pub fn canvas_to_layer(transform: &LayerTransform, aspect: f64, x: f64, y: f64) 
     )
 }
 
-/// Output-space frames for re-laid-out text, per preset. Same values as the TS adapter.
+/// Output-space frames for re-laid-out text, per preset. Same values as the browser schematic
+/// (`apps/studio/app/show/schematic.ts`).
 const LOWER_THIRD: (f64, f64, f64, f64) = (0.06, 0.74, 0.88, 0.2);
 const STRIP: (f64, f64, f64, f64) = (0.02, 0.88, 0.96, 0.1);
 
-/// Slide elements as one screen shows them: the layout's text preset, scale and colour applied,
-/// matching `restyleText` in packages/core/src/compositionScene.ts. Elements stay in slide space;
-/// preset frames are output-space and are mapped back through the region and the layer box.
+/// Slide elements as one screen shows them: the layout's text preset, scale and colour applied.
+/// Elements stay in slide space; preset frames are output-space and are mapped back through the
+/// region and the layer box.
 pub fn slide_elements_for_layout(
     elements: &[SlideElement],
     transform: &LayerTransform,
@@ -147,7 +148,7 @@ pub fn slide_elements_for_layout(
     text: &LayoutText,
     region: Region,
 ) -> Vec<SlideElement> {
-    // Slide pixels to canvas pixels; the TS adapter scales fonts by this factor.
+    // Slide pixels to canvas pixels; preset font sizes are in canvas pixels.
     let font_scale = (transform.h * canvas.height / slide_size.height.max(1.0)).max(1e-6);
     let to_slide = |(x, y, w, h): (f64, f64, f64, f64)| {
         let (cx, cy) = region_uv(region, x, y);
@@ -198,7 +199,7 @@ pub fn slide_elements_for_layout(
         else {
             unreachable!("cloned a text element");
         };
-        // Font size in the TS adapter's viewport pixels.
+        // Font size in canvas pixels.
         let viewport_size = font_size * font_scale * text.scale;
         if let Some(override_color) = &text.color {
             *new_color = override_color.clone();

@@ -123,8 +123,8 @@ describe('programComposition', () => {
 
   it('shows a title card for items without a document', () => {
     const show = createShowDoc()
-    const scene = showScreenFrame(show, emptyLive(), show.screens[0]!, { cue: cueAt(items, 1, 0), mode: 'live' }, context)
-    expect(texts(scene)).toContain('Walk-in loop')
+    const drawn = showScreenFrame(show, emptyLive(), show.screens[0]!, { cue: cueAt(items, 1, 0), mode: 'live' }, context)
+    expect(texts(drawn)).toContain('Walk-in loop')
   })
 })
 
@@ -135,22 +135,22 @@ describe('modes', () => {
 
   it('black and logo give a black frame on every screen', () => {
     for (const mode of ['black', 'logo'] as const) {
-      const scene = showScreenFrame(show, live, show.screens[1]!, { cue, mode }, context)
-      expect(scene.layers).toHaveLength(0)
-      expect(scene.background).toBe('#000000')
+      const drawn = showScreenFrame(show, live, show.screens[1]!, { cue, mode }, context)
+      expect(drawn.layers).toHaveLength(0)
+      expect(drawn.background).toBe('#000000')
     }
   })
 
   it('clear hides only content layers', () => {
-    const scene = showScreenFrame(show, live, show.screens[0]!, { cue, mode: 'clear' }, context)
-    expect(texts(scene)).toHaveLength(0)
-    expect(scene.layers.some((layer) => layer.kind === 'video')).toBe(true)
+    const drawn = showScreenFrame(show, live, show.screens[0]!, { cue, mode: 'clear' }, context)
+    expect(texts(drawn)).toHaveLength(0)
+    expect(drawn.layers.some((layer) => layer.kind === 'video')).toBe(true)
   })
 
   it('test patterns win over modes', () => {
     const patterned = updateScreen(show, show.screens[0]!.id, { testPattern: 'bars' })
-    const scene = showScreenFrame(patterned, live, patterned.screens[0]!, { cue, mode: 'black' }, context)
-    expect(scene.layers.some((layer) => layer.id.startsWith('pattern-bar'))).toBe(true)
+    const drawn = showScreenFrame(patterned, live, patterned.screens[0]!, { cue, mode: 'black' }, context)
+    expect(drawn.layers.some((layer) => layer.id.startsWith('pattern-bar'))).toBe(true)
   })
 
   it('renders the whole canvas on a virtual screen', () => {

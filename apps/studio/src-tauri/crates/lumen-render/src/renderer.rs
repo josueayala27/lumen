@@ -5,7 +5,7 @@
 //! [`SlideRenderer`], which also holds the image and video textures it samples.
 
 use std::collections::HashMap;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
@@ -15,9 +15,9 @@ use serde::{Deserialize, Serialize};
 use crate::asset::{AssetLoader, AssetSource};
 use crate::blur::{blur_rgba, box_radius_for_sigma};
 use crate::color::ClearColor;
+use crate::composition::{AssetKind, AssetState, CompositionAsset, SlideElement};
 use crate::composition::{Composition, Screen};
 use crate::compositor::{CompositionPreviewResult, CompositionTransition, Compositor};
-use crate::composition::{AssetKind, AssetState, CompositionAsset, SlideElement};
 use crate::geometry::{fit_uv, rotate_point, rotate_vector, FrameRect, UvRect};
 use crate::slide::{SlideLayout, SlidePage};
 use crate::text::{AtlasData, DecorationDraw, GlyphDraw, TextEngine};
@@ -429,7 +429,6 @@ enum TextureKey {
     Atlas,
     ShadowAtlas(u32),
     Image(String),
-    Video(String),
 }
 
 struct DrawCall {
@@ -1114,7 +1113,6 @@ impl SlideRenderer {
                 self.shadow_atlases.get(radius).map(|texture| &texture.view)
             }
             TextureKey::Image(key) => self.images.get(key).map(|texture| &texture.view),
-            TextureKey::Video(key) => self.videos.get(key).map(|video| &video.gpu.view),
         }
     }
 
@@ -1872,37 +1870,53 @@ pub(crate) fn read_back(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
 
-    /// GPU cost of the A1 budget: 8 Hap Q 1080p layers uploaded and composited per
-    /// frame. The preview path also reads the frame back to the CPU, so this is an
-    /// upper bound for an output window. Run with
+    use super::*;
+    use crate::composition::{Frame, TextRun, TextShadow};
+
+    /// Composition of `count` 1080p video layers in a 4-wide grid, one asset each.
+    fn video_grid(count: usize, size: (u32, u32), canvas: (u32, u32)) -> Composition {
+        let columns = count.clamp(1, 4);
+        let rows = count.div_ceil(columns);
+        let sources: Vec<serde_json::Value> = (0..count)
+            .map(|index| serde_json::json!({ "kind": "video", "id": format!("clip-{index}"), "asset": { "assetId": format!("clip-{index}"), "hash": "h" } }))
+            .collect();
+        let layers: Vec<serde_json::Value> = (0..count)
+            .map(|index| {
+                serde_json::json!({
+                    "id": format!("layer-{index}"),
+                    "sourceId": format!("clip-{index}"),
+                    "opacity": 0.9,
+                    "fit": "cover",
+                    "transform": {
+                        "x": (index % columns) as f64 / columns as f64,
+                        "y": (index / columns) as f64 / rows as f64,
+                        "w": 1.0 / columns as f64,
+                        "h": 1.0 / rows as f64
+                    }
+                })
+            })
+            .collect();
+        let assets: Vec<serde_json::Value> = (0..count)
+            .map(|index| serde_json::json!({ "id": format!("clip-{index}"), "hash": "h", "kind": "video", "intrinsic": { "width": size.0, "height": size.1 } }))
+            .collect();
+        serde_json::from_value(serde_json::json!({
+            "schemaVersion": 2, "revision": 1,
+            "canvas": { "width": canvas.0, "height": canvas.1 },
+            "sources": sources, "layers": layers, "master": {}, "assets": assets
+        }))
+        .expect("composition")
+    }
+
+    /// GPU cost of the A1 budget: 8 Hap Q 1080p layers uploaded and composited per frame through
+    /// the compositor. The preview path also reads the frame back to the CPU, so this is an upper
+    /// bound for an output window. Run with
     /// `cargo test --release -p lumen-render bench -- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn bench_eight_hap_q_layers_1080p() {
-        let layers: Vec<serde_json::Value> = (0..8)
-            .map(|index| {
-                serde_json::json!({
-                    "kind": "video",
-                    "id": format!("layer-{index}"),
-                    "frame": { "x": (index % 4) as f64 * 0.25, "y": (index / 4) as f64 * 0.5, "w": 0.25, "h": 0.5, "rotation": 0 },
-                    "opacity": 0.9,
-                    "source": { "assetId": format!("clip-{index}"), "hash": "h" },
-                    "fit": "cover"
-                })
-            })
-            .collect();
-        let assets: Vec<serde_json::Value> = (0..8)
-            .map(|index| serde_json::json!({ "id": format!("clip-{index}"), "hash": "h", "kind": "video", "intrinsic": { "width": 1920, "height": 1080 } }))
-            .collect();
-        let scene: Scene = serde_json::from_value(serde_json::json!({
-            "schemaVersion": 1, "revision": 1, "role": "preview",
-            "viewport": { "width": 1920, "height": 1080 },
-            "layers": layers, "fonts": [], "assets": assets,
-            "safeArea": { "top": 0, "right": 0, "bottom": 0, "left": 0 }
-        }))
-        .expect("scene");
+        let composition = video_grid(8, (1920, 1080), (1920, 1080));
         let mut renderer = PreviewRenderer::new().expect("preview renderer");
         let size = crate::video::bc_len(1920, 1080, 16);
         let frames: Vec<Arc<[u8]>> = (0..4u8)
@@ -1914,6 +1928,23 @@ mod tests {
                 )
             })
             .collect();
+        // Warm up: pipelines, targets and one frame per layer.
+        for layer in 0..8 {
+            let pixels = VideoPixels::Bc3YCoCg(Arc::clone(&frames[layer % frames.len()]));
+            renderer
+                .update_video(
+                    &format!("clip-{layer}"),
+                    &VideoFrame {
+                        width: 1920,
+                        height: 1080,
+                        pixels,
+                    },
+                )
+                .expect("upload");
+        }
+        renderer
+            .render_composition(&composition, None, 1920, 1080)
+            .expect("warm up");
         let rounds = 120;
         let mut upload = std::time::Duration::ZERO;
         let mut render = std::time::Duration::ZERO;
@@ -1935,46 +1966,34 @@ mod tests {
             }
             upload += started.elapsed();
             let started = std::time::Instant::now();
-            renderer.render(&scene, 1920, 1080).expect("render");
+            renderer
+                .render_composition(&composition, None, 1920, 1080)
+                .expect("render");
             render += started.elapsed();
         }
         eprintln!(
-            "8 × hap q 1080p on GPU (BC: {}): upload {:.2} ms/frame, composite + readback {:.2} ms/frame, total {:.2} ms (60 fps budget 16.67 ms)",
-            renderer.scene_renderer.bc_supported,
+            "8 × hap q 1080p through the compositor (BC: {}): upload {:.2} ms/frame, composite + readback {:.2} ms/frame, total {:.2} ms (60 fps budget 16.67 ms)",
+            renderer.bc_supported().expect("bc"),
             upload.as_secs_f64() * 1000.0 / rounds as f64,
             render.as_secs_f64() * 1000.0 / rounds as f64,
             (upload + render).as_secs_f64() * 1000.0 / rounds as f64,
         );
     }
 
-    /// Renders block-compressed video frames on the real GPU. Ignored in CI (no GPU);
-    /// run with `cargo test -p lumen-render -- --ignored`.
+    /// Renders block-compressed video frames through the compositor on the real GPU. Ignored in
+    /// CI (no GPU); run with `cargo test -p lumen-render -- --ignored`.
     #[test]
     #[ignore]
     fn gpu_renders_block_compressed_video() {
-        let scene: Scene = serde_json::from_value(serde_json::json!({
-            "schemaVersion": 1,
-            "revision": 1,
-            "role": "preview",
-            "viewport": { "width": 64, "height": 64 },
-            "layers": [{
-                "kind": "video",
-                "id": "clip-layer",
-                "frame": { "x": 0, "y": 0, "w": 1, "h": 1, "rotation": 0 },
-                "source": { "assetId": "clip", "hash": "h" },
-                "fit": "stretch"
-            }],
-            "fonts": [],
-            "assets": [{ "id": "clip", "hash": "h", "kind": "video", "intrinsic": { "width": 6, "height": 6 } }],
-            "safeArea": { "top": 0, "right": 0, "bottom": 0, "left": 0 }
-        }))
-        .expect("scene");
+        let mut composition = video_grid(1, (6, 6), (64, 64));
+        composition.layers[0].fit = crate::Fit::Stretch;
+        composition.layers[0].opacity = 1.0;
         let mut renderer = PreviewRenderer::new().expect("preview renderer");
         eprintln!(
             "BC textures on this GPU: {}",
-            renderer.scene_renderer.bc_supported
+            renderer.bc_supported().expect("bc")
         );
-        let centre = |frame: &PreviewFrame| {
+        let centre = |frame: &CompositionFrame| {
             let offset = ((frame.height / 2) * frame.width + frame.width / 2) as usize * 4;
             [
                 frame.rgba[offset],
@@ -1988,7 +2007,7 @@ mod tests {
         let red = [0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0].repeat(4);
         renderer
             .update_video(
-                "clip",
+                "clip-0",
                 &VideoFrame {
                     width: 6,
                     height: 6,
@@ -1996,7 +2015,9 @@ mod tests {
                 },
             )
             .expect("bc1 frame");
-        let frame = renderer.render(&scene, 64, 64).expect("render bc1");
+        let frame = renderer
+            .render_composition(&composition, None, 64, 64)
+            .expect("render bc1");
         assert_eq!(centre(&frame), [255, 0, 0]);
 
         // Scaled YCoCg grey: Co = Cg ≈ 0.5 (565 0x8400), scale 0, Y = 200.
@@ -2004,7 +2025,7 @@ mod tests {
         block.extend_from_slice(&[0x00, 0x84, 0x00, 0x84, 0, 0, 0, 0]);
         renderer
             .update_video(
-                "clip",
+                "clip-0",
                 &VideoFrame {
                     width: 6,
                     height: 6,
@@ -2012,7 +2033,10 @@ mod tests {
                 },
             )
             .expect("ycocg frame");
-        let frame = renderer.render(&scene, 64, 64).expect("render ycocg");
+        composition.revision += 1;
+        let frame = renderer
+            .render_composition(&composition, None, 64, 64)
+            .expect("render ycocg");
         let [r, g, b] = centre(&frame);
         for channel in [r, g, b] {
             assert!(
@@ -2067,53 +2091,48 @@ mod tests {
     }
 
     #[test]
-    fn clear_color_falls_back_to_black() {
-        let mut scene = spike_scene();
-        scene.background = None;
-        assert_eq!(scene_clear_color(&scene), ClearColor::BLACK);
-        assert_eq!(
-            scene_clear_color(&spike_scene()),
-            ClearColor::parse("#101828").unwrap()
+    fn slide_shader_parses_and_validates() {
+        let module = wgpu::naga::front::wgsl::parse_str(SLIDE_SHADER).expect("shader parses");
+        let mut validator = wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::empty(),
         );
+        validator.validate(&module).expect("shader validates");
     }
 
-    #[test]
-    fn shaders_parse_and_validate() {
-        for source in [SCENE_SHADER, TRANSITION_SHADER] {
-            let module = wgpu::naga::front::wgsl::parse_str(source).expect("shader parses");
-            let mut validator = wgpu::naga::valid::Validator::new(
-                wgpu::naga::valid::ValidationFlags::all(),
-                wgpu::naga::valid::Capabilities::empty(),
-            );
-            validator.validate(&module).expect("shader validates");
+    fn full_frame() -> Frame {
+        Frame {
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+            rotation: 0.0,
+        }
+    }
+
+    fn shape(id: &str, z: i32) -> SlideElement {
+        SlideElement::Shape {
+            id: id.into(),
+            frame: full_frame(),
+            z,
+            opacity: 1.0,
+            fill: "#ffffff".into(),
+            stroke: None,
+            stroke_width: 0.0,
+            radius: 0.0,
         }
     }
 
     #[test]
-    fn transition_codes_are_stable() {
-        assert_eq!(transition_code(TransitionKind::Cut), 0);
-        assert_eq!(transition_code(TransitionKind::Fade), 1);
-        assert_eq!(transition_code(TransitionKind::Dissolve), 2);
-        assert_eq!(transition_code(TransitionKind::Slide), 3);
-        assert_eq!(transition_code(TransitionKind::Zoom), 4);
-    }
-
-    #[test]
     fn shadow_radii_are_unique_and_scale_aware() {
-        let text = |id: &str, blur: f64| Layer::Text {
+        let text = |id: &str, blur: f64| SlideElement::Text {
             id: id.into(),
-            frame: crate::Frame {
-                x: 0.0,
-                y: 0.0,
-                w: 1.0,
-                h: 1.0,
-                rotation: 0.0,
-            },
+            frame: full_frame(),
             z: 0,
             opacity: 1.0,
-            runs: vec![crate::TextRun {
+            runs: vec![TextRun {
                 text: "hello".into(),
-                ..crate::TextRun::default()
+                ..TextRun::default()
             }],
             font_id: "inter".into(),
             font_size: 32.0,
@@ -2126,7 +2145,7 @@ mod tests {
             fit: crate::TextFit::Wrap,
             padding: 0.0,
             max_lines: None,
-            shadow: Some(crate::TextShadow {
+            shadow: Some(TextShadow {
                 color: "#000000".into(),
                 blur,
                 offset_x: 0.0,
@@ -2134,59 +2153,26 @@ mod tests {
             }),
             outline: None,
         };
-        let scene = Scene {
-            layers: vec![text("a", 4.0), text("b", 4.0), text("c", 0.0)],
-            ..spike_scene()
-        };
-        let radii = shadow_radii(&scene, 1.0);
+        let elements = vec![
+            text("a", 4.0),
+            text("b", 4.0),
+            text("c", 0.0),
+            shape("d", 0),
+        ];
+        let radii = shadow_radii(&elements, 1.0);
         assert_eq!(radii.len(), 1);
         assert!(radii[0] > 0);
-        let scaled = shadow_radii(&scene, 2.0);
+        let scaled = shadow_radii(&elements, 2.0);
         assert!(scaled[0] > radii[0]);
     }
 
     #[test]
     fn draw_order_is_stable_within_a_z() {
-        let scene = Scene {
-            layers: vec![
-                Layer::Shape {
-                    id: "back".into(),
-                    frame: crate::Frame {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 1.0,
-                        h: 1.0,
-                        rotation: 0.0,
-                    },
-                    z: 5,
-                    opacity: 1.0,
-                    fill: "#000000".into(),
-                    stroke: None,
-                    stroke_width: 0.0,
-                    radius: 0.0,
-                },
-                Layer::Shape {
-                    id: "front".into(),
-                    frame: crate::Frame {
-                        x: 0.0,
-                        y: 0.0,
-                        w: 1.0,
-                        h: 1.0,
-                        rotation: 0.0,
-                    },
-                    z: 1,
-                    opacity: 1.0,
-                    fill: "#ffffff".into(),
-                    stroke: None,
-                    stroke_width: 0.0,
-                    radius: 0.0,
-                },
-            ],
-            ..spike_scene()
-        };
-        let mut ordered: Vec<&Layer> = scene.layers.iter().collect();
-        ordered.sort_by_key(|layer| layer.z());
-        assert_eq!(ordered[0].id(), "front");
-        assert_eq!(ordered[1].id(), "back");
+        let elements = vec![shape("back", 5), shape("front", 1), shape("also-front", 1)];
+        let order: Vec<(usize, &str)> = draw_order(&elements)
+            .into_iter()
+            .map(|(index, element)| (index, element.id()))
+            .collect();
+        assert_eq!(order, vec![(1, "front"), (2, "also-front"), (0, "back")]);
     }
 }

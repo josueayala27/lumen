@@ -24,7 +24,7 @@ The show timeline (`showTimelineSchema`) stores tracks, clips, markers and keyfr
 
 - `evaluateTimeline(timeline, frame, previousFrame)` (`packages/core/src/timelinePlayback.ts`) returns active clips, crossed markers and sampled keyframes. It resynchronizes without firing on the first evaluation, a backward jump, or a gap larger than two seconds of frames.
 - `timelineActions` (`timelineRuntime.ts`) turns an evaluation into live actions: marker commands, macro clips and slide clips crossed since the last frame. A resync fires nothing and chases the active slide and media instead.
-- `applyKeyframeSamples` overrides layer properties on the audience scene for layer tracks bound to an element on the live slide.
+- `applyKeyframeSamplesToComposition` overrides layer and slide element properties on the program composition for layer tracks bound to the live slide (see below).
 
 `useShowTimeline` (`apps/studio/app/live/`) runs the timeline in the Show workspace transport. The clock is internal (anchored to `requestAnimationFrame`, audio clips become master while playing) or external: LTC/MTC frames minus `offsetFrames`. A timeline rate that differs from the incoming timecode rate blocks firing instead of guessing. Actions dispatch only while armed. Media clips and keyframes reach the program composition through `timelineTransform` (`useShowLive().timelineTransform`, applied by `applyTimelineTransform` in `app/show/showLive.ts`): media clips become the bottom layers (`withTimelineMedia`), and `applyKeyframeSamplesToComposition` drives a composition layer when a track's `elementId` names it, otherwise the element of the content layer's slide source; audio clips play in the control window through the asset protocol (scope `$APPDATA/media/*`).
 

@@ -45,6 +45,6 @@ Deleting from the library is a soft delete; no UI yet. New presentations start w
 ## Limits
 
 - No sync, conflicts, workspaces or accounts.
-- No real fonts or Rust scene rendering in the editor preview.
+- The editor preview renders the slide through the compositor in the desktop app (`slideComposition` and `preview_render_composition`, 640×360 while dragging); the browser shows an approximate DOM preview. Composition fonts are not filled in yet, so text uses system fonts.
 - Text-only slides; shapes, images, media and themes are next.
 - Rundowns (`/rundowns`) hold ordered content; the Show workspace runs one rundown or one presentation.
