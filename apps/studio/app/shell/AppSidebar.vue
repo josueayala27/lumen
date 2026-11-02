@@ -35,6 +35,7 @@ const sections: { title: string; items: NavItem[] }[] = [
     title: 'Service',
     items: [
       { label: 'Live', href: '/live', icon: 'lucide:radio' },
+      { label: 'Show', href: '/show', icon: 'lucide:layout-grid' },
       { label: 'Settings', href: '/settings', icon: 'lucide:settings-2' },
     ],
   },

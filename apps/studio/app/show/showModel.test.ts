@@ -36,9 +36,11 @@ const song: PresentationDoc = buildSongDoc({
   lyrics: 'First line\nSecond line\n\nThird line\nFourth line',
 })
 
+const SONG_ID = 'presentation_song'
+
 const context: ComposeContext = {
   media,
-  presentation: (id) => (id === song.id ? song : null),
+  presentation: (id) => (id === SONG_ID ? song : null),
   theme: null,
   revision: 1,
 }
@@ -49,7 +51,7 @@ function loadedShow(): ShowDoc {
   const [background, visuals, lyrics] = show.layers
   show = assignClip(show, background!.id, 0, { kind: 'media', assetId: 'media_video' }, 'Loop')
   show = assignClip(show, visuals!.id, 0, { kind: 'media', assetId: 'media_image' }, 'Logo')
-  show = assignClip(show, lyrics!.id, 0, { kind: 'lyrics', presentationId: song.id }, 'Song')
+  show = assignClip(show, lyrics!.id, 0, { kind: 'lyrics', presentationId: SONG_ID }, 'Song')
   return show
 }
 

@@ -1,4 +1,4 @@
-import type { Theme } from '@lumen/schema'
+import type { PresentationDoc, Theme } from '@lumen/schema'
 import { ref, watch, type Ref } from 'vue'
 import { sceneRevision, type MediaAssetLike } from '~/live/liveScene'
 import { applyScene, isTauri } from '~/output/api'
@@ -10,7 +10,7 @@ export interface ShowOutputOptions {
   live: Ref<ShowLive>
   media: Ref<MediaAssetLike[]>
   theme: Ref<Theme | null>
-  presentation: (id: string) => ReturnType<NonNullable<Parameters<typeof composeScreenScene>[3]['presentation']>>
+  presentation: (id: string) => PresentationDoc | null
   /** Bumps when a lyrics document finishes loading. */
   docsVersion: Ref<number>
 }
