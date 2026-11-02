@@ -155,7 +155,7 @@ const note = css({ textStyle: 'ui.xs', color: 'fg.subtle', py: '1' })
 
     <PanelSection title="Mask">
       <MaskEditor :mask="layer.mask" :images="images" @change="setMask" />
-      <p :class="note">Blend modes, effects and masks are saved now and render when the compositor lands.</p>
+      <p :class="note">Blend modes, effects and masks render in the desktop app; the browser preview approximates them.</p>
     </PanelSection>
   </div>
 </template>

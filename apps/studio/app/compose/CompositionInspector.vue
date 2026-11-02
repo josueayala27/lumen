@@ -100,7 +100,7 @@ const note = css({ textStyle: 'ui.xs', color: 'fg.subtle', py: '1' })
         @toggle="(id, enabled) => doc.updateComposition((value) => updateMasterEffect(value, id, { enabled }))"
         @param="setParam"
       />
-      <p :class="note">Master effects render when the compositor lands.</p>
+      <p :class="note">Master effects render in the desktop app.</p>
     </PanelSection>
   </div>
 </template>

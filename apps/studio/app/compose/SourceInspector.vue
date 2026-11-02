@@ -114,7 +114,7 @@ const kindLabel = css({ textStyle: 'ui.sm', color: 'fg.muted' })
         <Select :model-value="source.shaderId" :options="shaderOptions" size="sm" aria-label="Generator" @update:model-value="setShader" />
       </PropertyRow>
       <ParamFields :entries="shaderEntries" @change="setShaderParam" />
-      <p :class="note">Generators render when the compositor lands.</p>
+      <p :class="note">Generators render in the desktop app.</p>
     </template>
 
     <template v-else-if="source.kind === 'video'">
@@ -153,6 +153,7 @@ const kindLabel = css({ textStyle: 'ui.sm', color: 'fg.muted' })
       <PropertyRow label="Reverse">
         <Switch :model-value="source.reverse" size="sm" aria-label="Reverse" @update:model-value="patch({ reverse: $event } as Partial<Source>)" />
       </PropertyRow>
+      <p :class="note">The compositor does not apply out point, rate or reverse yet.</p>
       <PropertyRow label="Muted">
         <Switch :model-value="source.muted" size="sm" aria-label="Muted" @update:model-value="patch({ muted: $event } as Partial<Source>)" />
       </PropertyRow>
