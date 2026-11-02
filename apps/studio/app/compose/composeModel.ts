@@ -208,6 +208,9 @@ export function effectParamEntries(kind: EffectKind, params: Readonly<Record<str
 
 export type ShaderId = (typeof SHADER_IDS)[number]
 
+/** What the Sources add menu can create without a picker. */
+export type SourceAddKind = 'solid' | 'gradient' | `shader:${ShaderId}`
+
 function num(name: string, label: string, min: number, max: number, value: number, step = 0.01): EffectParamSpec {
   return { name, label, type: 'number', min, max, step, default: value }
 }
