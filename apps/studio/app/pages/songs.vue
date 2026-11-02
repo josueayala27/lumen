@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import LibraryPage from '~/library/LibraryPage.vue'
+import { definePageMeta } from '#imports'
+
+definePageMeta({ redirect: { path: '/', query: { kind: 'songs' } } })
 </script>
 
 <template>
-  <LibraryPage initial-filter="songs" />
+  <div />
 </template>

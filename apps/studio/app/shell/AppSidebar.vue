@@ -21,23 +21,32 @@ const { media, mediaBytes } = useShellStats()
 
 const sections: { title: string; items: NavItem[] }[] = [
   {
-    title: 'Library',
+    title: 'Perform',
     items: [
-      { label: 'Library', href: '/', icon: 'lucide:presentation', also: ['/editor'] },
-      { label: 'Songs', href: '/songs', icon: 'lucide:music' },
-      { label: 'Media', href: '/media', icon: 'lucide:image' },
-      { label: 'Themes', href: '/themes', icon: 'lucide:palette' },
-      { label: 'Playlists', href: '/playlists', icon: 'lucide:list-music' },
-      { label: 'Timelines', href: '/timeline', icon: 'lucide:film' },
+      { label: 'Show', href: '/show', icon: 'lucide:layout-grid' },
+      { label: 'Live', href: '/live', icon: 'lucide:radio' },
+      { label: 'Timeline', href: '/timeline', icon: 'lucide:film' },
     ],
   },
   {
-    title: 'Service',
+    title: 'Build',
     items: [
-      { label: 'Live', href: '/live', icon: 'lucide:radio' },
-      { label: 'Show', href: '/show', icon: 'lucide:layout-grid' },
-      { label: 'Settings', href: '/settings', icon: 'lucide:settings-2' },
+      { label: 'Compose', href: '/compose', icon: 'lucide:layers' },
+      { label: 'Screens', href: '/screens', icon: 'lucide:monitor' },
     ],
+  },
+  {
+    title: 'Library',
+    items: [
+      { label: 'Content', href: '/', icon: 'lucide:presentation', also: ['/editor'] },
+      { label: 'Media', href: '/media', icon: 'lucide:image' },
+      { label: 'Themes', href: '/themes', icon: 'lucide:palette' },
+      { label: 'Rundowns', href: '/rundowns', icon: 'lucide:list-music' },
+    ],
+  },
+  {
+    title: 'System',
+    items: [{ label: 'Settings', href: '/settings', icon: 'lucide:settings-2' }],
   },
 ]
 

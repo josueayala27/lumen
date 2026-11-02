@@ -3,7 +3,6 @@ import { css } from 'styled-system/css'
 import { computed, onMounted } from 'vue'
 import { Kbd, Panel, PanelSection, formatBytes } from '~/ui'
 import { isTauri } from '~/data/db'
-import OutputPanel from '~/output/OutputPanel.vue'
 import ShowControlPanel from '~/settings/ShowControlPanel.vue'
 import { useShellStats } from '~/shell/useShellStats'
 
@@ -18,7 +17,7 @@ const missing = computed(() => media.value.filter((asset) => asset.missing).leng
 const stats = computed(() => [
   { label: 'Presentations', value: String(slideDecks.value) },
   { label: 'Songs', value: String(songs.value) },
-  { label: 'Playlists', value: String(playlists.value.length) },
+  { label: 'Rundowns', value: String(playlists.value.length) },
   {
     label: 'Media files',
     value: `${media.value.length} · ${formatBytes(mediaBytes.value)}${missing.value ? ` (${missing.value} missing)` : ''}`,
@@ -74,7 +73,7 @@ const groupTitle = css({ textStyle: 'ui.label', color: 'fg.subtle', textTransfor
     <div :class="column">
       <div>
         <h1 :class="heading">Settings</h1>
-        <p :class="lead">Library overview, audience displays, shortcuts and show control.</p>
+        <p :class="lead">Library overview, shortcuts and show control.</p>
       </div>
 
       <Panel title="Library" bordered="all" :class="panel">
@@ -85,8 +84,6 @@ const groupTitle = css({ textStyle: 'ui.label', color: 'fg.subtle', textTransfor
           </div>
         </PanelSection>
       </Panel>
-
-      <OutputPanel />
 
       <Panel title="Keyboard shortcuts" bordered="all" :class="panel">
         <PanelSection title="Reference">

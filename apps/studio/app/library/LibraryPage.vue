@@ -3,7 +3,7 @@ import { buildBlankPresentation, buildSongDoc } from '@lumen/core'
 import { css } from 'styled-system/css'
 import { Icon } from '#components'
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Button, EmptyState, IconButton, Input, Select, Tabs, type SelectOption } from '~/ui'
 import ErrorNotice from './ErrorNotice.vue'
 import PageHeader from './PageHeader.vue'
@@ -20,7 +20,10 @@ type Filter = 'all' | 'presentations' | 'songs'
 const props = withDefaults(defineProps<{ initialFilter?: Filter }>(), { initialFilter: 'all' })
 
 const router = useRouter()
-const filter = ref<Filter>(props.initialFilter)
+const route = useRoute()
+const kinds: Filter[] = ['all', 'presentations', 'songs']
+const queryKind = route.query.kind as Filter | undefined
+const filter = ref<Filter>(queryKind && kinds.includes(queryKind) ? queryKind : props.initialFilter)
 const items = ref<PresentationSummary[]>([])
 const loading = ref(true)
 const error = ref('')

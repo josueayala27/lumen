@@ -84,7 +84,7 @@ const liveLabel = computed(() => {
 })
 const nextItemLabel = computed(() => {
   const next = items.value[state.value.itemIndex + 1]
-  if (!next) return 'End of playlist'
+  if (!next) return 'End of rundown'
   return next.label
 })
 const emptyRail = computed(
@@ -307,7 +307,7 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
 
 <template>
   <div :class="root">
-    <aside :class="rail" aria-label="Service playlist">
+    <aside :class="rail" aria-label="Rundown">
       <div :class="railHead">
         <p :class="railEyebrow">{{ headerEyebrow }}</p>
         <h1 :class="railTitle">{{ headerTitle }}</h1>
@@ -341,10 +341,10 @@ const errorText = css({ px: '4', py: '2', textStyle: 'ui.sm', color: 'danger.def
           size="sm"
           icon="lucide:list-music"
           title="Nothing to run yet"
-          description="Build a playlist, then open it live."
+          description="Build a rundown, then open it live."
         >
           <template #actions>
-            <Button variant="primary" size="sm" icon="lucide:plus" @click="router.push('/playlists')">Create playlist</Button>
+            <Button variant="primary" size="sm" icon="lucide:plus" @click="router.push('/rundowns')">Create rundown</Button>
           </template>
         </EmptyState>
       </div>

@@ -12,7 +12,7 @@ export function defaultTimers(): Timer[] {
   return [
     {
       id: SERVICE_TIMER_ID,
-      label: 'Service countdown',
+      label: 'Show countdown',
       kind: 'countdown',
       durationMs: 5 * 60 * 1000,
       running: false,

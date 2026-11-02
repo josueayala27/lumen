@@ -41,7 +41,7 @@ const hits = computed<SearchHit[]>(() => {
   }
   for (const item of playlists.value) {
     if (item.name.toLowerCase().includes(term)) {
-      out.push({ key: `l-${item.id}`, label: item.name, detail: 'Playlist', icon: 'lucide:list-music', to: '/playlists' })
+      out.push({ key: `l-${item.id}`, label: item.name, detail: 'Rundown', icon: 'lucide:list-music', to: '/rundowns' })
     }
   }
   for (const item of media.value) {
@@ -200,7 +200,7 @@ const noResults = css({ px: '2', py: '2', textStyle: 'ui.sm', color: 'fg.muted' 
         size="md"
         live
         :select-on-focus="false"
-        placeholder="Search presentations, songs, playlists, media…"
+        placeholder="Search presentations, songs, rundowns, media…"
         aria-label="Search library"
         role="combobox"
         aria-autocomplete="list"
