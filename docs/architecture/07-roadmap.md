@@ -42,7 +42,7 @@ The audience path stays native (invariant 1) and runs with no network (invariant
 
 Everything later depends on this wave.
 
-Status: A1 done, A2 compositor done in Rust; the studio still renders through the v1 adapter until it calls the v2 commands. A1 delivered Hap decode (all variants except HDR) with direct BC upload and CPU fallback, frame-accurate playback, 16 Hap decoders, shared frames across outputs, `-hwaccel auto` for ffmpeg, per-video transport (play/pause/seek/rate) driven by the timeline, next-cue preload, per-caller decoder demand, and the 8-layer budget on synthetic Hap Q (4.7 ms GPU per frame). Open: native VideoToolbox/Media Foundation decode with zero-copy textures (H.264/HEVC/ProRes), NotchLC, and the budget check on real footage and disks.
+Status: A1 done, A2 compositor done in Rust and the studio renders through it. A1 delivered Hap decode (all variants except HDR) with direct BC upload and CPU fallback, frame-accurate playback, 16 Hap decoders, shared frames across outputs, `-hwaccel auto` for ffmpeg, per-video transport (play/pause/seek/rate) driven by the timeline, next-cue preload, per-caller decoder demand, and the 8-layer budget on synthetic Hap Q (4.7 ms GPU per frame). Open: native VideoToolbox/Media Foundation decode with zero-copy textures (H.264/HEVC/ProRes), NotchLC, and the budget check on real footage and disks.
 
 ### A1 Video engine
 
@@ -64,7 +64,7 @@ Contract: `02-render-contract.md`. Screens: `10-screens-and-mapping.md`. UI: `11
 
 Exit: lyrics over a keyed video over a generator, with three effects, render at 60 fps; preview and output match.
 
-Status: the Rust side is done. The contract mirror, compositor, effects, generators, per-screen stage, transitions and the `preview_render_composition` and `apply_composition` commands are in `lumen-render`, `lumen-output` and the desktop crate. The exit scene renders in 2.4 ms GPU per frame at 1080p on an Apple M1 Pro (5.4 ms with preview readback), and preview pixels match output pixels exactly. Open: the studio calls the v2 commands instead of the v1 adapter; slide-transition, blur and feedback GPU tests; image masks in mapping; real-footage check of the budget.
+Status: the Rust side is done. The contract mirror, compositor, effects, generators, per-screen stage, transitions and the `preview_render_composition` and `apply_composition` commands are in `lumen-render`, `lumen-output` and the desktop crate. The exit scene renders in 2.4 ms GPU per frame at 1080p on an Apple M1 Pro (5.4 ms with preview readback), and preview pixels match output pixels exactly. The studio now renders through the compositor: Show outputs use `apply_composition`; Preview, Program, screen thumbnails, the Screens output view and the Compose canvas use `preview_render_composition`; timeline keyframes apply to compositions. The v1 adapter stays for the browser schematic and next-cue preload; the stage window and slide editor stay on v1 scenes. Open: slide-transition, blur and feedback GPU tests; image masks in mapping; stage layouts in Rust; video `rate`/`reverse`/`outMs` in the compositor; real-footage check of the budget.
 
 ### A3 Studio UI rewrite
 
@@ -196,7 +196,7 @@ Exit: signed macOS and Windows builds run a full show offline; cloud sync and pa
 
 1. A1 and A2 before C: live visuals need the video engine and compositor.
 2. A2 before B2: layouts filter layers of the v2 scene.
-3. A2 schemas before A3 workspaces: the UI edits v2 documents, rendered through the v1 adapter until the compositor lands.
+3. A2 schemas before A3 workspaces: the UI edits v2 documents, rendered through the compositor.
 4. D1 before D2, E1 and E3: every control path goes through the command bus.
 5. D3 before E1 and F: one clock for cues, timeline and audio.
 6. Mapping and layouts stay per screen, after composition; content never knows which screen shows it.

@@ -94,6 +94,7 @@ Mapping {
 - Colour correction works on sRGB values: brightness and contrast, then gamma, then the red, green and blue gains.
 - Test patterns (`grid`, `bars`, `identify`) and blackout fill the whole output, unwarped. A disabled screen renders black.
 - Each native output has its own render thread and wgpu device and renders only its own screen. Decoded video frames are shared between outputs; GPU textures are not.
+- The studio renders the Screens output view and the Show outputs through this pass (`preview_render_composition` with the screen, `apply_composition`). The browser build shows an unmapped schematic. Still not rendered: image output masks and stage layouts.
 
 ## Tests
 

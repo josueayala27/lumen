@@ -94,7 +94,7 @@ Mask coordinates are normalized to the layer.
 ## Preview flow
 
 1. Vue builds a `Composition` from the show, the live state and resolved assets.
-2. `preview_render` renders the canvas, or one screen, offscreen at the requested size.
+2. `preview_render_composition` renders the canvas, or one screen, offscreen at the requested size.
 3. Rust returns raw image bytes and a `PreviewResult`.
 4. Vue draws the image and places selection handles, snapping guides and the text editing overlay from `PreviewResult`.
 5. During a drag, render at 640×360. Render at full size on release.
@@ -144,4 +144,17 @@ The Rust compositor implements this contract. Notes on how it reads the contract
 - v1 `layers` become one `slide` source on a layer tagged `content`, or `lyrics` for songs.
 - `role: audience` becomes the default audience screen. `role: stage` becomes a stage screen.
 
-Rust still renders v1 scenes for the existing commands. The compositor renders v2 directly. When the studio moves to `apply_composition`, `Scene` v1 is read only for import and old saved timelines.
+Rust still renders v1 scenes for the existing commands. The compositor renders v2 directly.
+
+### Studio on v2
+
+The studio renders show documents through the compositor (`app/control/render.ts` `previewRenderComposition`, `app/output/api.ts` `applyComposition`):
+
+- Show outputs send the program composition with `apply_composition`, one call per transition group, only for screens whose display has an open output. Errors come back per screen and show in the Show page and the Screens panel.
+- Live modes are applied in TypeScript before sending: `clear` drops the source of content-tagged layers; `black` and `logo` set `blackout` on each screen; `freeze` sends nothing. Timeline keyframes and media clips change the composition (`applyKeyframeSamplesToComposition`, `withTimelineMedia`).
+- A rundown cue change sends the cue transition. Updates on the same cue while it runs resend it, so a keyframe update does not cut the fade.
+- Preview and Program monitors, Show screen thumbnails, the Screens output view and the Compose canvas use `preview_render_composition`. Thumbnails render at most every 150 ms each; at most two preview renders are in flight.
+
+`compositionToScene` stays for three uses only: the browser schematic (no Rust renderer), the next-cue video preload through `preload_scene` (decoder demand is shared by asset id, so the preloaded decoder goes on air), and tests. The stage window and the slide editor still render v1 scenes.
+
+Known differences from the v1 path: composition colours are sRGB (v1 passed them as linear, so v1 looked brighter); video `rate`, `reverse` and `outMs` are not applied by the compositor (`video_transport` drives them); stage layouts are ignored by Rust.
