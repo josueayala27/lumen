@@ -22,7 +22,7 @@ use crate::composition::{
 use crate::effects::{effect_params, generator_params, linear_color, Generator, ParamBlock};
 use crate::geometry::{easing_progress, fit_uv, UvRect};
 use crate::mapping::{
-    canvas_render_size, layer_matches, rect_in_region, resolve_text, slide_elements_for_layout,
+    canvas_render_size, CanvasKey, layer_matches, rect_in_region, resolve_text, slide_elements_for_layout,
     warp_grid, WarpVertex,
 };
 use crate::renderer::{asset_key, SceneRenderer, MODE_OPAQUE, MODE_YCOCG};
@@ -116,6 +116,55 @@ pub struct CompositionPreviewResult {
     pub revision: u64,
     pub bounds: Vec<CompositionBounds>,
     pub text_runs: Vec<CompositionTextRun>,
+}
+
+/// One screen to draw and where to draw it.
+pub struct ScreenOutput<'a> {
+    pub screen: &'a Screen,
+    pub view: &'a wgpu::TextureView,
+    pub format: wgpu::TextureFormat,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Maps canvas-normalized editor layout into a screen region.
+fn in_region(canvas: &CompositionPreviewResult, region: crate::composition::Region, revision: u64) -> CompositionPreviewResult {
+    CompositionPreviewResult {
+        revision,
+        bounds: canvas
+            .bounds
+            .iter()
+            .map(|bounds| {
+                let (x, y, width, height) = rect_in_region(region, bounds.x, bounds.y, bounds.width, bounds.height);
+                CompositionBounds {
+                    x,
+                    y,
+                    width,
+                    height,
+                    ..bounds.clone()
+                }
+            })
+            .collect(),
+        text_runs: canvas
+            .text_runs
+            .iter()
+            .map(|run| {
+                let (x, y, width, height) = rect_in_region(region, run.x, run.y, run.width, run.height);
+                CompositionTextRun {
+                    x,
+                    y,
+                    width,
+                    height,
+                    caret_stops: run
+                        .caret_stops
+                        .iter()
+                        .map(|stop| rect_in_region(region, *stop, 0.0, 0.0, 0.0).0)
+                        .collect(),
+                    ..run.clone()
+                }
+            })
+            .collect(),
+    }
 }
 
 #[derive(Clone)]
@@ -558,34 +607,77 @@ impl Compositor {
         width: u32,
         height: u32,
     ) -> Result<CompositionPreviewResult, RenderError> {
-        let now = self.now();
-        let layout = &screen.layout;
-        let region = layout.region;
-        let (canvas_w, canvas_h) = canvas_render_size(composition.canvas, region, width, height);
-        let ctx = FrameContext {
+        let mut results = self.render_screens(
+            encoder,
             composition,
-            screen,
-            canvas_w,
-            canvas_h,
-            now,
-        };
-        let mut preview = CompositionPreviewResult {
-            revision: composition.revision,
-            ..CompositionPreviewResult::default()
-        };
+            &[ScreenOutput {
+                screen,
+                view: output,
+                format,
+                width,
+                height,
+            }],
+        )?;
+        Ok(results.pop().unwrap_or_default())
+    }
+
+    /// Renders several screens. Screens with the same layer filter and text override share one
+    /// canvas render (`mapping::group_screens`); each then gets its own screen stage. Returns
+    /// one editor layout per output, in order.
+    pub fn render_screens(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        composition: &Composition,
+        outputs: &[ScreenOutput<'_>],
+    ) -> Result<Vec<CompositionPreviewResult>, RenderError> {
+        let now = self.now();
         self.slides.load_image_assets(&composition.assets);
         self.forget_removed(composition);
-
-        let canvas = if screen.enabled && !screen.blackout && screen.test_pattern.is_none() {
-            Some(self.render_canvas(encoder, &ctx, &mut preview)?)
-        } else {
-            None
+        let mut results = vec![
+            CompositionPreviewResult {
+                revision: composition.revision,
+                ..CompositionPreviewResult::default()
+            };
+            outputs.len()
+        ];
+        let needs_canvas = |output: &ScreenOutput<'_>| {
+            output.screen.enabled && !output.screen.blackout && output.screen.test_pattern.is_none()
         };
-        self.draw_screen(encoder, screen, canvas.as_ref(), output, format, width, height);
-        if let Some(canvas) = canvas {
+        let mut groups: Vec<(CanvasKey, Vec<usize>)> = Vec::new();
+        for (index, output) in outputs.iter().enumerate() {
+            if !needs_canvas(output) {
+                self.draw_screen(encoder, output.screen, None, output.view, output.format, output.width, output.height);
+                continue;
+            }
+            let key = CanvasKey::for_layout(&output.screen.layout);
+            match groups.iter_mut().find(|(existing, _)| *existing == key) {
+                Some((_, members)) => members.push(index),
+                None => groups.push((key, vec![index])),
+            }
+        }
+        for (_, members) in groups {
+            let (canvas_w, canvas_h) = members.iter().fold((1, 1), |(w, h), index| {
+                let output = &outputs[*index];
+                let (cw, ch) = canvas_render_size(composition.canvas, output.screen.layout.region, output.width, output.height);
+                (w.max(cw), h.max(ch))
+            });
+            let ctx = FrameContext {
+                composition,
+                screen: outputs[members[0]].screen,
+                canvas_w,
+                canvas_h,
+                now,
+            };
+            let mut canvas_preview = CompositionPreviewResult::default();
+            let canvas = self.render_canvas(encoder, &ctx, &mut canvas_preview)?;
+            for index in members {
+                let output = &outputs[index];
+                self.draw_screen(encoder, output.screen, Some(&canvas), output.view, output.format, output.width, output.height);
+                results[index] = in_region(&canvas_preview, output.screen.layout.region, composition.revision);
+            }
             self.give(canvas);
         }
-        Ok(preview)
+        Ok(results)
     }
 
     fn forget_removed(&mut self, composition: &Composition) {
@@ -595,8 +687,9 @@ impl Compositor {
             .iter()
             .map(|layer| layer.id.as_str())
             .collect();
-        self.slide_cache
-            .retain(|id, _| sources.contains(id.as_str()));
+        self.slide_cache.retain(|id, _| {
+            sources.contains(id.split_once('#').map_or(id.as_str(), |(source, _)| source))
+        });
         self.cached.retain(|id, _| {
             id.split_once(':')
                 .is_none_or(|(kind, rest)| kind != "source" || sources.contains(rest))
@@ -1203,6 +1296,7 @@ impl Compositor {
         };
         let (width, height) = box_pixels(layer, ctx.canvas_w, ctx.canvas_h);
         let key = hash_of((serde_json::to_string(&scene).unwrap_or_default(), width, height));
+        let id = &slide_cache_id(id, ctx);
         let stale = self.slide_cache.get(id).is_none_or(|cached| cached.key != key);
         if stale {
             let target = create_target(&self.device, "lumen-slide-source", width, height, SLIDE_FORMAT);
@@ -1287,14 +1381,12 @@ impl Compositor {
 
     /// Adds a slide's element bounds and text runs, mapped through the layer box and region.
     fn report_slide(&self, source_id: &str, layer: &CompositionLayer, ctx: &FrameContext<'_>, preview: &mut CompositionPreviewResult) {
-        let Some(cached) = self.slide_cache.get(source_id) else {
+        let Some(cached) = self.slide_cache.get(&slide_cache_id(source_id, ctx)) else {
             return;
         };
-        let region = ctx.screen.layout.region;
         let transform = &layer.transform;
         let map = |x: f64, y: f64, w: f64, h: f64| {
-            rect_in_region(
-                region,
+            (
                 transform.x + x * transform.w,
                 transform.y + y * transform.h,
                 w * transform.w,
@@ -1390,6 +1482,13 @@ impl Compositor {
     }
 }
 
+/// Slide textures are cached per source and per canvas key, so screens with different text
+/// overrides do not re-render each other's slides every frame.
+fn slide_cache_id(source_id: &str, ctx: &FrameContext<'_>) -> String {
+    let key = CanvasKey::for_layout(&ctx.screen.layout);
+    format!("{source_id}#{:x}", hash_of(format!("{:?}{:?}", key.text, key.region)))
+}
+
 fn layer_bounds(layer: &CompositionLayer, source_id: Option<&str>, ctx: &FrameContext<'_>) -> CompositionBounds {
     let transform = &layer.transform;
     let bounds = crate::geometry::rotated_bounds(
@@ -1403,15 +1502,14 @@ fn layer_bounds(layer: &CompositionLayer, source_id: Option<&str>, ctx: &FrameCo
         ctx.canvas_w as f32,
         ctx.canvas_h as f32,
     );
-    let (x, y, width, height) = rect_in_region(ctx.screen.layout.region, bounds.x, bounds.y, bounds.w, bounds.h);
     CompositionBounds {
         layer_id: layer.id.clone(),
         source_id: source_id.map(str::to_string),
         element_id: None,
-        x,
-        y,
-        width,
-        height,
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.w,
+        height: bounds.h,
     }
 }
 
@@ -1680,6 +1778,9 @@ mod tests {
         let frame = renderer
             .render_composition(&composition, None, 960, 540)
             .expect("render");
+        if let Ok(path) = std::env::var("LUMEN_DUMP_PNG") {
+            image::save_buffer(&path, &frame.rgba, frame.width, frame.height, image::ColorType::Rgba8).expect("png");
+        }
         let centre = pixel(&frame, 480, 270);
         // The disc survives the key: magenta-ish, not green.
         assert!(centre[0] > 150 && centre[1] < 120, "centre {centre:?}");
@@ -1799,6 +1900,77 @@ mod tests {
         screen.test_pattern = Some(crate::composition::TestPattern::Bars);
         let bars = renderer.render_composition(&composition, Some(&screen), 64, 64).expect("render");
         assert!(pixel(&bars, 2, 10)[0] > 150);
+    }
+
+    #[test]
+    #[ignore]
+    fn gpu_grouped_screens_match_single_renders_and_crossfade() {
+        let mut composition = solid_layers(serde_json::json!([
+            { "id": "a", "sourceId": "ramp", "transform": {} }
+        ]));
+        let (device, queue) = device();
+        let mut compositor = Compositor::new(device.clone(), queue.clone());
+        compositor.set_clock(Some(0.0));
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let regions = [
+            crate::composition::Region { x: 0.0, y: 0.0, w: 0.5, h: 1.0 },
+            crate::composition::Region { x: 0.5, y: 0.0, w: 0.5, h: 1.0 },
+        ];
+        let screens: Vec<Screen> = regions
+            .iter()
+            .map(|region| {
+                let mut screen = Screen::canvas(composition.canvas);
+                screen.layout.region = *region;
+                screen
+            })
+            .collect();
+        let targets: Vec<Target> = (0..4).map(|_| create_target(&device, "t", 32, 64, format)).collect();
+        let read = |target: &Target, encoder: wgpu::CommandEncoder| {
+            crate::renderer::read_back(&device, &queue, encoder, &target.texture, 32, 64).expect("readback")
+        };
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let outputs: Vec<ScreenOutput<'_>> = screens
+            .iter()
+            .zip(&targets)
+            .map(|(screen, target)| ScreenOutput { screen, view: &target.view, format, width: 32, height: 64 })
+            .collect();
+        compositor.render_screens(&mut encoder, &composition, &outputs).expect("grouped");
+        queue.submit([encoder.finish()]);
+        for (index, screen) in screens.iter().enumerate() {
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            compositor
+                .render(&mut encoder, &composition, screen, &targets[2 + index].view, format, 32, 64)
+                .expect("single");
+            let single = read(&targets[2 + index], encoder);
+            let grouped = read(&targets[index], device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None }));
+            assert_eq!(single, grouped, "screen {index}");
+        }
+
+        // Crossfade: switching the layer source blends over the transition duration.
+        compositor.set_transition(CompositionTransition {
+            kind: TransitionKind::Fade,
+            duration_ms: 1000,
+            easing: "linear".into(),
+        });
+        composition.layers[0].source_id = Some("red".into());
+        let canvas = Screen::canvas(composition.canvas);
+        let mut frame_at = |seconds: f64, composition: &Composition| {
+            compositor.set_clock(Some(seconds));
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            compositor
+                .render(&mut encoder, composition, &canvas, &targets[0].view, format, 32, 64)
+                .expect("render");
+            read(&targets[0], encoder)
+        };
+        let _ = frame_at(0.0, &composition);
+        composition.layers[0].source_id = Some("white".into());
+        let start = frame_at(0.0, &composition);
+        let middle = frame_at(0.5, &composition);
+        let end = frame_at(1.0, &composition);
+        let green = |frame: &[u8]| frame[(32 * 16 + 16) * 4 + 1];
+        assert_eq!(green(&start), 0, "starts red");
+        assert!((150..230).contains(&green(&middle)), "half way {}", green(&middle));
+        assert_eq!(green(&end), 255, "ends white");
     }
 
     /// A2 exit budget: lyrics over a keyed 1080p video over a plasma generator with three

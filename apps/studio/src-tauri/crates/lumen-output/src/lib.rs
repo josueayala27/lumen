@@ -11,9 +11,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 
+use lumen_render::composition::{ScreenRef, ScreenTarget};
 use lumen_render::{
-    PendingSurface, RenderError, RenderStats, Scene, SurfaceFactory, SurfaceRenderer,
-    TransitionPlan, VideoFrame,
+    Composition, CompositionTransition, PendingSurface, RenderError, RenderStats, Scene, Screen,
+    SurfaceFactory, SurfaceRenderer, TransitionPlan, VideoFrame,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -60,6 +61,31 @@ pub fn placement(x: i32, y: i32, width: u32, height: u32, scale_factor: f64) -> 
 /// Monitor list signature comparison. Kept pure so hotplug handling is testable.
 pub fn monitors_changed(previous: &[DisplayInfo], current: &[DisplayInfo]) -> bool {
     previous != current
+}
+
+/// Finds the monitor a screen targets: same name and position, then same position, then
+/// same name. Positions are physical pixels, as `list_displays` reports them.
+pub fn match_display(displays: &[DisplayInfo], target: &ScreenRef) -> Option<usize> {
+    let same_position = |display: &&DisplayInfo| {
+        (f64::from(display.x) - target.x).abs() < 0.5 && (f64::from(display.y) - target.y).abs() < 0.5
+    };
+    displays
+        .iter()
+        .find(|display| display.name == target.name && same_position(display))
+        .or_else(|| displays.iter().find(same_position))
+        .or_else(|| displays.iter().find(|display| display.name == target.name))
+        .map(|display| display.index)
+}
+
+/// What `apply_composition` did with one screen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenOutputStatus {
+    pub screen_id: String,
+    /// Output window label, when the screen drives a native output.
+    pub label: Option<String>,
+    /// Why the screen has no output: not a display target, monitor missing, open failed.
+    pub error: Option<String>,
 }
 
 /// Resolves a persisted display index, falling back to the primary display and then the first one.
@@ -156,6 +182,11 @@ pub fn open_audience_window(app: &AppHandle, display_index: usize) -> Result<Out
 
 enum OutputCommand {
     Scene(Box<Scene>),
+    Composition {
+        composition: Box<Composition>,
+        screen: Box<Screen>,
+        transition: CompositionTransition,
+    },
     Transition(Box<TransitionPlan>),
     VideoFrame { asset_id: String, frame: VideoFrame },
     Resize(u32, u32),
@@ -192,6 +223,14 @@ impl RenderThread {
 
     fn apply_scene(&self, scene: Scene) {
         let _ = self.commands.send(OutputCommand::Scene(Box::new(scene)));
+    }
+
+    fn apply_composition(&self, composition: Composition, screen: Screen, transition: CompositionTransition) {
+        let _ = self.commands.send(OutputCommand::Composition {
+            composition: Box::new(composition),
+            screen: Box::new(screen),
+            transition,
+        });
     }
 
     fn apply_transition(&self, plan: TransitionPlan) {
@@ -276,6 +315,16 @@ fn spawn_renderer(
                 match receiver.try_recv() {
                     Ok(OutputCommand::Scene(scene)) => {
                         renderer.set_scene(&scene);
+                        continue;
+                    }
+                    Ok(OutputCommand::Composition {
+                        composition,
+                        screen,
+                        transition,
+                    }) => {
+                        if let Err(error) = renderer.set_composition(&composition, &screen, transition) {
+                            eprintln!("lumen-output: composition failed: {error}");
+                        }
                         continue;
                     }
                     Ok(OutputCommand::Transition(plan)) => {
@@ -527,6 +576,65 @@ impl OutputManager {
         Ok(())
     }
 
+    /// Sends a composition and the screen it shows to one open output.
+    pub fn apply_composition_to(
+        &self,
+        label: &str,
+        composition: Composition,
+        screen: Screen,
+        transition: CompositionTransition,
+    ) -> Result<(), String> {
+        let outputs = self.outputs();
+        let output = outputs
+            .get(label)
+            .ok_or_else(|| format!("no output named {label}"))?;
+        output.renderer.apply_composition(composition, screen, transition);
+        Ok(())
+    }
+
+    /// Drives one native output per enabled display screen: finds its monitor, opens the
+    /// output if needed and sends the composition with that screen. Each output keeps its own
+    /// render thread; decoded video frames are shared between them. Disabled display screens
+    /// with an open output render black. Other targets (NDI, virtual) get no output.
+    pub fn apply_composition(
+        &self,
+        composition: &Composition,
+        screens: &[Screen],
+        transition: &CompositionTransition,
+    ) -> Vec<ScreenOutputStatus> {
+        let displays = list_displays(&self.inner.app).unwrap_or_default();
+        screens
+            .iter()
+            .map(|screen| {
+                let status = |label: Option<String>, error: Option<String>| ScreenOutputStatus {
+                    screen_id: screen.id.clone(),
+                    label,
+                    error,
+                };
+                let ScreenTarget::Display { ref_ } = &screen.target else {
+                    return status(None, Some("screen has no display target".into()));
+                };
+                let Some(index) = match_display(&displays, ref_) else {
+                    return status(None, Some(format!("display {} is not connected", ref_.name)));
+                };
+                let label = format!("audience-{index}");
+                let open = self.outputs().contains_key(&label);
+                if !open {
+                    if !screen.enabled {
+                        return status(None, None);
+                    }
+                    if let Err(error) = self.open(index) {
+                        return status(None, Some(error));
+                    }
+                }
+                match self.apply_composition_to(&label, composition.clone(), screen.clone(), transition.clone()) {
+                    Ok(()) => status(Some(label), None),
+                    Err(error) => status(Some(label), Some(error)),
+                }
+            })
+            .collect()
+    }
+
     pub fn apply_transition(
         &self,
         label: Option<&str>,
@@ -700,6 +808,32 @@ mod tests {
             &current,
             &[display(0, true), display(1, false)]
         ));
+    }
+
+    #[test]
+    fn matches_screens_to_monitors_by_name_and_position() {
+        let mut left = display(0, true);
+        left.name = "Built-in".into();
+        let mut right = display(1, false);
+        right.name = "Projector".into();
+        right.x = 1920;
+        let mut twin = display(2, false);
+        twin.name = "Projector".into();
+        twin.x = 3840;
+        let displays = vec![left, right, twin];
+        let target = |name: &str, x: f64| ScreenRef {
+            name: name.into(),
+            x,
+            y: 0.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
+        assert_eq!(match_display(&displays, &target("Projector", 3840.0)), Some(2));
+        // Renamed monitor at the same place.
+        assert_eq!(match_display(&displays, &target("Other", 1920.0)), Some(1));
+        // Same monitor moved: first one with that name.
+        assert_eq!(match_display(&displays, &target("Built-in", 500.0)), Some(0));
+        assert_eq!(match_display(&displays, &target("Gone", 999.0)), None);
     }
 
     #[test]

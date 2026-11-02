@@ -22,6 +22,7 @@ pub use color::ClearColor;
 pub use composition::{Composition, Screen};
 pub use compositor::{
     CompositionBounds, CompositionPreviewResult, CompositionTextRun, CompositionTransition, Compositor,
+    ScreenOutput,
 };
 pub use geometry::{easing_progress, fit_uv, rotated_bounds, FrameRect, UvRect};
 pub use renderer::{
