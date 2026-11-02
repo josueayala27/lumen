@@ -1,7 +1,7 @@
 import { buildBlankPresentation, buildSongDoc, updatePresentationDoc } from '@lumen/core'
-import type { Composition, PlaylistDoc, PresentationDoc, Scene, Screen } from '@lumen/schema'
+import type { Composition, PlaylistDoc, PresentationDoc, Screen } from '@lumen/schema'
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_TRANSITION, type LiveCompositionTransform, type MediaAssetLike } from '~/live/liveScene'
+import { DEFAULT_TRANSITION, type LiveCompositionTransform, type MediaAssetLike } from '~/live/liveContent'
 import { buildLiveItems } from '~/live/liveSession'
 import {
   applyTimelineTransform,
@@ -25,12 +25,12 @@ import {
   createShowDoc,
   emptyLive,
   launchColumn,
-  schematicScene,
   updateScreen,
   withComposition,
   type ComposeContext,
   type ShowDoc,
 } from './showModel'
+import { schematicFrame, type SchematicFrame } from './schematic'
 
 const media: MediaAssetLike[] = [
   { id: 'media_video', kind: 'video', sha256: 'hash-video', width: 1920, height: 1080, localPath: '/v.mov', missing: false },
@@ -59,13 +59,13 @@ const context: ComposeContext = {
   revision: 3,
 }
 
-/** What a screen shows for a frame, through the browser schematic (v1 adapter). */
-function showScreenScene(show: ShowDoc, live: ReturnType<typeof emptyLive>, screen: Screen, frame: ShowFrame, ctx: ComposeContext): Scene {
-  return schematicScene(showComposition(show, live, frame, ctx), screenForMode(screen, frame.mode), ctx)
+/** What a screen shows for a frame, through the browser schematic. */
+function showScreenFrame(show: ShowDoc, live: ReturnType<typeof emptyLive>, screen: Screen, frame: ShowFrame, ctx: ComposeContext): SchematicFrame {
+  return schematicFrame(showComposition(show, live, frame, ctx), screenForMode(screen, frame.mode))
 }
 
-function texts(scene: Scene): string[] {
-  return scene.layers.flatMap((layer) => (layer.kind === 'text' ? [layer.runs.map((run) => run.text).join('')] : []))
+function texts(drawn: SchematicFrame): string[] {
+  return drawn.layers.flatMap((layer) => (layer.kind === 'text' ? [layer.text] : []))
 }
 
 function showWithClips(): ShowDoc {
@@ -107,23 +107,23 @@ describe('programComposition', () => {
     const source = composition.sources.find((entry) => entry.id === lyrics.sourceId)
     expect(source?.kind).toBe('slide')
     expect(composition.layers[0]!.sourceId).toBe(`clip-${show.grid.clips[0]!.id}`)
-    expect(texts(showScreenScene(show, live, show.screens[0]!, frame, context))).toContain('Agenda')
+    expect(texts(showScreenFrame(show, live, show.screens[0]!, frame, context))).toContain('Agenda')
   })
 
   it('lets a grid clip on the content layer win until the rundown takes it back', () => {
     const show = showWithClips()
     const live = launchColumn(show, emptyLive(), 1)
     const frame = { cue: cueAt(items, 0, 0), mode: 'live' as const }
-    expect(texts(showScreenScene(show, live, show.screens[0]!, frame, context))).toContain('Grid line')
+    expect(texts(showScreenFrame(show, live, show.screens[0]!, frame, context))).toContain('Grid line')
     const released = releaseContentLayer(show, live)
     expect(released.active[show.composition.layers[2]!.id]).toBeNull()
-    expect(texts(showScreenScene(show, released, show.screens[0]!, frame, context))).toContain('Welcome')
+    expect(texts(showScreenFrame(show, released, show.screens[0]!, frame, context))).toContain('Welcome')
     expect(releaseContentLayer(show, released)).toBe(released)
   })
 
   it('shows a title card for items without a document', () => {
     const show = createShowDoc()
-    const scene = showScreenScene(show, emptyLive(), show.screens[0]!, { cue: cueAt(items, 1, 0), mode: 'live' }, context)
+    const scene = showScreenFrame(show, emptyLive(), show.screens[0]!, { cue: cueAt(items, 1, 0), mode: 'live' }, context)
     expect(texts(scene)).toContain('Walk-in loop')
   })
 })
@@ -135,21 +135,21 @@ describe('modes', () => {
 
   it('black and logo give a black frame on every screen', () => {
     for (const mode of ['black', 'logo'] as const) {
-      const scene = showScreenScene(show, live, show.screens[1]!, { cue, mode }, context)
+      const scene = showScreenFrame(show, live, show.screens[1]!, { cue, mode }, context)
       expect(scene.layers).toHaveLength(0)
-      expect(scene.background?.kind === 'shape' && scene.background.fill).toBe('#000000')
+      expect(scene.background).toBe('#000000')
     }
   })
 
   it('clear hides only content layers', () => {
-    const scene = showScreenScene(show, live, show.screens[0]!, { cue, mode: 'clear' }, context)
+    const scene = showScreenFrame(show, live, show.screens[0]!, { cue, mode: 'clear' }, context)
     expect(texts(scene)).toHaveLength(0)
     expect(scene.layers.some((layer) => layer.kind === 'video')).toBe(true)
   })
 
   it('test patterns win over modes', () => {
     const patterned = updateScreen(show, show.screens[0]!.id, { testPattern: 'bars' })
-    const scene = showScreenScene(patterned, live, patterned.screens[0]!, { cue, mode: 'black' }, context)
+    const scene = showScreenFrame(patterned, live, patterned.screens[0]!, { cue, mode: 'black' }, context)
     expect(scene.layers.some((layer) => layer.id.startsWith('pattern-bar'))).toBe(true)
   })
 

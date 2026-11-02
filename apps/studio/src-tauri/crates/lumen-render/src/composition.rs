@@ -1,16 +1,13 @@
 //! Render contract v2: composition, screens, layouts and mapping.
 //!
-//! Mirrors `packages/schema/src/composition.ts` and `packages/schema/src/screen.ts` field for
-//! field. Zod defaults are serde defaults here. See docs/architecture/02-render-contract.md and
+//! Mirrors `packages/schema/src/composition.ts`, `packages/schema/src/slide.ts` and
+//! `packages/schema/src/screen.ts` field for field. Zod defaults are serde defaults here. See docs/architecture/02-render-contract.md and
 //! docs/architecture/10-screens-and-mapping.md.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ColorSpace, Layer as SlideElement, LayerFit, LayerSource, SafeArea, SceneAsset, SceneFont,
-};
 
 /// Pixel or slide size.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -34,9 +31,9 @@ pub struct Composition {
     #[serde(default)]
     pub master: Master,
     #[serde(default)]
-    pub fonts: Vec<SceneFont>,
+    pub fonts: Vec<CompositionFont>,
     #[serde(default)]
-    pub assets: Vec<SceneAsset>,
+    pub assets: Vec<CompositionAsset>,
 }
 
 impl Composition {
@@ -44,7 +41,7 @@ impl Composition {
         self.sources.iter().find(|source| source.id() == id)
     }
 
-    pub fn asset(&self, id: &str) -> Option<&SceneAsset> {
+    pub fn asset(&self, id: &str) -> Option<&CompositionAsset> {
         self.assets.iter().find(|asset| asset.id == id)
     }
 }
@@ -86,7 +83,7 @@ pub enum Source {
         id: String,
         #[serde(default)]
         name: String,
-        asset: LayerSource,
+        asset: AssetRef,
         #[serde(default = "yes", rename = "loop")]
         loop_: bool,
         #[serde(default)]
@@ -107,7 +104,7 @@ pub enum Source {
         id: String,
         #[serde(default)]
         name: String,
-        asset: LayerSource,
+        asset: AssetRef,
     },
     Slide {
         id: String,
@@ -118,7 +115,7 @@ pub enum Source {
         revision: u64,
         /// Text, shape and image elements with the v1 layer shapes.
         elements: Vec<SlideElement>,
-        safe_area: SafeArea,
+        safe_area: Insets,
         size: Size,
     },
     Solid {
@@ -238,7 +235,7 @@ pub enum Mask {
         invert: bool,
     },
     Image {
-        asset: LayerSource,
+        asset: AssetRef,
         #[serde(default)]
         invert: bool,
     },
@@ -306,7 +303,7 @@ pub struct CompositionLayer {
     #[serde(default)]
     pub transform: LayerTransform,
     #[serde(default)]
-    pub fit: LayerFit,
+    pub fit: Fit,
     #[serde(default = "one")]
     pub opacity: f64,
     #[serde(default)]
@@ -444,7 +441,7 @@ pub struct StageLayout {
 pub struct Layout {
     pub layers: LayerFilter,
     pub region: Region,
-    pub safe_area: SafeArea,
+    pub safe_area: Insets,
     #[serde(default)]
     pub text: Option<LayoutText>,
     /// Drawn under the screen's layers.
@@ -459,7 +456,7 @@ impl Default for Layout {
         Self {
             layers: LayerFilter::All,
             region: Region::FULL,
-            safe_area: SafeArea::default(),
+            safe_area: Insets::default(),
             text: None,
             background: None,
             stage: None,
@@ -612,6 +609,279 @@ impl Screen {
     }
 }
 
+// --- Slide content, fonts and assets ------------------------------------------
+//
+// Mirrors `packages/schema/src/slide.ts`: the fonts and assets a composition carries and the
+// text, shape and image elements a `slide` source draws.
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorSpace {
+    #[default]
+    Srgb,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct Insets {
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub left: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CompositionFont {
+    pub id: String,
+    pub family: String,
+    pub path: String,
+    pub hash: String,
+    #[serde(default)]
+    pub fallback: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CompositionAsset {
+    pub id: String,
+    pub hash: String,
+    pub kind: AssetKind,
+    #[serde(default)]
+    pub local_path: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    pub intrinsic: IntrinsicSize,
+    #[serde(default)]
+    pub state: AssetState,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AssetKind {
+    Image,
+    Video,
+    Font,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AssetState {
+    #[default]
+    Ready,
+    Missing,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct IntrinsicSize {
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetRef {
+    pub asset_id: String,
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Frame {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    #[serde(default)]
+    pub rotation: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase"
+)]
+pub enum SlideElement {
+    Text {
+        id: String,
+        frame: Frame,
+        #[serde(default)]
+        z: i32,
+        #[serde(default = "one")]
+        opacity: f64,
+        #[serde(default)]
+        runs: Vec<TextRun>,
+        font_id: String,
+        font_size: f64,
+        #[serde(default = "weight_default")]
+        weight: u32,
+        color: String,
+        #[serde(default)]
+        align: TextAlign,
+        #[serde(default)]
+        v_align: TextVAlign,
+        #[serde(default = "line_height_default")]
+        line_height: f64,
+        #[serde(default)]
+        letter_spacing: f64,
+        #[serde(default)]
+        fit: TextFit,
+        #[serde(default)]
+        padding: f64,
+        #[serde(default)]
+        max_lines: Option<u32>,
+        #[serde(default)]
+        shadow: Option<TextShadow>,
+        #[serde(default)]
+        outline: Option<TextOutline>,
+    },
+    Shape {
+        id: String,
+        frame: Frame,
+        #[serde(default)]
+        z: i32,
+        #[serde(default = "one")]
+        opacity: f64,
+        fill: String,
+        #[serde(default)]
+        stroke: Option<String>,
+        #[serde(default)]
+        stroke_width: f64,
+        #[serde(default)]
+        radius: f64,
+    },
+    Image {
+        id: String,
+        frame: Frame,
+        #[serde(default)]
+        z: i32,
+        #[serde(default = "one")]
+        opacity: f64,
+        source: AssetRef,
+        #[serde(default)]
+        fit: Fit,
+        #[serde(default)]
+        radius: f64,
+    },
+}
+
+impl SlideElement {
+    pub fn id(&self) -> &str {
+        match self {
+            SlideElement::Text { id, .. }
+            | SlideElement::Shape { id, .. }
+            | SlideElement::Image { id, .. } => id,
+        }
+    }
+
+    pub fn frame(&self) -> Frame {
+        match self {
+            SlideElement::Text { frame, .. }
+            | SlideElement::Shape { frame, .. }
+            | SlideElement::Image { frame, .. } => *frame,
+        }
+    }
+
+    pub fn z(&self) -> i32 {
+        match self {
+            SlideElement::Text { z, .. }
+            | SlideElement::Shape { z, .. }
+            | SlideElement::Image { z, .. } => *z,
+        }
+    }
+
+    pub fn opacity(&self) -> f64 {
+        match self {
+            SlideElement::Text { opacity, .. }
+            | SlideElement::Shape { opacity, .. }
+            | SlideElement::Image { opacity, .. } => *opacity,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TextRun {
+    pub text: String,
+    #[serde(default)]
+    pub bold: bool,
+    #[serde(default)]
+    pub italic: bool,
+    #[serde(default)]
+    pub underline: bool,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TextAlign {
+    Left,
+    #[default]
+    Center,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TextVAlign {
+    Top,
+    #[default]
+    Middle,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TextFit {
+    #[default]
+    Wrap,
+    Shrink,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Fit {
+    #[default]
+    Cover,
+    Contain,
+    Stretch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextShadow {
+    pub color: String,
+    pub blur: f64,
+    pub offset_x: f64,
+    pub offset_y: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TextOutline {
+    pub color: String,
+    pub width: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TransitionKind {
+    Cut,
+    Fade,
+    Dissolve,
+    Slide,
+    Zoom,
+}
+
+const fn weight_default() -> u32 {
+    400
+}
+
+const fn line_height_default() -> f64 {
+    1.2
+}
+
 const fn one() -> f64 {
     1.0
 }
@@ -759,7 +1029,7 @@ mod tests {
         let video = &composition.layers[1];
         assert_eq!(video.transform.rotation, 15.0);
         assert_eq!(video.transform.anchor_y, 1.0);
-        assert_eq!(video.fit, LayerFit::Contain);
+        assert_eq!(video.fit, Fit::Contain);
         assert_eq!(video.effects[0].effect_kind(), Some(EffectKind::Key));
         assert_eq!(
             video.effects[0].params.get("invert"),
@@ -841,7 +1111,7 @@ mod tests {
         assert!(layer.effects[1].enabled);
         assert!(layer.effects[1].params.is_empty());
         assert_eq!(layer.transform, LayerTransform::default());
-        assert_eq!(layer.fit, LayerFit::Cover);
+        assert_eq!(layer.fit, Fit::Cover);
         assert_eq!(layer.opacity, 1.0);
         assert_eq!(composition.master, Master::default());
         assert!(composition.fonts.is_empty());
