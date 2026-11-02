@@ -10,6 +10,8 @@ mod bc;
 mod blur;
 mod color;
 pub mod composition;
+pub mod compositor;
+pub mod effects;
 mod geometry;
 pub mod mapping;
 mod renderer;
@@ -18,9 +20,12 @@ mod video;
 
 pub use color::ClearColor;
 pub use composition::{Composition, Screen};
+pub use compositor::{
+    CompositionBounds, CompositionPreviewResult, CompositionTextRun, CompositionTransition, Compositor,
+};
 pub use geometry::{easing_progress, fit_uv, rotated_bounds, FrameRect, UvRect};
 pub use renderer::{
-    create_window_surface, scene_clear_color, spike_scene, surface_action, FrameTiming,
+    create_window_surface, scene_clear_color, spike_scene, surface_action, CompositionFrame, FrameTiming,
     PendingSurface, PreviewFrame, PreviewRenderer, RenderStats, SurfaceAction, SurfaceFactory,
     SurfaceRenderer,
 };

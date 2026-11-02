@@ -146,7 +146,12 @@ fn premultiply(color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(color.rgb * color.a, color.a);
 }
 
-// Gradient stops: p[2] = (count, angle radians), p[3..4] = positions, p[5..12] = colours.
+fn srgb_color(color: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(srgb_to_linear(color.rgb), color.a);
+}
+
+// Gradient stops: p[2] = (count, angle radians), p[3..4] = positions, p[5..12] = sRGB colours
+// interpolated in sRGB like CSS.
 fn gradient_at(t: f32) -> vec4<f32> {
     let count = i32(u.p[2].x);
     var color = u.p[5];
@@ -190,11 +195,11 @@ fn fs_generator(input: VsOut) -> @location(0) vec4<f32> {
             let direction = vec2<f32>(sin(angle), -cos(angle));
             let length = abs(aspect * sin(angle)) + abs(cos(angle));
             let t = dot(centred, direction) / max(length, 0.00001) + 0.5;
-            return premultiply(gradient_at(clamp(t, 0.0, 1.0)));
+            return premultiply(srgb_color(gradient_at(clamp(t, 0.0, 1.0))));
         }
         case 2u: {
             let corner = 0.5 * length(vec2<f32>(aspect, 1.0));
-            return premultiply(gradient_at(clamp(length(centred) / corner, 0.0, 1.0)));
+            return premultiply(srgb_color(gradient_at(clamp(length(centred) / corner, 0.0, 1.0))));
         }
         case 3u: {
             let scale = u.p[2].x;

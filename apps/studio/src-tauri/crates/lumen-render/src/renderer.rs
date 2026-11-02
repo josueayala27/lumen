@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use crate::asset::{AssetLoader, AssetSource};
 use crate::blur::{blur_rgba, box_radius_for_sigma};
 use crate::color::ClearColor;
+use crate::composition::{Composition, Screen};
+use crate::compositor::{CompositionPreviewResult, CompositionTransition, Compositor};
 use crate::geometry::{easing_progress, fit_uv, rotate_point, rotate_vector, FrameRect, UvRect};
 use crate::text::{AtlasData, DecorationDraw, GlyphDraw, TextEngine};
 use crate::video::{bc_len, VideoFrame, VideoPixels};
@@ -1637,6 +1639,12 @@ pub struct SurfaceRenderer {
     scene_renderer: SceneRenderer,
     transition: Option<TransitionState>,
     timing: FrameTiming,
+    /// Set while the output shows a composition (render contract v2) instead of a scene.
+    composition: Option<(Box<Composition>, Box<Screen>)>,
+    compositor: Option<Compositor>,
+    /// Latest frame per video asset, replayed when the output switches between scenes and
+    /// compositions. Frames are reference counted, so this holds no copies.
+    latest_frames: HashMap<String, VideoFrame>,
 }
 
 impl SurfaceRenderer {
@@ -1705,12 +1713,51 @@ impl SurfaceRenderer {
             scene_renderer,
             transition: None,
             timing: FrameTiming::new(),
+            composition: None,
+            compositor: None,
+            latest_frames: HashMap::new(),
         })
     }
 
     pub fn set_scene(&mut self, scene: &Scene) {
+        if self.composition.take().is_some() {
+            self.replay_frames_to_scene();
+        }
         self.scene = scene.clone();
         self.transition = None;
+    }
+
+    /// Shows a composition through one screen. Layer source changes and slide revisions use
+    /// `transition`. The output stays in composition mode until the next scene.
+    pub fn set_composition(
+        &mut self,
+        composition: &Composition,
+        screen: &Screen,
+        transition: CompositionTransition,
+    ) -> Result<(), RenderError> {
+        if self.compositor.is_none() {
+            self.compositor = Some(Compositor::new(self.device.clone(), self.queue.clone()));
+        }
+        let entering = self.composition.is_none();
+        let compositor = self
+            .compositor
+            .as_mut()
+            .ok_or_else(|| RenderError::Backend("compositor missing".into()))?;
+        if entering {
+            for (asset_id, frame) in &self.latest_frames {
+                compositor.update_video(asset_id, frame)?;
+            }
+        }
+        compositor.set_transition(transition);
+        self.composition = Some((Box::new(composition.clone()), Box::new(screen.clone())));
+        self.transition = None;
+        Ok(())
+    }
+
+    fn replay_frames_to_scene(&mut self) {
+        for (asset_id, frame) in &self.latest_frames {
+            let _ = self.scene_renderer.update_video(asset_id, frame);
+        }
     }
 
     /// Replaces the surface after `Lost` or `Outdated`. The new surface must be created on the
@@ -1724,6 +1771,7 @@ impl SurfaceRenderer {
             self.config.format = format;
             self.scene_renderer =
                 SceneRenderer::new(self.device.clone(), self.queue.clone(), format);
+            self.replay_frames_to_scene();
         }
         self.transition = None;
         self.surface.configure(&self.device, &self.config);
@@ -1753,12 +1801,19 @@ impl SurfaceRenderer {
             .update_video_frame(asset_id, width, height, rgba)
     }
 
-    /// Uploads a decoded frame, block compressed or RGBA.
+    /// Uploads a decoded frame, block compressed or RGBA, to whichever renderer is showing.
     pub fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
-        self.scene_renderer.update_video(asset_id, frame)
+        self.latest_frames.insert(asset_id.to_string(), frame.clone());
+        match (&self.composition, self.compositor.as_mut()) {
+            (Some(_), Some(compositor)) => compositor.update_video(asset_id, frame),
+            _ => self.scene_renderer.update_video(asset_id, frame),
+        }
     }
 
     pub fn start_transition(&mut self, plan: &TransitionPlan) -> Result<(), RenderError> {
+        if self.composition.take().is_some() {
+            self.replay_frames_to_scene();
+        }
         if plan.kind == TransitionKind::Cut || plan.duration_ms == 0 {
             self.set_scene(&plan.to);
             return Ok(());
@@ -1883,7 +1938,19 @@ impl SurfaceRenderer {
                 label: Some("lumen-scene-frame"),
             });
 
-        if let Some(transition) = self.transition.as_mut() {
+        if let (Some((composition, screen)), Some(compositor)) =
+            (self.composition.as_ref(), self.compositor.as_mut())
+        {
+            compositor.render(
+                &mut encoder,
+                composition,
+                screen,
+                &view,
+                self.config.format,
+                self.config.width,
+                self.config.height,
+            )?;
+        } else if let Some(transition) = self.transition.as_mut() {
             let progress = easing_progress(&transition.easing, transition.progress());
             let params = TransitionParams {
                 progress: progress as f32,
@@ -1970,12 +2037,28 @@ pub struct PreviewFrame {
     pub layout: PreviewResult,
 }
 
-/// Offscreen renderer used by `preview_render`.
+/// A rendered composition frame: raw RGBA plus the editor layout from the same pass.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompositionFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub layout: CompositionPreviewResult,
+}
+
+/// Offscreen renderer used by `preview_render` and `preview_render_composition`.
 pub struct PreviewRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     scene_renderer: SceneRenderer,
     surface: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
+    /// Created on the first composition preview.
+    compositor: Option<Compositor>,
+    composition_surface: Option<(u32, u32, wgpu::Texture, wgpu::TextureView)>,
+    /// Latest frame per video asset, replayed into a compositor created later. Frames are
+    /// reference counted, so this holds no copies.
+    latest_frames: HashMap<String, VideoFrame>,
 }
 
 impl PreviewRenderer {
@@ -2004,6 +2087,88 @@ impl PreviewRenderer {
             queue,
             scene_renderer,
             surface: None,
+            compositor: None,
+            composition_surface: None,
+            latest_frames: HashMap::new(),
+        })
+    }
+
+    /// The composition renderer on this device, created on first use.
+    fn compositor(&mut self) -> Result<&mut Compositor, RenderError> {
+        if self.compositor.is_none() {
+            let mut compositor = Compositor::new(self.device.clone(), self.queue.clone());
+            for (asset_id, frame) in &self.latest_frames {
+                compositor.update_video(asset_id, frame)?;
+            }
+            self.compositor = Some(compositor);
+        }
+        self.compositor
+            .as_mut()
+            .ok_or_else(|| RenderError::Backend("compositor missing".into()))
+    }
+
+    /// Fixes the generator and transition clock in seconds; `None` follows wall time.
+    pub fn set_composition_clock(&mut self, seconds: Option<f64>) -> Result<(), RenderError> {
+        self.compositor()?.set_clock(seconds);
+        Ok(())
+    }
+
+    /// Renders a composition offscreen: the bare canvas, or one screen with its layout and
+    /// mapping. Returns RGBA bytes and the editor layout keyed by layer, source and element.
+    pub fn render_composition(
+        &mut self,
+        composition: &Composition,
+        screen: Option<&Screen>,
+        width: u32,
+        height: u32,
+    ) -> Result<CompositionFrame, RenderError> {
+        if width == 0 || height == 0 {
+            return Ok(CompositionFrame {
+                width,
+                height,
+                rgba: Vec::new(),
+                layout: CompositionPreviewResult {
+                    revision: composition.revision,
+                    ..CompositionPreviewResult::default()
+                },
+            });
+        }
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let needs_surface = self
+            .composition_surface
+            .as_ref()
+            .is_none_or(|(w, h, _, _)| *w != width || *h != height);
+        if needs_surface {
+            let texture = preview_target(&self.device, "lumen-composition-preview", width, height, format);
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.composition_surface = Some((width, height, texture, view));
+        }
+        let canvas_screen;
+        let screen = match screen {
+            Some(screen) => screen,
+            None => {
+                canvas_screen = Screen::canvas(composition.canvas);
+                &canvas_screen
+            }
+        };
+        let (texture, view) = match self.composition_surface.as_ref() {
+            Some((_, _, texture, view)) => (texture.clone(), view.clone()),
+            None => return Err(RenderError::Backend("composition target missing".into())),
+        };
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("lumen-composition-preview"),
+            });
+        let layout = self
+            .compositor()?
+            .render(&mut encoder, composition, screen, &view, format, width, height)?;
+        let rgba = read_back(&self.device, &self.queue, encoder, &texture, width, height)?;
+        Ok(CompositionFrame {
+            width,
+            height,
+            rgba,
+            layout,
         })
     }
 
@@ -2018,8 +2183,12 @@ impl PreviewRenderer {
             .update_video_frame(asset_id, width, height, rgba)
     }
 
-    /// Uploads a decoded frame, block compressed or RGBA.
+    /// Uploads a decoded frame, block compressed or RGBA, for scenes and compositions.
     pub fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
+        self.latest_frames.insert(asset_id.to_string(), frame.clone());
+        if let Some(compositor) = self.compositor.as_mut() {
+            compositor.update_video(asset_id, frame)?;
+        }
         self.scene_renderer.update_video(asset_id, frame)
     }
 
@@ -2075,63 +2244,8 @@ impl PreviewRenderer {
         self.scene_renderer
             .draw(&mut encoder, view, scene, width, height)?;
 
-        let padded_bytes_per_row = (width * 4).div_ceil(256) * 256;
-        let buffer_size = u64::from(padded_bytes_per_row) * u64::from(height);
-        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("lumen-preview-readback"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_bytes_per_row),
-                    rows_per_image: Some(height),
-                },
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.queue.submit([encoder.finish()]);
-
-        let (sender, receiver) = mpsc::channel();
-        buffer
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = sender.send(result);
-            });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|error| RenderError::Backend(format!("preview poll: {error}")))?;
-        receiver
-            .recv()
-            .map_err(|error| RenderError::Backend(format!("preview map channel: {error}")))?
-            .map_err(|error| RenderError::Backend(format!("preview map: {error}")))?;
-
-        let mapped = buffer
-            .slice(..)
-            .get_mapped_range()
-            .map_err(|error| RenderError::Backend(format!("preview map range: {error}")))?;
-        let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
-        let row_bytes = width as usize * 4;
-        for row in 0..height as usize {
-            let start = row * padded_bytes_per_row as usize;
-            rgba.extend_from_slice(&mapped[start..start + row_bytes]);
-        }
-        drop(mapped);
-        buffer.unmap();
+        let texture = texture.clone();
+        let rgba = read_back(&self.device, &self.queue, encoder, &texture, width, height)?;
 
         Ok(PreviewFrame {
             width,
@@ -2140,6 +2254,99 @@ impl PreviewRenderer {
             layout: self.scene_renderer.preview_result().clone(),
         })
     }
+}
+
+/// An offscreen render target that can be read back.
+fn preview_target(
+    device: &wgpu::Device,
+    label: &str,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+/// Copies an RGBA8 texture to the CPU after the commands in `encoder`, row-major and unpadded.
+pub(crate) fn read_back(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    mut encoder: wgpu::CommandEncoder,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, RenderError> {
+    let padded_bytes_per_row = (width * 4).div_ceil(256) * 256;
+    let buffer_size = u64::from(padded_bytes_per_row) * u64::from(height);
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("lumen-preview-readback"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+
+    let (sender, receiver) = mpsc::channel();
+    buffer
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .map_err(|error| RenderError::Backend(format!("preview poll: {error}")))?;
+    receiver
+        .recv()
+        .map_err(|error| RenderError::Backend(format!("preview map channel: {error}")))?
+        .map_err(|error| RenderError::Backend(format!("preview map: {error}")))?;
+
+    let mapped = buffer
+        .slice(..)
+        .get_mapped_range()
+        .map_err(|error| RenderError::Backend(format!("preview map range: {error}")))?;
+    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+    let row_bytes = width as usize * 4;
+    for row in 0..height as usize {
+        let start = row * padded_bytes_per_row as usize;
+        rgba.extend_from_slice(&mapped[start..start + row_bytes]);
+    }
+    drop(mapped);
+    buffer.unmap();
+    Ok(rgba)
 }
 
 impl crate::Renderer for PreviewRenderer {
