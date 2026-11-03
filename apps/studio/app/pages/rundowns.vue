@@ -62,8 +62,12 @@ const dirty = computed(
   () => draft.value !== null && JSON.stringify(draft.value.doc) !== baseline.value,
 )
 const itemCount = computed(() => draft.value?.doc.items.length ?? 0)
+const songCount = computed(
+  () => draft.value?.doc.items.filter((item) => badge(item).label === 'Song').length ?? 0,
+)
 const presentationCount = computed(
-  () => draft.value?.doc.items.filter((item) => item.kind === 'presentation').length ?? 0,
+  () =>
+    (draft.value?.doc.items.filter((item) => item.kind === 'presentation').length ?? 0) - songCount.value,
 )
 const canAdd = computed(
   () => Boolean(draft.value) && selectedPresentation.value.length > 0,
@@ -356,6 +360,7 @@ const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal
         <h2 :class="inspectorTitle">Rundown status</h2>
         <div :class="stat"><span :class="statLabel">Items</span><span :class="statValue">{{ itemCount }}</span></div>
         <div :class="stat"><span :class="statLabel">Presentations</span><span :class="statValue">{{ presentationCount }}</span></div>
+        <div :class="stat"><span :class="statLabel">Songs</span><span :class="statValue">{{ songCount }}</span></div>
         <div :class="stat"><span :class="statLabel">State</span><span :class="statValue">{{ dirty ? 'Draft' : 'Saved' }}</span></div>
       </template>
       <template v-else>
