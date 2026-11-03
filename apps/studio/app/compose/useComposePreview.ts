@@ -2,6 +2,7 @@ import { emptyLive, liveComposition, type ShowMediaLike } from '@lumen/core'
 import type { Composition, CompositionBounds, PresentationDoc, ShowDoc } from '@lumen/schema'
 import { onBeforeUnmount, ref, shallowRef, watch, type Ref } from 'vue'
 import { isTauriRuntime, previewRenderComposition } from '~/control/render'
+import { compositionHasVideo, useVideoRefresh } from '~/control/videoRefresh'
 import { useShowLive } from '~/show/useShowLive'
 
 /** Preview width while dragging a handle (doc 02 § Preview flow). */

@@ -1,6 +1,7 @@
 import type { Composition, PresentationDoc, Screen, ShowDoc } from '@lumen/schema'
 import { onBeforeUnmount, ref, shallowRef, watch, type Ref } from 'vue'
 import { previewRenderComposition, type DecodedCompositionPreview } from '~/control/render'
+import { compositionHasVideo, useVideoRefresh } from '~/control/videoRefresh'
 import type { MediaAsset } from '~/data/media'
 import { isTauri } from '~/output/api'
 import { schematicFrame, type SchematicFrame } from '~/show/schematic'
