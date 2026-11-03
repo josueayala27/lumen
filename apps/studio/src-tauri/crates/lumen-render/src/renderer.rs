@@ -1669,7 +1669,13 @@ impl OffscreenOutput {
         .map_err(|error| RenderError::Backend(format!("request adapter: {error}")))?;
         let (device, queue) = request_output_device(&adapter, "lumen-output-offscreen")?;
         let (width, height) = (width.max(1), height.max(1));
-        let target = preview_target(&device, "lumen-output-offscreen", width, height, Self::FORMAT);
+        let target = preview_target(
+            &device,
+            "lumen-output-offscreen",
+            width,
+            height,
+            Self::FORMAT,
+        );
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         Ok(Self {
             core: OutputCore::new(device, queue),
@@ -1712,7 +1718,9 @@ impl OffscreenOutput {
             height,
             self.format,
         );
-        self.view = self.target.create_view(&wgpu::TextureViewDescriptor::default());
+        self.view = self
+            .target
+            .create_view(&wgpu::TextureViewDescriptor::default());
         self.width = width;
         self.height = height;
     }

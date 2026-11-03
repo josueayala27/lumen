@@ -174,8 +174,8 @@ pub fn validate_executable(raw: &str) -> Result<PathBuf, MediaError> {
         find_on_path(value)
             .or_else(|| find_in_dirs(value, FALLBACK_DIRS.iter().map(PathBuf::from)))
             .ok_or_else(|| {
-            MediaError::Missing(format!("decoder executable {value} was not found on PATH"))
-        })?
+                MediaError::Missing(format!("decoder executable {value} was not found on PATH"))
+            })?
     };
     let canonical = candidate
         .canonicalize()
@@ -238,6 +238,8 @@ pub fn poster_args(input: &Path, at_ms: u64, max_edge: u32) -> Vec<String> {
         "1".to_string(),
         "-vf".to_string(),
         format!("scale={edge}:{edge}:force_original_aspect_ratio=decrease"),
+        "-pix_fmt".to_string(),
+        "rgb24".to_string(),
         "-f".to_string(),
         "image2pipe".to_string(),
         "-vcodec".to_string(),
@@ -275,7 +277,9 @@ pub fn video_poster(
             .output()
             .map_err(|error| MediaError::Decode(format!("start decoder: {error}")))?;
         if !output.status.success() || output.stdout.is_empty() {
-            return Err(MediaError::Decode("decoder wrote no poster frame".to_string()));
+            return Err(MediaError::Decode(
+                "decoder wrote no poster frame".to_string(),
+            ));
         }
         Ok(output.stdout)
     };

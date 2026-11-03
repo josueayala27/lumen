@@ -46,7 +46,7 @@ Layout {
 
 - `layers` picks which composition layers this screen draws. Tags let one layout follow content: `{ tags: ['lyrics'] }` shows whatever layer carries lyrics.
 - `region` is the slice of the canvas this screen shows. Three side-by-side projectors use three regions of one wide canvas.
-- `text` re-lays out `slide` sources for this screen only. The same song shows full-screen lyrics on side screens and a one-line strip on the LED wall.
+- `text` re-lays out `slide` sources for this screen only. The same song shows full-screen lyrics on side screens and a strip on the LED wall (every line of the slide, joined).
 - `stage` makes this a stage or confidence screen. Stage screens render current and next slides as images for the stage webview.
 
 ## Mapping
@@ -88,6 +88,7 @@ Mapping {
 - `mapping.rs` holds the pure maths: layer filter, screen grouping, canvas render size, region crop, text preset re-layout, corner-pin homography, mesh interpolation, warp grid and edge-blend ramp.
 - `Compositor::render_screens` groups screens by layer filter and text override. Presets placed in output space (`lowerThird`, `strip`) also group by region. Each group renders the canvas once, at the size its largest region needs.
 - Text presets match the browser schematic (`apps/studio/app/show/schematic.ts`). Preset frames are mapped back into slide space, so text outside the layer box is clipped.
+- Presets never drop lines. `strip` joins every line of the slide on one line (breaks become ` / `, `join_lines` in `mapping.rs`, `presetText` in the schematic) and `lowerThird` keeps the breaks; both shrink the text to fit the preset box (`fit: shrink`, no `maxLines`).
 - The screen stage is one pass. Corner pin and mesh become a warped 32 × 32 grid; a mesh wins over the corner pin because its points already include the pin. Outside the warped surface is black.
 - Edge blend runs on content coordinates. The ramp is a linear-light multiplier: with gamma 2.2 two overlapping projectors sum to one. `power` shapes the S-curve.
 - Output masks hide the area they cover; `invert` keeps only that area. The pass takes up to 4 rect or polygon masks with up to 14 points each. Image masks are skipped for now.

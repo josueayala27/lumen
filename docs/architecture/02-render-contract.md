@@ -57,7 +57,7 @@ SlideElement = { id, frame, z, opacity } &
   | { kind: 'image', source: AssetRef, fit, radius }
 ```
 
-`frame` is normalized to the slide. Elements draw bottom to top by `z`. Presentation documents become slide content through `packages/core/src/slide.ts`: `presentationSlideSource` (one `slide` source per slide, with a solid, gradient or image background as the bottom element `slide-background`) and `slideComposition` (a whole slide as a composition for the editor and the stage window: a video background layer, slide sources on full-canvas layers named `slide-content-<n>`, and one `video` layer per video element, named by its element id).
+`frame` is normalized to the slide. Elements draw bottom to top by `z`. Presentation documents become slide content through `packages/core/src/slide.ts`: `presentationSlideSource` (one `slide` source per slide, with a solid, gradient or image background as the bottom element `slide-background`, unless the caller drops it) and `slideComposition` (a whole slide as a composition for the editor and the stage window: a video background layer, slide sources on full-canvas layers named `slide-content-<n>`, and one `video` layer per video element, named by its element id).
 
 ### Layers
 
@@ -72,7 +72,8 @@ Layer {
   blend: normal | add | screen | multiply | overlay | difference | alpha
   effects: Effect[]                    applied in order
   mask: Mask | null
-  tags: string[]                       layouts select layers by id or tag, e.g. 'lyrics'
+  tags: string[]                       layouts select layers by id or tag, e.g. 'lyrics';
+                                       live slides on a 'lyrics' layer drop their background
 }
 ```
 

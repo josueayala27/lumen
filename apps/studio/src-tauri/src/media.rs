@@ -919,10 +919,8 @@ pub async fn media_thumbnail(
             let root = media_root(&app)?;
             match cached_poster(&root, &path, duration, POSTER_EDGE) {
                 Ok(poster) if edge >= POSTER_EDGE => poster,
-                Ok(poster) => {
-                    lumen_media::thumbnail::thumbnail_bytes(&poster, edge)
-                        .map_err(|error| error.to_string())?
-                }
+                Ok(poster) => lumen_media::thumbnail::thumbnail_bytes(&poster, edge)
+                    .map_err(|error| error.to_string())?,
                 Err(_) => return Ok(None),
             }
         } else {
@@ -1047,7 +1045,10 @@ mod tests {
             ],
         );
         let ids = |sources: &[VideoSource]| -> Vec<String> {
-            sources.iter().map(|source| source.asset_id.clone()).collect()
+            sources
+                .iter()
+                .map(|source| source.asset_id.clone())
+                .collect()
         };
         assert_eq!(demand.len(), 3);
         assert_eq!(demand[0].0, "output:audience-1");

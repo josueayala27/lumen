@@ -8,6 +8,8 @@ import {
   listPlaylists,
   movePlaylistItem,
   newPlaylistDoc,
+  onPlaylistSaved,
+  playlistItemBadge,
   removePlaylistItem,
   savePlaylist,
 } from './playlists'
@@ -34,6 +36,31 @@ describe('playlist helpers', () => {
     const removed = removePlaylistItem(moved, moved.items[0]!.id)
     expect(removed.items).toHaveLength(1)
     expect(removed.items[0]?.label).toBe('Opening')
+  })
+})
+
+describe('playlistItemBadge', () => {
+  it('labels songs as songs and other presentations as presentations', () => {
+    const doc = addPresentationItem(addPresentationItem(newPlaylistDoc(), 'p_song', 'Hymn'), 'p_talk', 'Talk')
+    const kinds = new Map([['p_song', 'song' as const], ['p_talk', 'presentation' as const]])
+    const badges = doc.items.map((item) => playlistItemBadge(item, (id) => kinds.get(id)))
+    expect(badges).toEqual([
+      { icon: 'lucide:music', label: 'Song' },
+      { icon: 'lucide:presentation', label: 'Presentation' },
+    ])
+    expect(playlistItemBadge({ kind: 'header', id: 'h', label: 'Break' }, () => undefined).label).toBe('Header')
+  })
+})
+
+describe('playlist saved events', () => {
+  it('tells listeners which playlist was saved until they unsubscribe', async () => {
+    const saved: string[] = []
+    const stop = onPlaylistSaved((id) => saved.push(id))
+    const record = await createPlaylist(newPlaylistDoc('Sunday'))
+    await savePlaylist({ ...record, doc: { ...record.doc, name: 'Sunday AM' } })
+    stop()
+    await savePlaylist(record)
+    expect(saved).toEqual([record.id, record.id])
   })
 })
 

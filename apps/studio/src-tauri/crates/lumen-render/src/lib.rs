@@ -31,8 +31,7 @@ pub use compositor::{
 pub use geometry::{easing_progress, fit_uv, rotated_bounds, FrameRect, UvRect};
 pub use renderer::{
     create_window_surface, surface_action, CompositionFrame, FrameTiming, OffscreenOutput,
-    PendingSurface,
-    PreviewRenderer, RenderStats, SurfaceAction, SurfaceFactory, SurfaceRenderer,
+    PendingSurface, PreviewRenderer, RenderStats, SurfaceAction, SurfaceFactory, SurfaceRenderer,
 };
 pub use video::{VideoFrame, VideoPixels};
 

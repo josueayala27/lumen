@@ -62,8 +62,11 @@ function takeSlide(slideIndex: number): void {
   session.take()
 }
 
+/** The item on air in this rundown; none while a slide from elsewhere is held on air. */
+const liveItemIndex = computed(() => (session.held.value ? -1 : state.value.itemIndex))
+
 function isLiveSlide(slideIndex: number): boolean {
-  return state.value.itemIndex === selectedItemIndex.value && state.value.slideIndex === slideIndex
+  return liveItemIndex.value === selectedItemIndex.value && state.value.slideIndex === slideIndex
 }
 
 const root = css({ display: 'flex', flexDirection: 'column', minH: '0', h: 'full' })
@@ -131,13 +134,13 @@ const slideLines = css({ display: 'block', textStyle: 'ui.xs', color: 'fg.subtle
           v-for="(item, itemIndex) in session.items.value"
           :key="item.id"
           type="button"
-          :class="cx(row, state.itemIndex === itemIndex ? rowLive : selectedItemIndex === itemIndex && rowSelected)"
+          :class="cx(row, liveItemIndex === itemIndex ? rowLive : selectedItemIndex === itemIndex && rowSelected)"
           @click="pickItem(itemIndex)"
         >
           <span :class="index">{{ String(itemIndex + 1).padStart(2, '0') }}</span>
           <Icon :name="iconFor(item)" :size="14" aria-hidden="true" />
           <span :class="rowLabel">{{ item.label }}</span>
-          <Icon v-if="state.itemIndex === itemIndex" name="lucide:radio" :size="12" aria-label="On air" />
+          <Icon v-if="liveItemIndex === itemIndex" name="lucide:radio" :size="12" aria-label="On air" />
         </button>
       </div>
 

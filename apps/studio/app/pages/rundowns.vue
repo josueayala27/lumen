@@ -4,6 +4,7 @@ import { Icon } from '#components'
 import { Button, EmptyState, IconButton, Input, Select } from '~/ui'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import type { PlaylistItem } from '@lumen/schema'
 import {
   listPresentations,
   updatedLabel,
@@ -17,6 +18,7 @@ import {
   listPlaylists,
   movePlaylistItem,
   newPlaylistDoc,
+  playlistItemBadge,
   removePlaylistItem,
   savePlaylist,
   type PlaylistRecord,
@@ -29,6 +31,12 @@ import PageHeader from '~/library/PageHeader.vue'
 const router = useRouter()
 const playlists = ref<PlaylistSummary[]>([])
 const library = ref<PresentationSummary[]>([])
+const libraryKinds = computed(() => new Map(library.value.map((entry) => [entry.id, entry.kind])))
+
+/** Songs show as songs, like Show's rundown panel. */
+function badge(item: PlaylistItem): { icon: string; label: string } {
+  return playlistItemBadge(item, (id) => libraryKinds.value.get(id))
+}
 const selectedId = ref('')
 const draft = ref<PlaylistRecord | null>(null)
 const selectedPresentation = ref('')
@@ -329,10 +337,10 @@ const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal
         <div :class="itemList">
           <div v-for="(item, index) in draft.doc.items" :key="item.id" :class="itemRow">
             <span :class="itemIndex">{{ String(index + 1).padStart(2, '0') }}</span>
-            <Icon :name="item.kind === 'presentation' ? 'lucide:presentation' : item.kind === 'media' ? 'lucide:film' : 'lucide:heading'" :size="14" />
+            <Icon :name="badge(item).icon" :size="14" />
             <div :class="itemMeta">
               <p :class="itemTitle">{{ item.label || 'Untitled item' }}</p>
-              <p :class="itemNote">{{ item.kind === 'presentation' ? 'Presentation' : item.kind === 'media' ? 'Media' : 'Header' }}</p>
+              <p :class="itemNote">{{ badge(item).label }}</p>
             </div>
             <IconButton icon="lucide:arrow-up" label="Move up" size="sm" :disabled="index === 0" @click="moveItem(item.id, -1)" />
             <IconButton icon="lucide:arrow-down" label="Move down" size="sm" :disabled="index === draft.doc.items.length - 1" @click="moveItem(item.id, 1)" />

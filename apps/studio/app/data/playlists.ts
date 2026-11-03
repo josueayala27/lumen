@@ -1,5 +1,5 @@
 import { newId } from '@lumen/core'
-import { playlistDocSchema, type PlaylistDoc, type PlaylistItem } from '@lumen/schema'
+import { playlistDocSchema, type PlaylistDoc, type PlaylistItem, type PresentationDoc } from '@lumen/schema'
 import { getDatabase } from './db'
 
 export interface PlaylistRecord {
@@ -26,6 +26,23 @@ interface Row {
 }
 
 const LOCAL_KEY = 'lumen.playlists'
+
+/** Icon and kind label of a rundown item, as Show's rundown panel shows them. */
+export function playlistItemBadge(
+  item: PlaylistItem,
+  kindOf: (presentationId: string) => PresentationDoc['kind'] | undefined,
+): { icon: string; label: string } {
+  switch (item.kind) {
+    case 'presentation':
+      return kindOf(item.presentationId) === 'song'
+        ? { icon: 'lucide:music', label: 'Song' }
+        : { icon: 'lucide:presentation', label: 'Presentation' }
+    case 'media':
+      return { icon: 'lucide:film', label: 'Media' }
+    default:
+      return { icon: 'lucide:heading', label: 'Header' }
+  }
+}
 
 export function newPlaylistDoc(name = 'New rundown'): PlaylistDoc {
   return {

@@ -2,7 +2,8 @@
 import { css, cx } from 'styled-system/css'
 import { Icon } from '#components'
 import { slideText, updateCompositionLayer } from '@lumen/core'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { mediaThumbnail } from '~/data/media'
 import { listPresentations, type PresentationSummary } from '~/data/presentations'
 import { Dialog, IconButton, Input, Slider } from '~/ui'
 import { activeClips, assignClip, clipAt, removeShowClip, type ClipContent, type ShowClip } from './showModel'
@@ -49,6 +50,19 @@ const pickerMedia = computed(() => {
     (asset) => (asset.kind === 'image' || asset.kind === 'video') && asset.name.toLowerCase().includes(needle),
   )
 })
+/** Poster frames and image thumbnails for the picker, by local path. */
+const pickerThumbs = ref<Record<string, string>>({})
+watch(
+  () => [pickerOpen.value, pickerMedia.value] as const,
+  async ([open, assets]) => {
+    if (!open) return
+    for (const asset of assets) {
+      if (pickerThumbs.value[asset.localPath]) continue
+      const thumbnail = await mediaThumbnail(asset)
+      if (thumbnail) pickerThumbs.value = { ...pickerThumbs.value, [asset.localPath]: thumbnail }
+    }
+  },
+)
 const pickerDocs = computed(() => {
   const needle = pickerQuery.value.trim().toLowerCase()
   return presentations.value.filter((item) => item.title.toLowerCase().includes(needle))
@@ -166,6 +180,7 @@ const lyricBar = css({ display: 'flex', alignItems: 'center', gap: '3', px: '3',
 const lyricLine = css({ flex: '1', minW: '0', textStyle: 'ui.sm', color: 'fg.default', whiteSpace: 'pre-line' })
 const pickerList = css({ display: 'flex', flexDirection: 'column', gap: '1', maxH: '[360px]', overflowY: 'auto', mt: '3' })
 const pickerGroup = css({ textStyle: 'ui.label', color: 'fg.subtle', textTransform: 'uppercase', mt: '2' })
+const pickerThumb = css({ w: '[48px]', aspectRatio: 'video', objectFit: 'cover', borderRadius: 'sm', flexShrink: '0', bg: 'bg.canvas' })
 const pickerItem = css({
   display: 'flex',
   alignItems: 'center',
@@ -266,7 +281,8 @@ const pickerItem = css({
           :class="pickerItem"
           @click="pick({ kind: 'media', assetId: asset.id, loop: true }, asset.name)"
         >
-          <Icon :name="asset.kind === 'video' ? 'lucide:film' : 'lucide:image'" :size="14" aria-hidden="true" />
+          <img v-if="pickerThumbs[asset.localPath]" :src="pickerThumbs[asset.localPath]" alt="" :class="pickerThumb" />
+          <Icon v-else :name="asset.kind === 'video' ? 'lucide:film' : 'lucide:image'" :size="14" aria-hidden="true" />
           {{ asset.name }}
         </button>
         <p v-if="pickerMedia.length === 0" :class="hint">No images or videos. Import them on the Media page.</p>

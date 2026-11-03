@@ -394,7 +394,8 @@ impl LatestFrames {
             .filter(|asset| asset.kind == AssetKind::Video)
             .map(|asset| asset.id.as_str())
             .collect();
-        self.frames.retain(|asset_id, _| keep.contains(asset_id.as_str()));
+        self.frames
+            .retain(|asset_id, _| keep.contains(asset_id.as_str()));
     }
 
     pub fn snapshot(&self) -> Vec<(String, VideoFrame)> {
@@ -1040,7 +1041,13 @@ mod tests {
         let thread_stats = Arc::clone(&stats);
         let render = thread::spawn(move || {
             let mut output = OffscreenOutput::new(width, height).expect("output");
-            run_output_loop(&mut output, &receiver, &thread_stats, FRAME_INTERVAL, |_| false);
+            run_output_loop(
+                &mut output,
+                &receiver,
+                &thread_stats,
+                FRAME_INTERVAL,
+                |_| false,
+            );
             output
         });
         sender
@@ -1104,7 +1111,10 @@ mod tests {
             stats.average_frame_ms
         );
         assert!(worst <= 2, "output and preview differ by {worst}");
-        assert!(red < (width * height / 100) as usize, "the layout background shows through");
+        assert!(
+            red < (width * height / 100) as usize,
+            "the layout background shows through"
+        );
     }
 
     #[test]

@@ -9,6 +9,10 @@ import {
   newLiveState,
   nextLiveSlide,
   presentationLiveItem,
+  programSlide,
+  releasesHold,
+  reloadLiveSession,
+  switchLiveSession,
   toLiveSlides,
 } from './liveSession'
 import {
@@ -119,6 +123,61 @@ describe('live session transitions', () => {
     expect(nextLiveSlide(items(), 0, 0)?.lines).toEqual(['Two'])
     expect(nextLiveSlide(items(), 0, 1)?.lines).toEqual(['Three'])
     expect(nextLiveSlide(items(), 1, 1)).toBeNull()
+  })
+})
+
+describe('switching and reloading rundowns', () => {
+  const other: PlaylistDoc = {
+    schemaVersion: 1,
+    name: 'Evening',
+    items: [{ kind: 'presentation', id: 'item_3', presentationId: 'p2', label: 'Closing' }],
+  }
+  const otherItems = () => buildLiveItems(other, (id) => (id === 'p2' ? second : null))
+
+  it('keeps the slide on air, the mode and the timers when another rundown is picked', () => {
+    const before = { ...newLiveState('playlist_1'), itemIndex: 1, slideIndex: 1, mode: 'black' as const, stageMessage: 'Hi' }
+    const switched = switchLiveSession({ items: items(), state: before, held: null }, newLiveState('playlist_2'))
+    expect(switched.held?.item.id).toBe('item_2')
+    expect(switched.held?.slideIndex).toBe(1)
+    expect([switched.state.mode, switched.state.stageMessage]).toEqual(['black', 'Hi'])
+    expect(switched.state.playlistId).toBe('playlist_2')
+    // Program still shows the old slide; the new rundown is only in preview.
+    expect(programSlide(otherItems(), switched.state, switched.held)?.slide.lines).toEqual(['Four'])
+    expect([switched.state.previewItemIndex, switched.state.previewSlideIndex]).toEqual([0, 0])
+    // Nothing on air before: nothing to hold.
+    expect(switchLiveSession({ items: [], state: newLiveState(null), held: null }, newLiveState('p')).held).toBeNull()
+  })
+
+  it('releases the hold only on commands that move program', () => {
+    expect(releasesHold({ type: 'take' })).toBe(true)
+    expect(releasesHold({ type: 'next' })).toBe(true)
+    expect(releasesHold({ type: 'previewNext' })).toBe(false)
+    expect(releasesHold({ type: 'previewGoTo', itemIndex: 0, slideIndex: 0 })).toBe(false)
+    expect(releasesHold({ type: 'setMode', mode: 'clear' })).toBe(false)
+  })
+
+  it('follows program and preview to their items after a reload', () => {
+    const state = { ...newLiveState('playlist_1'), itemIndex: 1, slideIndex: 1, previewItemIndex: 0, previewSlideIndex: 1 }
+    const added: PlaylistDoc = {
+      ...playlist,
+      items: [{ kind: 'header', id: 'item_new', label: 'Welcome' }, ...playlist.items],
+    }
+    const next = buildLiveItems(added, (id) => (id === 'p1' ? first : id === 'p2' ? second : null))
+    const reloaded = reloadLiveSession({ items: items(), state, held: null }, next)
+    expect(reloaded.held).toBeNull()
+    expect([reloaded.state.itemIndex, reloaded.state.slideIndex]).toEqual([2, 1])
+    expect([reloaded.state.previewItemIndex, reloaded.state.previewSlideIndex]).toEqual([1, 1])
+    expect(programSlide(next, reloaded.state, reloaded.held)?.slide.lines).toEqual(['Four'])
+  })
+
+  it('holds the slide on air when a reload removed its item', () => {
+    const state = { ...newLiveState('playlist_1'), itemIndex: 1, slideIndex: 0 }
+    const removed: PlaylistDoc = { ...playlist, items: [playlist.items[0]!] }
+    const next = buildLiveItems(removed, (id) => (id === 'p1' ? first : null))
+    const reloaded = reloadLiveSession({ items: items(), state, held: null }, next)
+    expect(reloaded.held?.item.id).toBe('item_2')
+    expect(programSlide(next, reloaded.state, reloaded.held)?.slide.lines).toEqual(['Three'])
+    expect(reloaded.state.itemIndex).toBe(0)
   })
 })
 

@@ -311,9 +311,17 @@ export async function deleteMediaAsset(id: string): Promise<void> {
 
 const thumbnails = new Map<string, string | null>()
 
-/** PNG data URL for an image; videos have no poster until a decoder exists. */
+/** Whether an asset can have a thumbnail: images, and videos through their poster frame. */
+export function hasThumbnail(asset: Pick<MediaAsset, 'kind' | 'missing'>): boolean {
+  return (asset.kind === 'image' || asset.kind === 'video') && !asset.missing
+}
+
+/**
+ * PNG data URL for an image, or the poster frame of a video (decoded by
+ * ffmpeg on import and cached next to the media). Null without a decoder.
+ */
 export async function mediaThumbnail(asset: MediaAsset): Promise<string | null> {
-  if (!isTauri() || asset.kind !== 'image' || asset.missing) return null
+  if (!isTauri() || !hasThumbnail(asset)) return null
   const key = asset.localPath
   if (thumbnails.has(key)) return thumbnails.get(key) ?? null
   let thumbnail: string | null = null
