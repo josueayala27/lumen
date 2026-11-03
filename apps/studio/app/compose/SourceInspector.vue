@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { SHADER_IDS, type GradientSource, type ParamValue, type Source } from '@lumen/schema'
 import { css } from 'styled-system/css'
+import { isTauri } from '~/output/api'
 import { computed } from 'vue'
 import { ColorField, IconButton, Input, PropertyRow, SegmentedControl, Select, Slider, Switch, type SelectOption } from '~/ui'
 import {
@@ -15,6 +16,9 @@ import {
 } from './composeModel'
 import NumField from './NumField.vue'
 import ParamFields from './ParamFields.vue'
+
+/** The browser preview approximates; the desktop compositor renders everything. */
+const desktop = isTauri()
 
 /** Edits one composition source. `field` names the value so drags coalesce into one undo step. */
 const props = defineProps<{ source: Source; assetName?: string }>()
@@ -114,7 +118,7 @@ const kindLabel = css({ textStyle: 'ui.sm', color: 'fg.muted' })
         <Select :model-value="source.shaderId" :options="shaderOptions" size="sm" aria-label="Generator" @update:model-value="setShader" />
       </PropertyRow>
       <ParamFields :entries="shaderEntries" @change="setShaderParam" />
-      <p :class="note">Generators render in the desktop app.</p>
+      <p v-if="!desktop" :class="note">Generators render in the desktop app.</p>
     </template>
 
     <template v-else-if="source.kind === 'video'">

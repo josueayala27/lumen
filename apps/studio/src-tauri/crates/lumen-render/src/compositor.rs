@@ -2021,7 +2021,7 @@ mod tests {
                   "size": { "width": 1920, "height": 1080 },
                   "elements": [{
                       "kind": "text", "id": "line", "frame": { "x": 0.1, "y": 0.7, "w": 0.8, "h": 0.25 },
-                      "runs": [{ "text": "Amazing grace, how sweet the sound" }],
+                      "runs": [{ "text": "Every light in the room is ours" }],
                       "fontId": "sans", "fontSize": 72, "weight": 700, "color": "#ffffff",
                       "outline": { "color": "#000000", "width": 2 }
                   }] }
@@ -2094,6 +2094,73 @@ mod tests {
                 .filter(|b| b.element_id.is_none())
                 .count(),
             3
+        );
+    }
+
+    /// Slide sources on full-canvas layers; `texts` are (source id, text, frame y).
+    fn slide_layers(texts: &[(&str, &str, f64)]) -> Composition {
+        let sources: Vec<serde_json::Value> = texts
+            .iter()
+            .map(|(id, text, y)| {
+                serde_json::json!({
+                    "kind": "slide", "id": id, "revision": 0,
+                    "safeArea": { "top": 0, "right": 0, "bottom": 0, "left": 0 },
+                    "size": { "width": 1920, "height": 1080 },
+                    "elements": [{
+                        "kind": "text", "id": format!("{id}-text"),
+                        "frame": { "x": 0.05, "y": y, "w": 0.9, "h": 0.3 },
+                        "runs": [{ "text": text }],
+                        "fontId": "inter", "fontSize": 96, "weight": 600, "color": "#ffffff"
+                    }]
+                })
+            })
+            .collect();
+        let layers: Vec<serde_json::Value> = texts
+            .iter()
+            .map(|(id, _, _)| serde_json::json!({ "id": id, "name": id, "sourceId": id, "transform": {} }))
+            .collect();
+        serde_json::from_value(serde_json::json!({
+            "schemaVersion": 2, "revision": 1, "canvas": { "width": 1920, "height": 1080 },
+            "sources": sources, "layers": layers, "master": {}, "fonts": []
+        }))
+        .expect("slide composition")
+    }
+
+    /// Two slide layers in one frame each keep their own glyphs: the shared glyph atlas is
+    /// rewritten per slide, so each slide must be drawn and submitted before the next one
+    /// (see `Compositor::slide_view`). A regression shows scrambled glyphs on the first slide.
+    #[test]
+    #[ignore]
+    fn gpu_two_slides_in_one_frame_keep_their_glyphs() {
+        let top_half = |frame: &crate::CompositionFrame| -> Vec<u8> {
+            frame.rgba[..(frame.width * frame.height / 2 * 4) as usize].to_vec()
+        };
+        let alone = PreviewRenderer::new()
+            .expect("renderer")
+            .render_composition(&slide_layers(&[("a", "Placeholder title", 0.1)]), None, 960, 540)
+            .expect("render alone");
+        let together = PreviewRenderer::new()
+            .expect("renderer")
+            .render_composition(
+                &slide_layers(&[
+                    ("a", "Placeholder title", 0.1),
+                    ("b", "Mmmm wwww QQQQ 0123 @@@@", 0.6),
+                ]),
+                None,
+                960,
+                540,
+            )
+            .expect("render together");
+        let lit = top_half(&alone).chunks(4).filter(|px| px[0] > 128).count();
+        assert!(lit > 200, "the first slide drew its text ({lit} lit pixels)");
+        let differing = top_half(&alone)
+            .chunks(4)
+            .zip(top_half(&together).chunks(4))
+            .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 8))
+            .count();
+        assert!(
+            differing < 20,
+            "{differing} pixels of the first slide changed when a second slide drew"
         );
     }
 
@@ -2485,3 +2552,4 @@ mod tests {
         assert_eq!(effect_entry(EffectKind::Kaleidoscope), "fs_kaleidoscope");
     }
 }
+

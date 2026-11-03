@@ -1,7 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "stage",
-  "description": "Stage display window",
+  "description": "Stage display window: reads the live session, show and library (read only), and can close or go fullscreen",
   "windows": ["stage"],
-  "permissions": ["core:default", "log:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-set-fullscreen",
+    "store:default",
+    "sql:default",
+    "log:default"
+  ]
 }

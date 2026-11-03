@@ -165,7 +165,7 @@ export function useLiveSession() {
         if (!record) {
           reset([], null, null)
           state.value = newLiveState(null)
-          error.value = 'Playlist not found.'
+          error.value = 'Rundown not found.'
           return
         }
       } else {

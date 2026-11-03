@@ -3,6 +3,7 @@ import {
   createScreen,
   liveComposition,
   presentationSlideSource,
+  withCompositionFonts,
   type ShowLive,
   type ShowResolveContext,
 } from '@lumen/core'
@@ -161,7 +162,8 @@ export function showComposition(
   transform: LiveCompositionTransform | null = null,
 ): Composition {
   const composition = programComposition(show, live, frame, context)
-  return applyTimelineTransform(composition, transform, frame.cue, contentLayerId(show.composition))
+  // The rundown cue joins after the clips, so its fonts are added last.
+  return withCompositionFonts(applyTimelineTransform(composition, transform, frame.cue, contentLayerId(show.composition)))
 }
 
 /**

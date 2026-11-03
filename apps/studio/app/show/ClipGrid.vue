@@ -142,6 +142,7 @@ const cell = css({
   flexDirection: 'column',
   justifyContent: 'space-between',
   gap: '1',
+  minW: '0',
   minH: '[64px]',
   p: '2',
   borderRadius: 'sm',
@@ -154,9 +155,13 @@ const cell = css({
 })
 const emptyCell = css({ borderStyle: 'dashed', bg: 'bg.canvas', color: 'fg.subtle', alignItems: 'center', justifyContent: 'center' })
 const playingCell = css({ borderColor: 'success.default', boxShadow: '[inset 0 0 0 1px var(--colors-success-default)]' })
-const cellLabel = css({ display: 'flex', alignItems: 'center', gap: '1.5', textStyle: 'ui.sm', color: 'fg.default', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', pr: '6' })
-const cellMeta = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
-const cellRemove = css({ position: 'absolute', top: '1', right: '1' })
+// The label truncates in its own span (a bare text node in a flex row cannot), and the
+// icon keeps its size; the remove button sits in the footer so it never covers the label.
+const cellLabel = css({ display: 'flex', alignItems: 'center', gap: '1.5', minW: '0', textStyle: 'ui.sm', color: 'fg.default' })
+const cellIcon = css({ flexShrink: '0' })
+const cellText = css({ flex: '1', minW: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
+const cellFooter = css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1', minW: '0' })
+const cellMeta = css({ textStyle: 'ui.xs', color: 'fg.subtle', minW: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })
 const lyricBar = css({ display: 'flex', alignItems: 'center', gap: '3', px: '3', py: '2', borderRadius: 'sm', bg: 'bg.panel', borderWidth: '1px', borderColor: 'border.default' })
 const lyricLine = css({ flex: '1', minW: '0', textStyle: 'ui.sm', color: 'fg.default', whiteSpace: 'pre-line' })
 const pickerList = css({ display: 'flex', flexDirection: 'column', gap: '1', maxH: '[360px]', overflowY: 'auto', mt: '3' })
@@ -222,15 +227,17 @@ const pickerItem = css({
               @click="onCell(layer.id, column)"
               @keydown.enter.stop="onCell(layer.id, column)"
             >
-              <span :class="cellLabel">
-                <Icon :name="clipIcon(clipAt(show, layer.id, column)!)" :size="14" aria-hidden="true" />
-                {{ clipAt(show, layer.id, column)!.label }}
+              <span :class="cellLabel" :title="clipAt(show, layer.id, column)!.label">
+                <Icon :class="cellIcon" :name="clipIcon(clipAt(show, layer.id, column)!)" :size="14" aria-hidden="true" />
+                <span :class="cellText">{{ clipAt(show, layer.id, column)!.label }}</span>
               </span>
-              <span :class="cellMeta">
-                {{ clipMissing(clipAt(show, layer.id, column)!) ? 'Missing' : playing.has(clipAt(show, layer.id, column)!.id) ? 'Playing' : '' }}
-              </span>
-              <span :class="cellRemove" @click.stop>
-                <IconButton icon="lucide:trash-2" label="Remove clip" size="sm" @click="remove(clipAt(show, layer.id, column)!)" />
+              <span :class="cellFooter">
+                <span :class="cellMeta">
+                  {{ clipMissing(clipAt(show, layer.id, column)!) ? 'Missing' : playing.has(clipAt(show, layer.id, column)!.id) ? 'Playing' : '' }}
+                </span>
+                <span @click.stop>
+                  <IconButton icon="lucide:trash-2" label="Remove clip" size="sm" @click="remove(clipAt(show, layer.id, column)!)" />
+                </span>
               </span>
             </div>
             <button v-else type="button" :class="cx(cell, emptyCell)" :aria-label="`Add clip to ${layer.name} column ${column + 1}`" @click="onCell(layer.id, column)">

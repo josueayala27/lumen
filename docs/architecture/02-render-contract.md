@@ -15,6 +15,7 @@ The render contract is the only interface between the Vue control app and the Ru
 - Positions are normalized to the canvas (`0..1`). The canvas has a pixel size; screens scale it.
 - Every parameter that can animate is a plain number, colour or boolean on a stable path, such as `layers.<id>.opacity` or `layers.<id>.effects.<id>.params.amount`. The timeline, cues, MIDI and DMX all write to these paths.
 - Fonts carry `id`, `family`, `path`, `hash` and fallbacks (`CompositionFont`); assets carry `id`, `hash`, `kind`, path or URL, intrinsic size and `state` (`CompositionAsset`). Missing fonts and assets are detected before going live.
+- Every composition lists a font for each `fontId` its slide text uses (`withCompositionFonts` in `packages/core/src/fonts.ts`, applied by `slideComposition`, `liveComposition` and the studio's `showComposition`). There is no font library yet: `inter` maps to family `Inter`, any other id is taken as an installed family name, and the path is `builtin:<id>` (nothing loaded from disk). Rust resolves the family, then its fallbacks, then its bundled default face (Inter, SIL OFL, `lumen-render/fonts/`); an unknown font id draws in the bundled face too, never in a platform-picked generic family.
 
 ## Composition
 
@@ -111,7 +112,7 @@ Mask coordinates are normalized to the layer.
 4. Vue draws the image and places selection handles, snapping guides and the text editing overlay from `CompositionPreviewResult`.
 5. During a drag, render at 640×360. Render at full size on release.
 
-`CompositionPreviewResult` has `bounds` and `textRuns` with line boxes and caret stops, keyed by `layerId`, `sourceId` and `elementId`. The slide editor previews `slideComposition` of the current slide and reads element boxes with `elementLayout` (`app/control/render.ts`): slide elements by `elementId`, video elements by their layer id. The editor uses Rust text layout, never browser shaping.
+`CompositionPreviewResult` has `bounds` and `textRuns` with line boxes (`x`, `y` = line top-left, `width`, `height`; glyphs are drawn on each line's baseline inside that box) and caret stops, keyed by `layerId`, `sourceId` and `elementId`. The slide editor previews `slideComposition` of the current slide and reads element boxes with `elementLayout` (`app/control/render.ts`): slide elements by `elementId`, video elements by their layer id. The editor uses Rust text layout, never browser shaping.
 
 ## Transitions
 
@@ -121,7 +122,7 @@ Mask coordinates are normalized to the layer.
 
 ## Stage display
 
-The stage window is a Tauri webview with Vue chrome. It follows the show's stage screen (`?screen=<id>`, else the first enabled screen with the `stage` role). `layout.stage.show` picks the parts it shows (`current`, `next`, `notes`, `clock`, `timers`, `message`; every part without a stage screen). Current and next images come from the compositor: `preview_render_composition` of `slideComposition` for the slide, through the stage screen's text override, background and safe area. Notes, clock, timers and controls are Vue. There is no second text renderer for slide content.
+The stage window is a normal, decorated and resizable Tauri webview with Vue chrome (label `stage`, capability `stage.json`: read-only SQL and store access to the library and live session, close and fullscreen). F or the header button toggles fullscreen, Escape leaves it, Cmd/Ctrl+W or the close button closes the window. It follows the show's stage screen (`?screen=<id>`, else the first enabled screen with the `stage` role). `layout.stage.show` picks the parts it shows (`current`, `next`, `notes`, `clock`, `timers`, `message`; every part without a stage screen). Current and next images come from the compositor: `preview_render_composition` of `slideComposition` for the slide, through the stage screen's text override, background and safe area. Notes, clock, timers and controls are Vue. There is no second text renderer for slide content.
 
 ## Implementation (A2)
 

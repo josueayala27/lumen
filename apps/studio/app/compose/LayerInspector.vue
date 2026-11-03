@@ -12,6 +12,7 @@ import {
 } from '@lumen/core'
 import { BLEND_MODES, type BlendMode, type EffectKind, type Fit, type Layer, type LayerTransform, type Mask, type ParamValue, type Source } from '@lumen/schema'
 import { css } from 'styled-system/css'
+import { isTauri } from '~/output/api'
 import { computed } from 'vue'
 import { PanelSection, PropertyRow, SegmentedControl, Select, Slider, type SegmentOption, type SelectOption } from '~/ui'
 import { useShowDocument } from '~/show/useShowDocument'
@@ -19,6 +20,9 @@ import { sourceLabel } from './composeModel'
 import EffectChain from './EffectChain.vue'
 import MaskEditor from './MaskEditor.vue'
 import NumField from './NumField.vue'
+
+/** The browser preview approximates; the desktop compositor renders everything. */
+const desktop = isTauri()
 
 const props = defineProps<{
   layer: Layer
@@ -155,7 +159,7 @@ const note = css({ textStyle: 'ui.xs', color: 'fg.subtle', py: '1' })
 
     <PanelSection title="Mask">
       <MaskEditor :mask="layer.mask" :images="images" @change="setMask" />
-      <p :class="note">Blend modes, effects and masks render in the desktop app; the browser preview approximates them.</p>
+      <p v-if="!desktop" :class="note">Blend modes, effects and masks render in the desktop app; the browser preview approximates them.</p>
     </PanelSection>
   </div>
 </template>

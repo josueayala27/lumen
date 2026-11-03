@@ -1377,7 +1377,7 @@ const frameGrid = css({ display: 'grid', gridTemplateColumns: '[repeat(2,minmax(
               live
               :min-rows="14"
               :max-rows="30"
-              placeholder="[Verse 1]&#10;Amazing grace how sweet the sound"
+              placeholder="[Verse 1]&#10;First line of the lyrics"
               aria-label="Song lyrics"
               @update:model-value="setSongText"
             />

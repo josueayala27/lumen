@@ -13,6 +13,7 @@ import type {
   Theme,
 } from '@lumen/schema'
 import { createComposition, createLayer } from './composition'
+import { withCompositionFonts } from './fonts'
 
 /**
  * Presentation slides as render contract v2 content: a slide's text, shape and
@@ -249,5 +250,5 @@ export function slideComposition(
     )
   }
   flush()
-  return { ...composition, sources, layers }
+  return withCompositionFonts({ ...composition, sources, layers })
 }

@@ -75,7 +75,7 @@ export function useStageSession(options: StageLoadOptions = {}) {
       const record = await getPlaylist(playlistId)
       if (!record) {
         items.value = []
-        error.value = 'Playlist not found.'
+        error.value = 'Rundown not found.'
         return
       }
       const docs = await Promise.all(

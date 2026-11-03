@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { identityCornerPin, meshForCornerPin, quadPoint, resampleMesh } from './screen'
+import { identityCornerPin, meshForCornerPin, quadPoint, quadUv, rebaseMesh, resampleMesh, type CornerPin } from './screen'
 
 describe('corner pin and mesh helpers', () => {
   it('interpolates inside a quad', () => {
@@ -50,5 +50,22 @@ describe('corner pin and mesh helpers', () => {
     expect(centre.x).toBeCloseTo(expected.x)
     expect(centre.y).toBeCloseTo(expected.y)
     expect(resampleMesh(coarse, 2, 2)).toBe(coarse)
+  })
+
+  it('inverts quadPoint and rebases a mesh onto a new pin', () => {
+    const pin: CornerPin = [{ x: 0.2, y: 0.1 }, { x: 0.85, y: 0.05 }, { x: 0.95, y: 0.9 }, { x: 0.05, y: 0.8 }]
+    for (const [u, v] of [[0, 0], [0.3, 0.7], [1, 1], [0.5, 0.25]] as const) {
+      const back = quadUv(pin, quadPoint(pin, u, v))
+      expect(back.u).toBeCloseTo(u, 9)
+      expect(back.v).toBeCloseTo(v, 9)
+    }
+    const mesh = meshForCornerPin(4, 3)
+    const moved = rebaseMesh(mesh, null, pin)
+    expect(moved).toMatchObject({ cols: 4, rows: 3 })
+    moved.points.forEach((point, index) => {
+      const expected = meshForCornerPin(4, 3, pin).points[index]!
+      expect(point.x).toBeCloseTo(expected.x, 9)
+      expect(point.y).toBeCloseTo(expected.y, 9)
+    })
   })
 })

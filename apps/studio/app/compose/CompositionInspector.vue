@@ -10,10 +10,14 @@ import {
 } from '@lumen/core'
 import type { Composition, EffectKind, ParamValue } from '@lumen/schema'
 import { css } from 'styled-system/css'
+import { isTauri } from '~/output/api'
 import { PanelSection, PropertyRow, Select, Slider, type SelectOption } from '~/ui'
 import { useShowDocument } from '~/show/useShowDocument'
 import EffectChain from './EffectChain.vue'
 import NumField from './NumField.vue'
+
+/** The browser preview approximates; the desktop compositor renders everything. */
+const desktop = isTauri()
 
 /** Inspector with nothing selected: canvas size and the master stage. */
 const props = defineProps<{ composition: Composition }>()
@@ -100,7 +104,7 @@ const note = css({ textStyle: 'ui.xs', color: 'fg.subtle', py: '1' })
         @toggle="(id, enabled) => doc.updateComposition((value) => updateMasterEffect(value, id, { enabled }))"
         @param="setParam"
       />
-      <p :class="note">Master effects render in the desktop app.</p>
+      <p v-if="!desktop" :class="note">Master effects render in the desktop app.</p>
     </PanelSection>
   </div>
 </template>

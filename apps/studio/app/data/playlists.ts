@@ -27,10 +27,10 @@ interface Row {
 
 const LOCAL_KEY = 'lumen.playlists'
 
-export function newPlaylistDoc(name = 'New playlist'): PlaylistDoc {
+export function newPlaylistDoc(name = 'New rundown'): PlaylistDoc {
   return {
     schemaVersion: 1,
-    name: name.trim() || 'New playlist',
+    name: name.trim() || 'New rundown',
     items: [],
   }
 }

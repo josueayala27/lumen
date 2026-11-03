@@ -96,6 +96,21 @@ describe('elementLayout', () => {
     expect(layout.bounds.map((entry) => entry.elementId)).toEqual(['slide-background', 'title', 'clip'])
     expect(layout.bounds[1]).toEqual({ elementId: 'title', x: 0.1, y: 0.2, width: 0.3, height: 0.4 })
   })
+
+  it('keeps text runs in canvas space with y at the line top', () => {
+    // Rust reports each line box as top-left + size, normalized to the canvas (not the element
+    // frame); the editor overlay draws it as-is, so it must sit inside the element bounds.
+    const run = { layerId: 'slide-content-0', sourceId: 'slide-content-0', elementId: 'title', line: 0, text: 'Hello', x: 0.42, y: 0.46, width: 0.16, height: 0.07, caretStops: [0.42, 0.58] }
+    const layout = elementLayout({
+      revision: 1,
+      bounds: [{ layerId: 'slide-content-0', sourceId: 'slide-content-0', elementId: 'title', x: 0.1, y: 0.16, width: 0.8, height: 0.68 }],
+      textRuns: [run],
+    })
+    expect(layout.textRuns).toEqual([run])
+    const [box] = layout.bounds
+    expect(run.y).toBeGreaterThanOrEqual(box!.y)
+    expect(run.y + run.height).toBeLessThanOrEqual(box!.y + box!.height)
+  })
 })
 
 describe('normalizePoint', () => {

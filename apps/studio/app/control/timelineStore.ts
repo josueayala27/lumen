@@ -15,7 +15,7 @@ export function newTimeline(rate: FrameRate = '29.97df'): TimelineDoc {
   return {
     schemaVersion: 1,
     id: `timeline_${suffix}`,
-    name: 'Service timeline',
+    name: 'Show timeline',
     frameRate: rate,
     cues: [],
   }

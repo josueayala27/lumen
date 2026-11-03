@@ -19,6 +19,17 @@ const ATLAS_HEIGHT: u32 = 2048;
 const ATLAS_PADDING: u32 = 1;
 const SHRINK_STEPS: u32 = 32;
 
+/// Default text face (Inter, SIL OFL 1.1, `fonts/LICENSE-Inter.txt`), built into the binary so
+/// text always has real metrics: an unknown font id, a missing font file or a family that is
+/// not installed all render in it.
+const DEFAULT_FONTS: [&[u8]; 2] = [
+    include_bytes!("../fonts/Inter-Regular.ttf"),
+    include_bytes!("../fonts/Inter-Bold.ttf"),
+];
+
+/// Font paths with this prefix name a built-in or installed family; nothing is loaded from disk.
+pub(crate) const BUILTIN_FONT_PREFIX: &str = "builtin:";
+
 /// One rasterized glyph quad in target pixels, before rotation.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct GlyphDraw {
@@ -76,14 +87,33 @@ pub(crate) struct TextEngine {
     font_system: FontSystem,
     swash: SwashCache,
     loaded_fonts: HashSet<String>,
+    /// Family of the built-in default face.
+    default_family: String,
 }
 
 impl TextEngine {
     pub(crate) fn new() -> Self {
+        let mut font_system = FontSystem::new();
+        let mut default_family = String::new();
+        for data in DEFAULT_FONTS {
+            let ids = font_system
+                .db_mut()
+                .load_font_source(cosmic_text::fontdb::Source::Binary(std::sync::Arc::new(
+                    data,
+                )));
+            if default_family.is_empty() {
+                if let Some(face) = ids.first().and_then(|id| font_system.db().face(*id)) {
+                    if let Some((name, _)) = face.families.first() {
+                        default_family = name.clone();
+                    }
+                }
+            }
+        }
         Self {
-            font_system: FontSystem::new(),
+            font_system,
             swash: SwashCache::new(),
             loaded_fonts: HashSet::new(),
+            default_family,
         }
     }
 
@@ -272,7 +302,7 @@ impl TextEngine {
             });
         }
 
-        for glyph in shaped.glyphs {
+        for (glyph, line_y) in shaped.glyphs {
             let color = glyph
                 .color_opt
                 .map(|color| {
@@ -281,7 +311,8 @@ impl TextEngine {
                 })
                 .unwrap_or(layer_color)
                 .with_alpha(opacity);
-            let physical = glyph.physical((origin_x, origin_y), 1.0);
+            // `LayoutGlyph::y` is relative to its line: add the line's baseline.
+            let physical = glyph.physical((origin_x, origin_y + line_y), 1.0);
             let Some(image) = self
                 .swash
                 .get_image(&mut self.font_system, physical.cache_key)
@@ -388,7 +419,9 @@ impl TextEngine {
             let line = ShapedLine::from_run(&run);
             if !line.text.is_empty() || !run.glyphs.is_empty() {
                 shaped.total_height = run.line_top + run.line_height;
-                shaped.glyphs.extend(run.glyphs.iter().cloned());
+                shaped
+                    .glyphs
+                    .extend(run.glyphs.iter().map(|glyph| (glyph.clone(), run.line_y)));
                 shaped.lines.push(line);
             }
             for span in run.decorations {
@@ -496,7 +529,8 @@ impl TextEngine {
 
     fn register_fonts(&mut self, fonts: &[CompositionFont]) {
         for font in fonts {
-            if self.loaded_fonts.contains(&font.path) {
+            if font.path.starts_with(BUILTIN_FONT_PREFIX) || self.loaded_fonts.contains(&font.path)
+            {
                 continue;
             }
             if self.font_system.db_mut().load_font_file(&font.path).is_ok() {
@@ -505,9 +539,12 @@ impl TextEngine {
         }
     }
 
+    /// The family a text element draws with: the composition font for `font_id`, its first
+    /// installed fallback, or the built-in default when the id is unknown or nothing is
+    /// installed. Never a generic family, whose face the platform picks.
     fn resolve_family(&self, fonts: &[CompositionFont], font_id: &str) -> String {
         let Some(font) = fonts.iter().find(|font| font.id == font_id) else {
-            return String::new();
+            return self.default_family.clone();
         };
         if self.family_exists(font) {
             return font.family.clone();
@@ -517,7 +554,7 @@ impl TextEngine {
                 return fallback.clone();
             }
         }
-        String::new()
+        self.default_family.clone()
     }
 
     fn family_exists(&self, font: &CompositionFont) -> bool {
@@ -558,7 +595,8 @@ fn shape_attrs<'a>(
 #[derive(Debug, Default)]
 struct ShapedBlock {
     lines: Vec<ShapedLine>,
-    glyphs: Vec<cosmic_text::LayoutGlyph>,
+    /// Glyphs with the baseline of their line (`LayoutRun::line_y`), relative to the block.
+    glyphs: Vec<(cosmic_text::LayoutGlyph, f32)>,
     decorations: Vec<ShapedDecoration>,
     total_height: f32,
 }
@@ -668,6 +706,116 @@ mod tests {
         assert!(layout.bounds.is_empty());
         assert!(layout.text_runs.is_empty());
         assert!(layout.glyphs.is_empty());
+    }
+
+    fn text_slide(font_id: &str, fonts: Vec<CompositionFont>) -> SlidePage {
+        let element: SlideElement = serde_json::from_value(serde_json::json!({
+            "kind": "text", "id": "title",
+            "frame": { "x": 0.1, "y": 0.16, "w": 0.8, "h": 0.68, "rotation": 0 },
+            "runs": [{ "text": "Hello world" }],
+            "fontId": font_id, "fontSize": 64.0, "weight": 600, "color": "#ffffff"
+        }))
+        .expect("text element");
+        SlidePage {
+            revision: 1,
+            size: crate::composition::Size {
+                width: 1920.0,
+                height: 1080.0,
+            },
+            elements: vec![element],
+            fonts,
+            assets: Vec::new(),
+        }
+    }
+
+    /// Glyph origins left to right must advance: piled glyphs mean zero advances.
+    fn assert_advances(layout: &TextLayout) {
+        assert!(layout.glyphs.len() >= 8, "glyphs: {}", layout.glyphs.len());
+        let xs: Vec<f32> = layout.glyphs.iter().map(|glyph| glyph.rect.x).collect();
+        assert!(
+            xs.windows(2).all(|pair| pair[1] > pair[0]),
+            "glyph x positions do not advance: {xs:?}"
+        );
+        let run = &layout.text_runs[0];
+        assert_eq!(run.text, "Hello world");
+        assert!(run.width > 0.1, "line width {}", run.width);
+    }
+
+    #[test]
+    fn lines_stack_and_glyphs_sit_inside_their_text_run() {
+        let mut engine = TextEngine::new();
+        let mut slide = text_slide("inter", Vec::new());
+        if let SlideElement::Text { runs, .. } = &mut slide.elements[0] {
+            runs[0].text = "Line one\nLine two\nLine three".into();
+        }
+        let (width, height) = (1920u32, 1080u32);
+        let layout = engine.layout(&slide, width, height);
+        assert_eq!(layout.text_runs.len(), 3);
+        // Each line's glyphs fall inside that line's run box (y is the line top, in the
+        // canvas-normalized space of the slide), so lines do not pile up and the editor
+        // overlay surrounds the drawn text.
+        let mut glyphs = layout.glyphs.iter();
+        for run in &layout.text_runs {
+            let top = run.y as f32 * height as f32;
+            let bottom = (run.y + run.height) as f32 * height as f32;
+            let count = run.text.chars().filter(|c| !c.is_whitespace()).count();
+            for glyph in glyphs.by_ref().take(count) {
+                let centre = glyph.rect.y + glyph.rect.h * 0.5;
+                assert!(
+                    centre > top && centre < bottom,
+                    "line {} glyph centre {centre} outside {top}..{bottom}",
+                    run.line
+                );
+            }
+        }
+        let tops: Vec<f64> = layout.text_runs.iter().map(|run| run.y).collect();
+        assert!(tops.windows(2).all(|pair| pair[1] > pair[0] + 0.05), "{tops:?}");
+    }
+
+    #[test]
+    fn bundled_default_font_is_loaded() {
+        let engine = TextEngine::new();
+        assert!(!engine.default_family.is_empty());
+        assert!(engine.family_exists_named(&engine.default_family));
+    }
+
+    #[test]
+    fn unknown_font_id_falls_back_to_the_bundled_font_with_real_advances() {
+        let mut engine = TextEngine::new();
+        assert_eq!(engine.resolve_family(&[], "inter"), engine.default_family);
+        let layout = engine.layout(&text_slide("inter", Vec::new()), 960, 540);
+        assert_advances(&layout);
+    }
+
+    #[test]
+    fn missing_font_family_and_file_fall_back_to_the_bundled_font() {
+        let mut engine = TextEngine::new();
+        let fonts = vec![CompositionFont {
+            id: "brand".into(),
+            family: "No Such Family 7f3a".into(),
+            path: "/missing/brand.ttf".into(),
+            hash: "h".into(),
+            fallback: vec!["Also Missing 7f3a".into()],
+        }];
+        assert_eq!(engine.resolve_family(&fonts, "brand"), engine.default_family);
+        let layout = engine.layout(&text_slide("brand", fonts), 960, 540);
+        assert_advances(&layout);
+    }
+
+    #[test]
+    fn builtin_font_paths_are_not_loaded_from_disk() {
+        let mut engine = TextEngine::new();
+        let default_family = engine.default_family.clone();
+        let fonts = vec![CompositionFont {
+            id: "inter".into(),
+            family: default_family.clone(),
+            path: format!("{BUILTIN_FONT_PREFIX}inter"),
+            hash: "builtin".into(),
+            fallback: Vec::new(),
+        }];
+        engine.register_fonts(&fonts);
+        assert!(engine.loaded_fonts.is_empty());
+        assert_eq!(engine.resolve_family(&fonts, "inter"), default_family);
     }
 
     #[test]

@@ -185,6 +185,21 @@ describe('showComposition', () => {
     expect(composition.layers[0]!.sourceId).not.toBeNull()
   })
 
+  it('carries a font for every text element, the placeholder title card included', () => {
+    const show = createShowDoc()
+    for (const cue of [cueAt(items, 0, 0), cueAt(items, 1, 0)]) {
+      const composition = showComposition(show, emptyLive(), { cue, mode: 'live' }, context)
+      const used = composition.sources.flatMap((source) =>
+        source.kind === 'slide' ? source.elements.flatMap((element) => (element.kind === 'text' ? [element.fontId] : [])) : [],
+      )
+      expect(used.length).toBeGreaterThan(0)
+      for (const id of used) expect(composition.fonts.map((font) => font.id)).toContain(id)
+    }
+    // The title card is the same source each time it is built (no fresh element ids).
+    const card = (): unknown => showComposition(show, emptyLive(), { cue: cueAt(items, 1, 0), mode: 'live' }, context).sources
+    expect(card()).toEqual(card())
+  })
+
   it('black keeps the composition and leaves blackout to the screen', () => {
     const show = showWithClips()
     const cue = cueAt(items, 0, 0)

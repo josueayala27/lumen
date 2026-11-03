@@ -305,7 +305,7 @@ const boxText = css({ textStyle: 'ui.xs', color: 'fg.muted', lineHeight: 'normal
       <EmptyState
         v-else-if="!draft"
         icon="lucide:list-music"
-        title="Build your order of service"
+        title="Build your running order"
         description="A rundown holds the presentations and songs you run live, in order."
       >
         <template #actions>

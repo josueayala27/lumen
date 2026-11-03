@@ -63,7 +63,7 @@ Mapping {
 }
 ```
 
-- Corner pin and mesh warp share one pass. The mesh refines the corner pin.
+- Corner pin and mesh warp share one pass. The mesh refines the corner pin: its points are absolute output positions that already include the pin, so a corner-pin edit carries an existing mesh along (`updateScreenMapping` rebases each mesh point from the old pin quad to the new one, `rebaseMesh` in `packages/core/src/screen.ts`).
 - Edge blend fades overlap zones for multi-projector screens. `width` is normalized; `gamma` and `power` shape the ramp.
 - Masks hide parts of the output, for example to fit a non-rectangular surface.
 - Colour correction matches projectors to each other.

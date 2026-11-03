@@ -63,6 +63,21 @@ export function assetsForDoc(doc: PresentationDoc | null, media: readonly MediaA
     .filter((asset): asset is CompositionAsset => asset !== null)
 }
 
+/**
+ * The title card slide: the default text style (font `inter`, which the
+ * composition carries and the renderer bundles) on a transparent background.
+ * Ids are fixed so the card is the same source every time it is built and
+ * the renderer can keep its cached texture.
+ */
+function placeholderSlide(label: string): Slide {
+  const slide = textSlide(label, null, 'placeholder-slide')
+  return {
+    ...slide,
+    background: { kind: 'transparent' },
+    elements: slide.elements.map((element, index) => ({ ...element, id: `placeholder-text-${index}` })),
+  }
+}
+
 /** A one-slide title card for rundown items without a document (media, headers, missing). */
 export function placeholderDoc(label: string): PresentationDoc {
   return {
@@ -71,7 +86,7 @@ export function placeholderDoc(label: string): PresentationDoc {
     title: label,
     themeId: null,
     settings: { aspectRatio: '16:9', ...DEFAULT_SLIDE_SIZE, safeArea: DEFAULT_SAFE_AREA },
-    slides: [{ ...textSlide(label, null, 'placeholder-slide'), background: { kind: 'transparent' } }],
+    slides: [placeholderSlide(label)],
     song: null,
   }
 }

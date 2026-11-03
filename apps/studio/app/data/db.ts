@@ -65,13 +65,25 @@ async function migrate(db: Database): Promise<void> {
   `)
 }
 
+/** Whether this webview is the read-only stage window (label `stage`). */
+async function isStageWindow(): Promise<boolean> {
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    return getCurrentWindow().label === 'stage'
+  } catch {
+    return false
+  }
+}
+
 export async function getDatabase(): Promise<Database | null> {
   if (!isTauri()) return null
   if (!database) {
     database = (async () => {
       const { default: Sql } = await import('@tauri-apps/plugin-sql')
       const db = await Sql.load(DB_PATH)
-      await migrate(db)
+      // The stage window reads only (its capability has no `sql:allow-execute`); the
+      // operator window creates the tables.
+      if (!(await isStageWindow())) await migrate(db)
       return db
     })().catch((error) => {
       console.error('[lumen] database open failed', error)

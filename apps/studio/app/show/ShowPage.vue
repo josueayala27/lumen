@@ -206,7 +206,9 @@ async function openStage(): Promise<void> {
       title: 'Lumen Stage',
       width: 1280,
       height: 800,
-      decorations: false,
+      // A normal window the operator can move and close; the stage view has its own
+      // fullscreen toggle (F) for a monitor in front of the performers.
+      decorations: true,
       resizable: true,
       focus: true,
     })

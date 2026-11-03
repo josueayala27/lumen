@@ -6,9 +6,11 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useRoute } from 'vue-router'
 import { loadShow } from '~/data/shows'
 import { LIVE_SESSION_LOCAL_KEY } from '~/live/liveSessionStore'
+import { IconButton } from '~/ui'
 import { formatClock, safeAreaPercent, stageParts, stageScreen, timerViews } from './stageModel'
 import { useStageRender } from './useStageRender'
 import { useStageSession } from './useStageSession'
+import { closeStageWindow, setStageFullscreen, stageKeyAction } from './stageWindow'
 
 const route = useRoute()
 const {
@@ -65,6 +67,30 @@ const emptyLabel = computed(() => {
 let clockTimer: ReturnType<typeof setInterval> | undefined
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
+const fullscreen = ref(false)
+
+async function toggleFullscreen(on = !fullscreen.value): Promise<void> {
+  try {
+    fullscreen.value = await setStageFullscreen(on)
+  } catch {
+    // The window manager may refuse; the window stays as it is.
+  }
+}
+
+function onKey(event: KeyboardEvent): void {
+  if (event.defaultPrevented) return
+  const action = stageKeyAction(event, fullscreen.value)
+  if (!action) return
+  event.preventDefault()
+  if (action === 'close') void closeStageWindow()
+  else void toggleFullscreen(action === 'toggle-fullscreen' ? !fullscreen.value : false)
+}
+
+function onFullscreenChange(): void {
+  // Browser fullscreen can also end from the browser's own controls.
+  if (!document.fullscreenElement && fullscreen.value && !('__TAURI_INTERNALS__' in window)) fullscreen.value = false
+}
+
 function onStorage(event: StorageEvent): void {
   if (event.key === LIVE_SESSION_LOCAL_KEY || event.key === null) void refresh()
 }
@@ -77,12 +103,16 @@ onMounted(() => {
   }, 1000)
   refreshTimer = setInterval(() => void refresh(), 500)
   window.addEventListener('storage', onStorage)
+  window.addEventListener('keydown', onKey)
+  document.addEventListener('fullscreenchange', onFullscreenChange)
 })
 
 onBeforeUnmount(() => {
   if (clockTimer) clearInterval(clockTimer)
   if (refreshTimer) clearInterval(refreshTimer)
   window.removeEventListener('storage', onStorage)
+  window.removeEventListener('keydown', onKey)
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
 })
 
 const root = css({
@@ -214,6 +244,7 @@ const errorText = css({ textStyle: 'ui.xs', color: 'danger.default' })
 const footer = css({ display: 'flex', alignItems: 'center', gap: '3', flexShrink: '0' })
 const footerText = css({ textStyle: 'ui.xs', color: 'fg.subtle' })
 const footerSpacer = css({ flex: '1' })
+const windowControls = css({ display: 'flex', alignItems: 'center', gap: '1', flexShrink: '0' })
 </script>
 
 <template>
@@ -225,6 +256,17 @@ const footerSpacer = css({ flex: '1' })
       </p>
       <span v-else :class="footerSpacer" />
       <time v-if="parts.has('clock')" :class="clockStyle">{{ clock }}</time>
+      <div :class="windowControls">
+        <IconButton
+          :icon="fullscreen ? 'lucide:minimize' : 'lucide:maximize'"
+          :label="fullscreen ? 'Exit fullscreen' : 'Fullscreen'"
+          shortcut="F"
+          size="sm"
+          :active="fullscreen"
+          @click="toggleFullscreen()"
+        />
+        <IconButton icon="lucide:x" label="Close stage window" shortcut="Mod+W" size="sm" @click="closeStageWindow()" />
+      </div>
     </header>
 
     <p v-if="error" :class="errorText">{{ error }}</p>
@@ -259,7 +301,7 @@ const footerSpacer = css({ flex: '1' })
             <div v-else-if="next" :class="[slideText, nextText]">
               <span v-for="(line, index) in next.slide.lines" :key="index">{{ line }}</span>
             </div>
-            <p v-else :class="placeholder">End of playlist</p>
+            <p v-else :class="placeholder">End of rundown</p>
           </div>
         </section>
 

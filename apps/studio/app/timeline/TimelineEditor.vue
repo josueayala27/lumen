@@ -1652,7 +1652,7 @@ const zoomLabel = css({ textStyle: 'ui.xs', color: 'fg.muted', minW: '[42px]', t
                   aria-label="Slide clip slide"
                 />
               </PropertyRow>
-              <p :class="inspectorNote">At its start the live view takes this slide. The presentation must be in the running playlist.</p>
+              <p :class="inspectorNote">At its start the live view takes this slide. The presentation must be in the running rundown.</p>
             </template>
             <template v-if="selectedClip.clip.kind === 'media' || selectedClip.clip.kind === 'audio'">
               <PropertyRow label="Asset">

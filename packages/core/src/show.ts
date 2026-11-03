@@ -23,9 +23,10 @@ import {
   removeCompositionLayer,
   type LayerInput,
 } from './composition'
+import { withCompositionFonts } from './fonts'
 import { newId } from './presentation'
 import { presentationSlideSource } from './slide'
-import { createScreen, displayTarget } from './screen'
+import { createScreen, displayTarget, rebaseMesh } from './screen'
 
 /**
  * Show document v2: a composition, its screens and a clip grid
@@ -109,8 +110,20 @@ export function updateScreenLayout(show: ShowDoc, screenId: string, patch: Parti
   return mapScreen(show, screenId, (screen) => ({ ...screen, layout: { ...screen.layout, ...patch } }))
 }
 
+/**
+ * Patches a screen's mapping. A corner-pin change without a mesh in the same
+ * patch carries an existing mesh along (`rebaseMesh`): the renderer draws the
+ * mesh instead of the pin, so a stale mesh would hide every pin edit.
+ */
 export function updateScreenMapping(show: ShowDoc, screenId: string, patch: Partial<Mapping>): ShowDoc {
-  return mapScreen(show, screenId, (screen) => ({ ...screen, mapping: { ...screen.mapping, ...patch } }))
+  return mapScreen(show, screenId, (screen) => {
+    const mapping = { ...screen.mapping, ...patch }
+    const current = screen.mapping
+    if ('cornerPin' in patch && !('mesh' in patch) && current.mesh) {
+      mapping.mesh = rebaseMesh(current.mesh, current.cornerPin, patch.cornerPin ?? null)
+    }
+    return { ...screen, mapping }
+  })
 }
 
 export function moveScreen(show: ShowDoc, screenId: string, index: number): ShowDoc {
@@ -349,7 +362,7 @@ export function liveComposition(show: ShowDoc, live: ShowLive, context: ShowReso
     const asset = media ? assetForMedia(media) : null
     if (asset) assets.push(asset)
   }
-  return { ...composition, sources, layers, assets }
+  return withCompositionFonts({ ...composition, sources, layers, assets })
 }
 
 // --- Loading and migration ---------------------------------------------------
@@ -370,6 +383,30 @@ function str(value: unknown, fallback: string): string {
 function opacityOf(value: unknown): number {
   const number = Number(value ?? 1)
   return Number.isFinite(number) ? Math.min(1, Math.max(0, number)) : 1
+}
+
+/** Tags of the default layers (`createShowDoc`), by their v1 name. */
+const DEFAULT_LAYER_TAGS: Record<string, string> = { background: 'background', visuals: 'visuals', lyrics: 'lyrics' }
+
+/**
+ * Tags for v1 layers, which had none. The default Background, Visuals and
+ * Lyrics layers keep the tags a new show gives them, so rundown slides land
+ * on Lyrics even when a presentation clip sat on another layer. Only when no
+ * layer is named Lyrics does the topmost layer with presentation clips become
+ * the `lyrics` layer.
+ */
+function migratedLayerTags(layers: readonly (Record<string, unknown> & { id: string })[], clips: readonly ShowClip[]): Map<string, string[]> {
+  const tags = new Map<string, string[]>()
+  for (const layer of layers) {
+    const tag = typeof layer.name === 'string' ? DEFAULT_LAYER_TAGS[layer.name.trim().toLowerCase()] : undefined
+    if (tag && ![...tags.values()].some((existing) => existing.includes(tag))) tags.set(layer.id, [tag])
+  }
+  if (![...tags.values()].some((existing) => existing.includes('lyrics'))) {
+    const withSlides = new Set(clips.filter((clip) => clip.content.kind === 'presentation').map((clip) => clip.layerId))
+    const top = [...layers].reverse().find((layer) => withSlides.has(layer.id))
+    if (top) tags.set(top.id, [...(tags.get(top.id) ?? []), 'lyrics'])
+  }
+  return tags
 }
 
 /** Converts a stored v1 show (first clip grid). Returns null for anything else. */
@@ -399,13 +436,13 @@ export function migrateShowV1(value: unknown, options: ShowLoadOptions = {}): Sh
     clips.push({ id: clip.id, layerId: clip.layerId, column, label: str(clip.label, ''), content })
   }
 
-  const lyricLayers = new Set(clips.filter((clip) => clip.content.kind === 'presentation').map((clip) => clip.layerId))
+  const tags = migratedLayerTags(rawLayers, clips)
   const layers = rawLayers.map((layer) =>
     createLayer({
       id: layer.id,
       name: str(layer.name, 'Layer'),
       opacity: opacityOf(layer.opacity),
-      tags: lyricLayers.has(layer.id) ? ['lyrics'] : [],
+      tags: tags.get(layer.id) ?? [],
     }),
   )
 

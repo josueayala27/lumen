@@ -146,6 +146,50 @@ export function quadPoint(pin: readonly Point[], u: number, v: number): Point {
   return { x: top.x + (bottom.x - top.x) * v, y: top.y + (bottom.y - top.y) * v }
 }
 
+/**
+ * Inverse of `quadPoint`: the `(u, v)` whose bilinear point in `pin` is
+ * `point`. Newton's method from the centre; exact for the quads a corner pin
+ * draws (convex, non-degenerate). Points outside the quad extrapolate.
+ */
+export function quadUv(pin: readonly Point[], point: Point): { u: number; v: number } {
+  const [tl, tr, br, bl] = pin as CornerPin
+  let u = 0.5
+  let v = 0.5
+  for (let step = 0; step < 24; step += 1) {
+    const at = quadPoint(pin, u, v)
+    const ex = at.x - point.x
+    const ey = at.y - point.y
+    if (Math.abs(ex) < 1e-12 && Math.abs(ey) < 1e-12) break
+    // Partial derivatives of the bilinear map.
+    const dxu = (tr.x - tl.x) * (1 - v) + (br.x - bl.x) * v
+    const dyu = (tr.y - tl.y) * (1 - v) + (br.y - bl.y) * v
+    const dxv = (bl.x - tl.x) * (1 - u) + (br.x - tr.x) * u
+    const dyv = (bl.y - tl.y) * (1 - u) + (br.y - tr.y) * u
+    const det = dxu * dyv - dxv * dyu
+    if (Math.abs(det) < 1e-12) break
+    u -= (ex * dyv - ey * dxv) / det
+    v -= (ey * dxu - ex * dyu) / det
+  }
+  return { u, v }
+}
+
+/**
+ * Moves a mesh with its corner pin. Mesh points are absolute output positions
+ * that already include the pin (the renderer draws the mesh instead of the pin
+ * when both are set), so a pin edit must carry the mesh along: each point
+ * keeps its `(u, v)` inside the old pin and lands at the same `(u, v)` in the
+ * new one. `null` is the unwarped full output.
+ */
+export function rebaseMesh(mesh: Mesh, from: readonly Point[] | null, to: readonly Point[] | null): Mesh {
+  const source = from ?? identityCornerPin()
+  const target = to ?? identityCornerPin()
+  const points = mesh.points.map((point) => {
+    const { u, v } = quadUv(source, point)
+    return quadPoint(target, u, v)
+  })
+  return { ...mesh, points }
+}
+
 /** A `cols × rows` mesh spread evenly over a corner pin, or over the full output. */
 export function meshForCornerPin(cols: number, rows: number, pin: readonly Point[] | null = null): Mesh {
   const c = Math.max(2, Math.round(cols))

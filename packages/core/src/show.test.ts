@@ -1,7 +1,7 @@
 import { showDocSchema, type PresentationDoc, type ShowDoc } from '@lumen/schema'
 import { describe, expect, it } from 'vitest'
 import { addSource } from './composition'
-import { layersForLayout } from './screen'
+import { layersForLayout, meshForCornerPin, type CornerPin } from './screen'
 import { buildSongDoc } from './presentation'
 import {
   activeClips,
@@ -109,6 +109,23 @@ describe('show document', () => {
     show = removeScreen(show, id)
     expect(show.screens).toHaveLength(3)
     expect(showDocSchema.safeParse(show).success).toBe(true)
+  })
+
+  it('carries an existing mesh along when the corner pin changes', () => {
+    let show = createShowDoc()
+    const id = show.screens[0]!.id
+    show = updateScreenMapping(show, id, { mesh: meshForCornerPin(2, 2) })
+    const pin: CornerPin = [{ x: 0.1, y: 0.05 }, { x: 0.9, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 0.9 }]
+    show = updateScreenMapping(show, id, { cornerPin: pin })
+    const points = show.screens[0]!.mapping.mesh!.points
+    // A 2 × 2 mesh is the pin itself, row by row: tl, tr, bl, br.
+    for (const [index, corner] of [pin[0], pin[1], pin[3], pin[2]].entries()) {
+      expect(points[index]!.x).toBeCloseTo(corner.x, 9)
+      expect(points[index]!.y).toBeCloseTo(corner.y, 9)
+    }
+    show = updateScreenMapping(show, id, { cornerPin: null })
+    expect(show.screens[0]!.mapping.mesh!.points[3]!.x).toBeCloseTo(1, 9)
+    expect(show.screens[0]!.mapping.mesh!.points[0]!.y).toBeCloseTo(0, 9)
   })
 
   it('toggles layers on a screen in composition order', () => {
@@ -251,7 +268,7 @@ describe('loading', () => {
     expect(showDocSchema.safeParse(show).success).toBe(true)
     expect(show).toMatchObject({ schemaVersion: 2, id: 'show_old', name: 'Old show', grid: { columns: 6 } })
     expect(show.composition.layers.map((layer) => [layer.id, layer.opacity, layer.tags])).toEqual([
-      ['l1', 1, []],
+      ['l1', 1, ['background']],
       ['l2', 0.4, ['lyrics']],
     ])
     expect(show.grid.clips.map((clip) => clip.content)).toEqual([
@@ -264,6 +281,26 @@ describe('loading', () => {
     expect(wall).toMatchObject({ target: { kind: 'virtual' }, testPattern: 'bars' })
     expect(wall!.layout.layers).toEqual({ mode: 'only', ids: ['l1'], tags: [] })
     expect(wall!.layout.text?.preset).toBe('hidden')
+  })
+
+  it('tags the default v1 layers by name, not by where presentation clips sat', () => {
+    const show = migrateShowV1({
+      ...v1,
+      layers: [
+        { id: 'bg', name: 'Background', opacity: 1 },
+        { id: 'vis', name: 'Visuals', opacity: 1 },
+        { id: 'lyr', name: 'Lyrics', opacity: 1 },
+      ],
+      clips: [{ id: 'c1', layerId: 'vis', column: 0, label: 'Song', source: { kind: 'lyrics', presentationId: SONG_ID }, loop: true }],
+      screens: [],
+    })!
+    expect(show.composition.layers.map((layer) => [layer.name, layer.tags])).toEqual([
+      ['Background', ['background']],
+      ['Visuals', ['visuals']],
+      ['Lyrics', ['lyrics']],
+    ])
+    // Rundown slides land on the layer `createShowDoc` would use.
+    expect(show.composition.layers.map((layer) => layer.tags)).toEqual(createShowDoc().composition.layers.map((layer) => layer.tags))
   })
 
   it('parses v1 and v2 and rejects anything else', () => {

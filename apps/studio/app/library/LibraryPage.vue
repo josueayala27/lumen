@@ -185,7 +185,7 @@ const hintList = css({ display: 'flex', flexDirection: 'column', gap: '2', mt: '
   <div :class="root">
     <section :class="content">
       <PageHeader
-        eyebrow="Riverside Church"
+        eyebrow="Content"
         title="Library"
         subtitle="Create a song from lyrics or start a blank presentation."
       >
@@ -274,8 +274,8 @@ const hintList = css({ display: 'flex', flexDirection: 'column', gap: '2', mt: '
         <h2 :class="inspectorTitle">Getting started</h2>
         <ol :class="hintList">
           <li>1. Create a song or presentation.</li>
-          <li>2. Add it to a playlist.</li>
-          <li>3. Open the playlist live.</li>
+          <li>2. Add it to a rundown.</li>
+          <li>3. Open the rundown in Show.</li>
         </ol>
       </template>
       <div :class="cardBox">
