@@ -1,4 +1,4 @@
-import { buildBlankPresentation, buildSongDoc, updatePresentationDoc } from '@lumen/core'
+import { buildBlankPresentation, buildSongDoc, defaultTheme, SLIDE_BACKGROUND_ID, updatePresentationDoc } from '@lumen/core'
 import type { Composition, PlaylistDoc, PresentationDoc, Screen } from '@lumen/schema'
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_TRANSITION, type LiveCompositionTransform, type MediaAssetLike } from '~/live/liveContent'
@@ -119,6 +119,34 @@ describe('programComposition', () => {
     expect(released.active[show.composition.layers[2]!.id]).toBeNull()
     expect(texts(showScreenFrame(show, released, show.screens[0]!, frame, context))).toContain('Welcome')
     expect(releaseContentLayer(show, released)).toBe(released)
+  })
+
+  it('drops the slide background on a lyrics layer so the layers below stay visible', () => {
+    const show = showWithClips()
+    const frame = { cue: cueAt(items, 0, 0), mode: 'live' as const }
+    const themed = { ...context, theme: { ...defaultTheme(), background: { kind: 'solid' as const, color: '#101828' } } }
+    const onLyrics = programComposition(show, emptyLive(), frame, themed)
+    const lyricsSource = onLyrics.sources.find((entry) => entry.id === onLyrics.layers[2]!.sourceId)
+    expect(lyricsSource?.kind).toBe('slide')
+    if (lyricsSource?.kind !== 'slide') return
+    expect(lyricsSource.elements.some((element) => element.id === SLIDE_BACKGROUND_ID)).toBe(false)
+    expect(lyricsSource.elements.some((element) => element.kind === 'text')).toBe(true)
+
+    // A layer tagged `content` shows the whole slide, background first.
+    const content = withComposition(show, (composition) => ({
+      ...composition,
+      layers: composition.layers.map((layer, index) => (index === 2 ? { ...layer, tags: ['content'] } : layer)),
+    }))
+    const onContent = programComposition(content, emptyLive(), frame, themed)
+    const contentSource = onContent.sources.find((entry) => entry.id === onContent.layers[2]!.sourceId)
+    if (contentSource?.kind !== 'slide') throw new Error('expected a slide source')
+    expect(contentSource.elements[0]).toMatchObject({ id: SLIDE_BACKGROUND_ID, fill: '#101828' })
+
+    // Presentation clips launched on a lyrics layer follow the same rule.
+    const clipped = programComposition(show, launchColumn(show, emptyLive(), 1), frame, themed)
+    const clipSource = clipped.sources.find((entry) => entry.id === clipped.layers[2]!.sourceId)
+    if (clipSource?.kind !== 'slide') throw new Error('expected a slide source')
+    expect(clipSource.elements.some((element) => element.id === SLIDE_BACKGROUND_ID)).toBe(false)
   })
 
   it('shows a title card for items without a document', () => {

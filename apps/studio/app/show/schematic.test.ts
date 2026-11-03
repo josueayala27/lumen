@@ -2,7 +2,7 @@ import { addSource, buildSongDoc, createLayer, setMasterOpacity } from '@lumen/c
 import type { PresentationDoc } from '@lumen/schema'
 import { describe, expect, it } from 'vitest'
 import type { MediaAssetLike } from '~/live/liveContent'
-import { schematicFrame } from './schematic'
+import { presetText, schematicFrame } from './schematic'
 import {
   assignClip,
   createShowDoc,
@@ -91,6 +91,23 @@ describe('schematicFrame', () => {
     for (const layer of text) expect(layer.y).toBeGreaterThan(0.7)
     const hidden = updateScreenLayout(show, id, { text: { preset: 'hidden', scale: 1, color: null } })
     expect(schematicFrame(playing(hidden), hidden.screens[0]!).layers.some((layer) => layer.kind === 'text')).toBe(false)
+  })
+
+  it('shows every line of a verse on a strip, joined on one line', () => {
+    const base = loadedShow()
+    const id = base.screens[0]!.id
+    const show = updateScreenLayout(base, id, { text: { preset: 'strip', scale: 1, color: null } })
+    const text = schematicFrame(playing(show), show.screens[0]!).layers.filter((layer) => layer.kind === 'text')
+    expect(text.length).toBeGreaterThan(0)
+    for (const layer of text) expect(layer.text).not.toContain('\n')
+    expect(text.map((layer) => layer.text).join(' ')).toContain('First line / Second line')
+
+    const element = {
+      kind: 'text',
+      runs: [{ text: 'Line one\nLine two\n' }, { text: 'Line three' }, { text: '\r\n\nLine four' }],
+    } as Parameters<typeof presetText>[0]
+    expect(presetText(element, 'strip')).toBe('Line one / Line two / Line three / Line four')
+    expect(presetText(element, 'lowerThird').split('\n').filter(Boolean)).toHaveLength(4)
   })
 
   it('fills solids, gradients and generators and skips disabled layers', () => {

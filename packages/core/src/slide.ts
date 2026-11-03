@@ -128,10 +128,27 @@ function safeArea(doc: PresentationDoc) {
   return { top: safe, right: safe, bottom: safe, left: safe }
 }
 
+/** Whether a live slide source keeps the slide (or theme) background. */
+export type SlideBackgroundMode = 'keep' | 'drop'
+
+/** Layer tag whose live slides drop their background, so lyrics overlay what is below. */
+export const LYRICS_TAG = 'lyrics'
+
+/**
+ * How a layer shows live slides (rundown cues, presentation clips). A layer
+ * tagged `lyrics` is an overlay: its slides drop the slide and theme
+ * background so video and photos below stay visible. Every other layer
+ * (`content` included) shows the whole slide, background first.
+ */
+export function slideBackgroundMode(layer: { tags: readonly string[] }): SlideBackgroundMode {
+  return layer.tags.includes(LYRICS_TAG) ? 'drop' : 'keep'
+}
+
 /**
  * The slide at `slideIndex` (clamped) as one `slide` source: its background
- * (or the theme's) and every text, shape and image element. Video backgrounds
- * and video elements are left out; `slideComposition` places them.
+ * (or the theme's, unless `background` is `drop`) and every text, shape and
+ * image element. Video backgrounds and video elements are left out;
+ * `slideComposition` places them.
  */
 export function presentationSlideSource(
   id: string,
@@ -139,10 +156,11 @@ export function presentationSlideSource(
   slideIndex: number,
   theme: Theme | null,
   revision = slideIndex,
+  background: SlideBackgroundMode = 'keep',
 ): SlideSource | null {
   if (doc.slides.length === 0) return null
   const slide = doc.slides[clampIndex(doc, slideIndex)]!
-  const background = backgroundElement(slideBackground(slide, theme))
+  const backgroundShape = background === 'keep' ? backgroundElement(slideBackground(slide, theme)) : null
   const elements = orderedElements(slide)
     .map(slideElement)
     .filter((element): element is SlideElement => element !== null)
@@ -151,7 +169,7 @@ export function presentationSlideSource(
     name: doc.title,
     kind: 'slide',
     revision,
-    elements: background ? [background, ...elements] : elements,
+    elements: backgroundShape ? [backgroundShape, ...elements] : elements,
     safeArea: safeArea(doc),
     size: slideSize(doc),
   }

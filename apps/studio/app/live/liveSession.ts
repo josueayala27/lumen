@@ -184,3 +184,105 @@ export function nextLivePosition(
 export function nextLiveSlide(items: LiveItem[], itemIndex: number, slideIndex: number): LiveSlide | null {
   return nextLivePosition(items, itemIndex, slideIndex)?.slide ?? null
 }
+
+/**
+ * What stays on air while the session's items change under it: after the
+ * operator picks another rundown, or when a reload removed the item on air.
+ * Program shows it until a command moves program (`releasesHold`).
+ */
+export interface HeldProgram {
+  item: LiveItem
+  slideIndex: number
+}
+
+/**
+ * Commands that move program off a held slide. `take` and `goTo` then apply
+ * as usual; `next`, `prev`, `nextItem` and `prevItem` land on the session's
+ * own program position (the first slide of a freshly picked rundown) instead
+ * of stepping past it. Preview, mode, message and timer commands keep the hold.
+ */
+export function releasesHold(command: LiveCommand): boolean {
+  switch (command.type) {
+    case 'take':
+    case 'goTo':
+    case 'next':
+    case 'prev':
+    case 'nextItem':
+    case 'prevItem':
+      return true
+    default:
+      return false
+  }
+}
+
+/** Whether a command still applies to the state after it released a hold. */
+export function appliesAfterRelease(command: LiveCommand): boolean {
+  return command.type === 'take' || command.type === 'goTo'
+}
+
+/** The program position of a state, or the held slide. */
+export function programSlide(
+  items: LiveItem[],
+  state: LiveState,
+  held: HeldProgram | null,
+): { item: LiveItem; slide: LiveSlide } | null {
+  if (held) {
+    const slide = held.item.slides[held.slideIndex]
+    return slide ? { item: held.item, slide } : null
+  }
+  return resolveLiveSlide(items, state.itemIndex, state.slideIndex)
+}
+
+/**
+ * Picking another rundown loads it into the rundown panel and preview only:
+ * the slide on air is held, and the output mode, stage message and timers
+ * carry over. Returns no hold when nothing was on air.
+ */
+export function switchLiveSession(
+  previous: { items: LiveItem[]; state: LiveState; held: HeldProgram | null },
+  next: LiveState,
+): { state: LiveState; held: HeldProgram | null } {
+  const onAir = programSlide(previous.items, previous.state, previous.held)
+  const held = onAir
+    ? { item: onAir.item, slideIndex: onAir.item.slides.indexOf(onAir.slide) }
+    : null
+  return {
+    state: {
+      ...next,
+      mode: previous.state.mode,
+      stageMessage: previous.state.stageMessage,
+      timers: previous.state.timers,
+    },
+    held,
+  }
+}
+
+/**
+ * Keeps the session on the same content after the current rundown reloads
+ * (items added, removed or reordered): program and preview follow their item
+ * ids to the new indexes. When the item on air is gone, it is held so the
+ * output does not change until the operator moves on. An existing hold stays.
+ */
+export function reloadLiveSession(
+  previous: { items: LiveItem[]; state: LiveState; held: HeldProgram | null },
+  items: LiveItem[],
+): { state: LiveState; held: HeldProgram | null } {
+  const { state } = previous
+  const find = (index: number) => {
+    const id = previous.items[index]?.id
+    return id === undefined ? -1 : items.findIndex((item) => item.id === id)
+  }
+  const programIndex = find(state.itemIndex)
+  const previewIndex = find(state.previewItemIndex)
+  let held = previous.held
+  if (!held && programIndex < 0) {
+    const onAir = resolveLiveSlide(previous.items, state.itemIndex, state.slideIndex)
+    if (onAir) held = { item: onAir.item, slideIndex: state.slideIndex }
+  }
+  const moved: LiveState = {
+    ...state,
+    itemIndex: programIndex >= 0 ? programIndex : state.itemIndex,
+    previewItemIndex: previewIndex >= 0 ? previewIndex : state.previewItemIndex,
+  }
+  return { state: clampLiveState(moved, liveContext(items)), held }
+}

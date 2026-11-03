@@ -2,7 +2,7 @@ import { compositionSchema, type Element, type PresentationDoc, type Theme } fro
 import { describe, expect, it } from 'vitest'
 import { buildSongDoc, textSlide } from './presentation'
 import { defaultTheme } from './theme'
-import { presentationSlideSource, slideComposition, slideElement, SLIDE_BACKGROUND_ID } from './slide'
+import { presentationSlideSource, slideBackgroundMode, slideComposition, slideElement, SLIDE_BACKGROUND_ID } from './slide'
 
 const video = { assetId: 'media_video', hash: 'hash-video' }
 
@@ -43,6 +43,20 @@ describe('presentationSlideSource', () => {
     const source = presentationSlideSource('s', plain, 9, theme)!
     expect(source.elements[0]).toMatchObject({ kind: 'shape', fill: '#abcdef' })
     expect(presentationSlideSource('s', { ...plain, slides: [] }, 0, theme)).toBeNull()
+  })
+
+  it('drops the slide and theme background on request', () => {
+    const theme: Theme = { ...defaultTheme(), background: { kind: 'solid', color: '#abcdef' } }
+    const source = presentationSlideSource('s', doc(), 1, theme, 1, 'drop')!
+    expect(source.elements.some((element) => element.id === SLIDE_BACKGROUND_ID)).toBe(false)
+    expect(source.elements.length).toBeGreaterThan(0)
+    expect(source.elements.every((element) => element.kind === 'text')).toBe(true)
+  })
+
+  it('drops backgrounds only on layers tagged lyrics', () => {
+    expect(slideBackgroundMode({ tags: ['lyrics'] })).toBe('drop')
+    expect(slideBackgroundMode({ tags: ['content'] })).toBe('keep')
+    expect(slideBackgroundMode({ tags: [] })).toBe('keep')
   })
 
   it('leaves video elements out', () => {

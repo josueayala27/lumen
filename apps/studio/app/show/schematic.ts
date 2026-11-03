@@ -41,6 +41,24 @@ const TEXT_PRESET_FRAMES: Partial<Record<LayoutText['preset'], Frame>> = {
   strip: { x: 0.02, y: 0.88, w: 0.96, h: 0.1, rotation: 0 },
 }
 
+/** Joins the lines of a slide on a strip, as `STRIP_SEPARATOR` in `lumen-render` `mapping.rs`. */
+export const STRIP_SEPARATOR = ' / '
+
+/**
+ * The text a preset shows for an element. Presets never drop lines: `strip`
+ * puts every line of the slide on one line (breaks become `STRIP_SEPARATOR`)
+ * and shrinks it to fit; the other presets keep the line breaks. Same rule as
+ * `join_lines` in `mapping.rs`.
+ */
+export function presetText(element: Extract<SlideElement, { kind: 'text' }>, preset: LayoutText['preset']): string {
+  const text = element.runs.map((run) => run.text).join('')
+  if (preset !== 'strip') return text
+  return text
+    .split(/[\r\n]+/)
+    .filter((line) => line.length > 0)
+    .join(STRIP_SEPARATOR)
+}
+
 function box(id: string, kind: SchematicLayer['kind'], frame: Frame, opacity: number, fill: string | null = null, text = ''): SchematicLayer {
   return { id, kind, x: frame.x, y: frame.y, w: frame.w, h: frame.h, opacity, fill, text }
 }
@@ -85,7 +103,7 @@ function elementLayer(element: SlideElement, id: string, frame: Frame, opacity: 
     case 'text': {
       if (text.preset === 'hidden') return null
       const preset = TEXT_PRESET_FRAMES[text.preset] ?? frame
-      return box(id, 'text', preset, opacity, null, element.runs.map((run) => run.text).join(''))
+      return box(id, 'text', preset, opacity, null, presetText(element, text.preset))
     }
     case 'shape':
       return box(id, 'shape', frame, opacity, element.fill)

@@ -25,7 +25,7 @@ import {
 } from './composition'
 import { withCompositionFonts } from './fonts'
 import { newId } from './presentation'
-import { presentationSlideSource } from './slide'
+import { presentationSlideSource, slideBackgroundMode } from './slide'
 import { createScreen, displayTarget, rebaseMesh } from './screen'
 
 /**
@@ -313,7 +313,10 @@ export function resolveClipSource(
     }
     case 'presentation': {
       const doc = context.presentation(content.presentationId)
-      return doc ? presentationSlideSource(id, doc, live.slides[clip.id] ?? 0, context.theme) : null
+      if (!doc) return null
+      const slideIndex = live.slides[clip.id] ?? 0
+      const layer = show.composition.layers.find((entry) => entry.id === clip.layerId)
+      return presentationSlideSource(id, doc, slideIndex, context.theme, slideIndex, layer ? slideBackgroundMode(layer) : 'keep')
     }
   }
 }

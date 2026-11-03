@@ -3,6 +3,7 @@ import {
   createScreen,
   liveComposition,
   presentationSlideSource,
+  slideBackgroundMode,
   withCompositionFonts,
   type ShowLive,
   type ShowResolveContext,
@@ -79,10 +80,19 @@ export function contentLayerId(composition: Pick<Composition, 'layers'>): string
   return null
 }
 
-/** The cue as a `slide` source. Items without a document become a title card. */
-export function cueSource(cue: RundownCue, theme: ShowResolveContext['theme']): Source | null {
+/**
+ * The cue as a `slide` source for the content layer. Items without a document
+ * become a title card. A layer tagged `lyrics` drops the slide and theme
+ * background (`slideBackgroundMode`), so lyrics overlay the layers below.
+ */
+export function cueSource(
+  cue: RundownCue,
+  theme: ShowResolveContext['theme'],
+  layer: Pick<Layer, 'tags'> = { tags: [] },
+): Source | null {
   const doc = cue.doc ?? placeholderDoc(cue.label.trim() || 'No slide')
-  return presentationSlideSource(`rundown-${cue.itemId}`, doc, cue.doc ? cue.slideIndex : 0, theme)
+  const slideIndex = cue.doc ? cue.slideIndex : 0
+  return presentationSlideSource(`rundown-${cue.itemId}`, doc, slideIndex, theme, slideIndex, slideBackgroundMode(layer))
 }
 
 /** The slide source the timeline transform addresses for a cue. */
@@ -112,8 +122,9 @@ export function programComposition(
 ): Composition {
   let composition = liveComposition(show, live, context)
   const layerId = contentLayerId(show.composition)
-  if (frame.cue && layerId && !live.active[layerId]) {
-    const source = cueSource(frame.cue, context.theme)
+  const contentLayer = layerId ? show.composition.layers.find((layer) => layer.id === layerId) : undefined
+  if (frame.cue && layerId && contentLayer && !live.active[layerId]) {
+    const source = cueSource(frame.cue, context.theme, contentLayer)
     if (source) {
       const known = new Set(composition.assets.map((asset) => asset.id))
       const assets = assetsForDoc(frame.cue.doc, [...context.media]).filter((asset) => !known.has(asset.id))
