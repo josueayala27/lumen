@@ -12,6 +12,10 @@ Audience output is a Tauri window with no webview. `lumen-output` owns monitor e
 - Persist the monitor assignment by stable display name plus position; re-resolve after hotplug.
 - Poll monitors every second. Tauri has no documented monitor add/remove event.
 
+## Testing outputs without a second display
+
+On a Mac with one screen, `pnpm display:virtual` creates a virtual display that macOS, tao and `list_displays` treat as a real monitor (`--count 2` for two, `--hidpi` for Retina, `--mirror` for a preview window, `--list` to print the active displays). Ctrl+C removes it, and the poll reports the change within a second. The tool lives in `tools/virtual-display/`, outside the studio workspace. It uses the private `CGVirtualDisplay` SPI, so it is a dev tool only and never part of the app. Lumen lists the display as `Monitor #19542` (tao uses the model number, which is the tool's product id). See `tools/virtual-display/README.md`.
+
 ## Render thread
 
 Each output owns a thread with a `wgpu` device, surface, compositor and command channel. It renders black until `apply_composition` sends its first composition. The main thread handles resize, close and monitor changes. On `SurfaceError::Lost` or `Outdated`, recreate the surface after sleep, lock, DPI change or disconnect. Drop the surface before the window.

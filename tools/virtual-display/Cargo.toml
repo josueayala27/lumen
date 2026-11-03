@@ -1,0 +1,23 @@
+[package]
+name = "lumen-virtual-display"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Dev tool: create macOS virtual displays (private CGVirtualDisplay SPI) to test Lumen outputs on one screen."
+
+# Standalone package. Not a member of the studio workspace and never linked into the app.
+[workspace]
+
+[[bin]]
+name = "lumen-virtual-display"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+block2 = "0.6"
+libc = "0.2"
+
+[profile.release]
+debug = false
