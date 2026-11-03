@@ -1399,18 +1399,108 @@ fn shadow_radii(elements: &[SlideElement], scale: f32) -> Vec<u32> {
     radii
 }
 
+/// What every audience output draws: the device, the compositor and the composition on air.
+/// [`SurfaceRenderer`] draws it into a window surface and [`OffscreenOutput`] into a texture, so
+/// tests exercise exactly the output path.
+struct OutputCore {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    timing: FrameTiming,
+    /// The composition and screen on air; black until the first one arrives.
+    composition: Option<(Box<Composition>, Box<Screen>)>,
+    compositor: Compositor,
+}
+
+impl OutputCore {
+    fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        let compositor = Compositor::new(device.clone(), queue.clone());
+        Self {
+            device,
+            queue,
+            timing: FrameTiming::new(),
+            composition: None,
+            compositor,
+        }
+    }
+
+    fn set_composition(
+        &mut self,
+        composition: &Composition,
+        screen: &Screen,
+        transition: CompositionTransition,
+    ) {
+        self.compositor.set_transition(transition);
+        self.composition = Some((Box::new(composition.clone()), Box::new(screen.clone())));
+    }
+
+    /// Draws the composition on air, or black, into `view` and submits the frame.
+    fn draw(
+        &mut self,
+        view: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Result<wgpu::CommandEncoder, RenderError> {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("lumen-output-frame"),
+            });
+        if let Some((composition, screen)) = self.composition.as_ref() {
+            self.compositor.render(
+                &mut encoder,
+                composition,
+                screen,
+                view,
+                format,
+                width,
+                height,
+            )?;
+        } else {
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some(CLEAR_PASS_LABEL),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
+        Ok(encoder)
+    }
+}
+
+/// Requests the device an output renders with: high performance, BC textures when available.
+fn request_output_device(
+    adapter: &wgpu::Adapter,
+    label: &str,
+) -> Result<(wgpu::Device, wgpu::Queue), RenderError> {
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some(label),
+        required_features: device_features(adapter),
+        required_limits: wgpu::Limits::default(),
+        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        memory_hints: wgpu::MemoryHints::Performance,
+        trace: wgpu::Trace::Off,
+    }))
+    .map_err(|error| RenderError::Backend(format!("request device: {error}")))
+}
+
 /// Owns the wgpu surface of one audience output and draws its composition through one screen.
 pub struct SurfaceRenderer {
     _instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
     adapter: wgpu::Adapter,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    timing: FrameTiming,
-    /// The composition and screen on air; black until the first one arrives.
-    composition: Option<(Box<Composition>, Box<Screen>)>,
-    compositor: Compositor,
+    core: OutputCore,
 }
 
 impl SurfaceRenderer {
@@ -1426,16 +1516,7 @@ impl SurfaceRenderer {
             apply_limit_buckets: false,
         }))
         .map_err(|error| RenderError::Backend(format!("request adapter: {error}")))?;
-
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("lumen-output"),
-            required_features: device_features(&adapter),
-            required_limits: wgpu::Limits::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            trace: wgpu::Trace::Off,
-        }))
-        .map_err(|error| RenderError::Backend(format!("request device: {error}")))?;
+        let (device, queue) = request_output_device(&adapter, "lumen-output")?;
 
         let capabilities = surface.get_capabilities(&adapter);
         let format = pick_format(&capabilities)?;
@@ -1462,18 +1543,13 @@ impl SurfaceRenderer {
             view_formats: Vec::new(),
         };
         surface.configure(&device, &config);
-        let compositor = Compositor::new(device.clone(), queue.clone());
 
         Ok(Self {
             _instance: instance,
             surface,
             adapter,
-            device,
-            queue,
             config,
-            timing: FrameTiming::new(),
-            composition: None,
-            compositor,
+            core: OutputCore::new(device, queue),
         })
     }
 
@@ -1485,8 +1561,7 @@ impl SurfaceRenderer {
         screen: &Screen,
         transition: CompositionTransition,
     ) -> Result<(), RenderError> {
-        self.compositor.set_transition(transition);
-        self.composition = Some((Box::new(composition.clone()), Box::new(screen.clone())));
+        self.core.set_composition(composition, screen, transition);
         Ok(())
     }
 
@@ -1497,7 +1572,7 @@ impl SurfaceRenderer {
         let capabilities = surface.get_capabilities(&self.adapter);
         self.config.format = pick_format(&capabilities)?;
         self.surface = surface;
-        self.surface.configure(&self.device, &self.config);
+        self.surface.configure(&self.core.device, &self.config);
         Ok(())
     }
 
@@ -1509,7 +1584,7 @@ impl SurfaceRenderer {
         }
         self.config.width = width;
         self.config.height = height;
-        self.surface.configure(&self.device, &self.config);
+        self.surface.configure(&self.core.device, &self.config);
     }
 
     /// Uploads an RGBA frame for a video asset.
@@ -1525,11 +1600,11 @@ impl SurfaceRenderer {
 
     /// Uploads a decoded frame, block compressed or RGBA.
     pub fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
-        self.compositor.update_video(asset_id, frame)
+        self.core.compositor.update_video(asset_id, frame)
     }
 
     pub fn stats(&self) -> RenderStats {
-        self.timing.stats()
+        self.core.timing.stats()
     }
 
     pub fn render_frame(&mut self) -> Result<(), RenderError> {
@@ -1549,49 +1624,128 @@ impl SurfaceRenderer {
         let view = texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("lumen-output-frame"),
-            });
-
-        if let Some((composition, screen)) = self.composition.as_ref() {
-            self.compositor.render(
-                &mut encoder,
-                composition,
-                screen,
-                &view,
-                self.config.format,
-                self.config.width,
-                self.config.height,
-            )?;
-        } else {
-            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some(CLEAR_PASS_LABEL),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-        }
-
-        self.queue.submit([encoder.finish()]);
-        self.queue.present(texture);
+        let encoder = self.core.draw(
+            &view,
+            self.config.format,
+            self.config.width,
+            self.config.height,
+        )?;
+        self.core.queue.submit([encoder.finish()]);
+        self.core.queue.present(texture);
         if suboptimal {
-            self.surface.configure(&self.device, &self.config);
+            self.surface.configure(&self.core.device, &self.config);
         }
 
-        self.timing.record(start.elapsed().as_secs_f64() * 1_000.0);
+        self.core
+            .timing
+            .record(start.elapsed().as_secs_f64() * 1_000.0);
         Ok(())
+    }
+}
+
+/// An audience output without a window: the same device setup, compositor and frame path as
+/// [`SurfaceRenderer`], drawn into a BGRA sRGB texture (the format macOS and Windows surfaces
+/// use) that can be read back. For tests and headless checks of the output path.
+pub struct OffscreenOutput {
+    core: OutputCore,
+    target: wgpu::Texture,
+    view: wgpu::TextureView,
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+}
+
+impl OffscreenOutput {
+    pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+
+    pub fn new(width: u32, height: u32) -> Result<Self, RenderError> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+            apply_limit_buckets: false,
+        }))
+        .map_err(|error| RenderError::Backend(format!("request adapter: {error}")))?;
+        let (device, queue) = request_output_device(&adapter, "lumen-output-offscreen")?;
+        let (width, height) = (width.max(1), height.max(1));
+        let target = preview_target(&device, "lumen-output-offscreen", width, height, Self::FORMAT);
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        Ok(Self {
+            core: OutputCore::new(device, queue),
+            target,
+            view,
+            format: Self::FORMAT,
+            width,
+            height,
+        })
+    }
+
+    pub fn set_composition(
+        &mut self,
+        composition: &Composition,
+        screen: &Screen,
+        transition: CompositionTransition,
+    ) -> Result<(), RenderError> {
+        self.core.set_composition(composition, screen, transition);
+        Ok(())
+    }
+
+    pub fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError> {
+        self.core.compositor.update_video(asset_id, frame)
+    }
+
+    /// Fixes the generator and transition clock in seconds; `None` follows wall time.
+    pub fn set_clock(&mut self, seconds: Option<f64>) {
+        self.core.compositor.set_clock(seconds);
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        let (width, height) = (width.max(1), height.max(1));
+        if (width, height) == (self.width, self.height) {
+            return;
+        }
+        self.target = preview_target(
+            &self.core.device,
+            "lumen-output-offscreen",
+            width,
+            height,
+            self.format,
+        );
+        self.view = self.target.create_view(&wgpu::TextureViewDescriptor::default());
+        self.width = width;
+        self.height = height;
+    }
+
+    pub fn stats(&self) -> RenderStats {
+        self.core.timing.stats()
+    }
+
+    pub fn render_frame(&mut self) -> Result<(), RenderError> {
+        let start = Instant::now();
+        let encoder = self
+            .core
+            .draw(&self.view, self.format, self.width, self.height)?;
+        self.core.queue.submit([encoder.finish()]);
+        self.core
+            .timing
+            .record(start.elapsed().as_secs_f64() * 1_000.0);
+        Ok(())
+    }
+
+    /// Renders one more frame and returns its BGRA bytes, row-major and unpadded.
+    pub fn read_bgra(&mut self) -> Result<Vec<u8>, RenderError> {
+        let encoder = self
+            .core
+            .draw(&self.view, self.format, self.width, self.height)?;
+        read_back(
+            &self.core.device,
+            &self.core.queue,
+            encoder,
+            &self.target,
+            self.width,
+            self.height,
+        )
     }
 }
 

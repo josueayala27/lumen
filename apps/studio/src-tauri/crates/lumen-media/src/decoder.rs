@@ -28,7 +28,9 @@ pub struct DecoderConfig {
 }
 
 impl DecoderConfig {
-    /// Reads `LUMEN_FFMPEG`, falling back to `ffmpeg` on `PATH`.
+    /// Reads `LUMEN_FFMPEG`, falling back to `ffmpeg` on `PATH`, then to the usual install
+    /// folders ([`FALLBACK_DIRS`]). An app started from Finder or the Dock gets launchd's
+    /// minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), which has no Homebrew `ffmpeg`.
     pub fn from_env() -> Result<Self, MediaError> {
         let raw = env::var(DECODER_ENV).ok();
         let value = raw
@@ -139,8 +141,20 @@ pub fn decode_args(request: &DecodeRequest) -> Vec<String> {
     args
 }
 
+/// Folders searched for a bare decoder name that is not on `PATH`: Homebrew on Apple silicon
+/// and Intel, MacPorts, then the system-wide local prefix.
+#[cfg(unix)]
+pub const FALLBACK_DIRS: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/opt/local/bin",
+    "/usr/bin",
+];
+#[cfg(not(unix))]
+pub const FALLBACK_DIRS: &[&str] = &[];
+
 /// Resolves a decoder command. Absolute paths must be local executable files;
-/// bare names are looked up on `PATH`.
+/// bare names are looked up on `PATH`, then in [`FALLBACK_DIRS`].
 pub fn validate_executable(raw: &str) -> Result<PathBuf, MediaError> {
     let value = raw.trim();
     if value.is_empty() || value != raw || value.chars().any(char::is_control) {
@@ -157,7 +171,9 @@ pub fn validate_executable(raw: &str) -> Result<PathBuf, MediaError> {
         }
         PathBuf::from(value)
     } else {
-        find_on_path(value).ok_or_else(|| {
+        find_on_path(value)
+            .or_else(|| find_in_dirs(value, FALLBACK_DIRS.iter().map(PathBuf::from)))
+            .ok_or_else(|| {
             MediaError::Missing(format!("decoder executable {value} was not found on PATH"))
         })?
     };
@@ -174,11 +190,16 @@ pub fn validate_executable(raw: &str) -> Result<PathBuf, MediaError> {
 }
 
 fn find_on_path(name: &str) -> Option<PathBuf> {
-    if name.contains("..") {
+    let path = env::var_os("PATH")?;
+    find_in_dirs(name, env::split_paths(&path))
+}
+
+/// The first executable file called `name` in `dirs`.
+pub fn find_in_dirs(name: &str, dirs: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    if name.contains("..") || name.contains('/') || name.contains('\\') {
         return None;
     }
-    let path = env::var_os("PATH")?;
-    env::split_paths(&path)
+    dirs.into_iter()
         .map(|directory| directory.join(name))
         .find(|candidate| candidate.is_file() && is_executable(candidate))
 }
@@ -196,6 +217,70 @@ fn is_executable(path: &Path) -> bool {
     path.metadata()
         .map(|metadata| metadata.is_file())
         .unwrap_or(false)
+}
+
+/// Arguments that write one PNG poster frame of `input` to stdout: the frame at `at_ms`,
+/// scaled so its longer edge is at most `max_edge`.
+pub fn poster_args(input: &Path, at_ms: u64, max_edge: u32) -> Vec<String> {
+    let edge = max_edge.clamp(MIN_DECODE_EDGE, MAX_DECODE_EDGE);
+    vec![
+        "-v".to_string(),
+        "error".to_string(),
+        "-nostdin".to_string(),
+        "-ss".to_string(),
+        format!("{:.3}", at_ms as f64 / 1000.0),
+        "-i".to_string(),
+        input.to_string_lossy().into_owned(),
+        "-an".to_string(),
+        "-sn".to_string(),
+        "-dn".to_string(),
+        "-frames:v".to_string(),
+        "1".to_string(),
+        "-vf".to_string(),
+        format!("scale={edge}:{edge}:force_original_aspect_ratio=decrease"),
+        "-f".to_string(),
+        "image2pipe".to_string(),
+        "-vcodec".to_string(),
+        "png".to_string(),
+        "pipe:1".to_string(),
+    ]
+}
+
+/// Where a poster frame is taken: one second in, or the middle of a shorter clip.
+pub fn poster_time_ms(duration_ms: Option<u64>) -> u64 {
+    match duration_ms {
+        Some(duration) if duration < 2_000 => duration / 2,
+        _ => 1_000,
+    }
+}
+
+/// Decodes one PNG poster frame of a local video with ffmpeg.
+pub fn video_poster(
+    input: &Path,
+    duration_ms: Option<u64>,
+    max_edge: u32,
+    config: &DecoderConfig,
+) -> Result<Vec<u8>, MediaError> {
+    let raw = input.to_string_lossy();
+    if !is_local_file_path(&raw) || !input.is_file() {
+        return Err(MediaError::Unsupported(
+            "poster frames need a local video file".to_string(),
+        ));
+    }
+    let run = |at_ms: u64| -> Result<Vec<u8>, MediaError> {
+        let output = Command::new(config.executable())
+            .args(poster_args(input, at_ms, max_edge))
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|error| MediaError::Decode(format!("start decoder: {error}")))?;
+        if !output.status.success() || output.stdout.is_empty() {
+            return Err(MediaError::Decode("decoder wrote no poster frame".to_string()));
+        }
+        Ok(output.stdout)
+    };
+    // Seeking past the end of a very short or oddly timed clip yields nothing: retry at 0.
+    run(poster_time_ms(duration_ms)).or_else(|_| run(0))
 }
 
 /// A streaming ffmpeg process that yields raw RGBA frames.
@@ -366,6 +451,56 @@ mod tests {
             .expect("decoder config");
         assert_eq!(config.executable(), resolved.as_path());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bare_names_fall_back_to_install_folders() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = env::temp_dir().join(format!("lumen-fallback-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create temp dir");
+        let executable = root.join("lumen-test-ffmpeg");
+        std::fs::write(&executable, b"#!/bin/sh\nexit 0\n").expect("write decoder");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod decoder");
+        let missing = root.join("missing");
+        assert_eq!(
+            find_in_dirs("lumen-test-ffmpeg", [missing.clone(), root.clone()]),
+            Some(executable.clone())
+        );
+        assert_eq!(find_in_dirs("lumen-test-ffmpeg", [missing]), None);
+        assert_eq!(find_in_dirs("../lumen-test-ffmpeg", [root.clone()]), None);
+        // Not executable: skipped.
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod decoder");
+        assert_eq!(find_in_dirs("lumen-test-ffmpeg", [root.clone()]), None);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(FALLBACK_DIRS.contains(&"/opt/homebrew/bin"));
+    }
+
+    #[test]
+    fn poster_args_write_one_scaled_png() {
+        let args = poster_args(Path::new("/media/Clip One.mov"), 1000, 320);
+        assert!(args.windows(2).any(|pair| pair == ["-ss", "1.000"]));
+        assert!(args.windows(2).any(|pair| pair == ["-frames:v", "1"]));
+        assert!(args.windows(2).any(|pair| pair == ["-vcodec", "png"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["-vf", "scale=320:320:force_original_aspect_ratio=decrease"]));
+        assert!(args.iter().any(|arg| arg == "/media/Clip One.mov"));
+        assert_eq!(args.last().map(String::as_str), Some("pipe:1"));
+        assert_eq!(poster_time_ms(Some(15_000)), 1_000);
+        assert_eq!(poster_time_ms(Some(800)), 400);
+        assert_eq!(poster_time_ms(None), 1_000);
+    }
+
+    #[test]
+    fn poster_rejects_remote_and_missing_inputs() {
+        let config = DecoderConfig {
+            executable: PathBuf::from("/bin/sh"),
+        };
+        assert!(video_poster(Path::new("https://example.com/a.mp4"), None, 320, &config).is_err());
+        assert!(video_poster(Path::new("/definitely/missing.mp4"), None, 320, &config).is_err());
     }
 
     #[test]

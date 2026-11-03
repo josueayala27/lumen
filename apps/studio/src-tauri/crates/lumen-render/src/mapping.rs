@@ -7,7 +7,7 @@
 use crate::composition::SlideElement;
 use crate::composition::{
     CompositionLayer, EdgeBlend, LayerFilter, LayerTransform, Layout, LayoutText, Mapping, Mesh,
-    Point, Region, Screen, Size, TextPreset,
+    Point, Region, Screen, Size, TextFit, TextPreset,
 };
 
 /// Largest render target edge; matches the wgpu default limit.
@@ -136,6 +136,36 @@ pub fn canvas_to_layer(transform: &LayerTransform, aspect: f64, x: f64, y: f64) 
 /// (`apps/studio/app/show/schematic.ts`).
 const LOWER_THIRD: (f64, f64, f64, f64) = (0.06, 0.74, 0.88, 0.2);
 const STRIP: (f64, f64, f64, f64) = (0.02, 0.88, 0.96, 0.1);
+/// Joins the lines of a slide on a strip, as `STRIP_SEPARATOR` in the schematic.
+pub const STRIP_SEPARATOR: &str = " / ";
+
+/// The runs of a text element on one line: every line break (and run of breaks) becomes
+/// [`STRIP_SEPARATOR`]. Run styling is kept.
+pub fn join_lines(runs: &[crate::TextRun]) -> Vec<crate::TextRun> {
+    let mut out: Vec<crate::TextRun> = Vec::with_capacity(runs.len());
+    let mut wrote_text = false;
+    let mut pending_break = false;
+    for run in runs {
+        let mut text = String::with_capacity(run.text.len());
+        for character in run.text.chars() {
+            if character == '\n' || character == '\r' {
+                pending_break = true;
+                continue;
+            }
+            if pending_break && wrote_text {
+                text.push_str(STRIP_SEPARATOR);
+            }
+            pending_break = false;
+            wrote_text = true;
+            text.push(character);
+        }
+        out.push(crate::TextRun {
+            text,
+            ..run.clone()
+        });
+    }
+    out
+}
 
 /// Slide elements as one screen shows them: the layout's text preset, scale and colour applied.
 /// Elements stay in slide space; preset frames are output-space and are mapped back through the
@@ -194,6 +224,7 @@ pub fn slide_elements_for_layout(
             color: new_color,
             runs: new_runs,
             max_lines: new_max,
+            fit: new_fit,
             ..
         } = &mut restyled
         else {
@@ -214,15 +245,20 @@ pub fn slide_elements_for_layout(
             *new_color = color.clone();
         }
         match text.preset {
+            // Presets show every line of the slide: the text shrinks to fit the preset box,
+            // never drops lines.
             TextPreset::LowerThird => {
                 *new_frame = to_slide(LOWER_THIRD);
                 *new_size = (viewport_size * 0.55).max(18.0) / font_scale;
-                *new_max = Some(2);
+                *new_max = None;
+                *new_fit = TextFit::Shrink;
             }
             TextPreset::Strip => {
                 *new_frame = to_slide(STRIP);
                 *new_size = (viewport_size * 0.4).max(14.0) / font_scale;
-                *new_max = Some(1);
+                *new_max = None;
+                *new_fit = TextFit::Shrink;
+                *new_runs = join_lines(new_runs);
             }
             TextPreset::Full | TextPreset::Hidden => {
                 *new_frame = *frame;
@@ -635,7 +671,7 @@ mod tests {
             } => {
                 // max(18, 72 × 0.55) in TS viewport pixels; the box is the full canvas.
                 assert!(close(*font_size, 39.6));
-                assert_eq!(*max_lines, Some(2));
+                assert_eq!(*max_lines, None);
                 // Output frame 0.06..0.94 of the left half of the canvas.
                 assert!(close(frame.x, 0.03) && close(frame.w, 0.44));
                 assert!(close(frame.y, 0.74) && close(frame.h, 0.2));
@@ -660,13 +696,81 @@ mod tests {
             SlideElement::Text {
                 font_size,
                 max_lines,
+                fit,
                 ..
             } => {
                 assert!(close(*font_size, 14.0));
-                assert_eq!(*max_lines, Some(1));
+                assert_eq!(*max_lines, None);
+                assert_eq!(*fit, TextFit::Shrink);
             }
             other => panic!("expected text, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn strip_keeps_every_line_of_a_verse() {
+        let verse: SlideElement = serde_json::from_value(serde_json::json!({
+            "kind": "text", "id": "t", "frame": { "x": 0.1, "y": 0.3, "w": 0.8, "h": 0.4 },
+            "runs": [
+                { "text": "Line one\nLine two\n" },
+                { "text": "Line three", "bold": true },
+                { "text": "\r\n\nLine four" }
+            ],
+            "fontId": "inter", "fontSize": 72, "color": "#ffffff", "maxLines": 2, "fit": "wrap"
+        }))
+        .expect("verse");
+        let canvas = Size {
+            width: 1920.0,
+            height: 1080.0,
+        };
+        let strip = LayoutText {
+            preset: TextPreset::Strip,
+            ..LayoutText::default()
+        };
+        let out = slide_elements_for_layout(
+            &[verse.clone()],
+            &LayerTransform::default(),
+            canvas,
+            canvas,
+            &strip,
+            Region::FULL,
+        );
+        let SlideElement::Text {
+            runs,
+            max_lines,
+            fit,
+            ..
+        } = &out[0]
+        else {
+            panic!("expected text");
+        };
+        let joined: String = runs.iter().map(|run| run.text.as_str()).collect();
+        assert_eq!(joined, "Line one / Line two / Line three / Line four");
+        assert!(runs[1].bold, "run styling is kept");
+        assert_eq!(*max_lines, None);
+        assert_eq!(*fit, TextFit::Shrink);
+
+        // The lower third keeps the line breaks and shows all four lines.
+        let lower = LayoutText {
+            preset: TextPreset::LowerThird,
+            ..LayoutText::default()
+        };
+        let out = slide_elements_for_layout(
+            &[verse],
+            &LayerTransform::default(),
+            canvas,
+            canvas,
+            &lower,
+            Region::FULL,
+        );
+        let SlideElement::Text {
+            runs, max_lines, ..
+        } = &out[0]
+        else {
+            panic!("expected text");
+        };
+        assert!(runs[0].text.contains('\n'));
+        assert_eq!(*max_lines, None);
     }
 
     fn pin(points: [(f64, f64); 4]) -> [Point; 4] {

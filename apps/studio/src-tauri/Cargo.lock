@@ -2786,7 +2786,9 @@ dependencies = [
 name = "lumen-output"
 version = "0.0.1"
 dependencies = [
+ "lumen-media",
  "lumen-render",
+ "objc2",
  "serde",
  "serde_json",
  "tauri",

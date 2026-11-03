@@ -4,17 +4,17 @@
 //! enumeration, placement, window lifecycle, the render thread and surface recovery. wgpu lives in
 //! `lumen-render`; this crate only creates the main-thread surface and drives the frame loop.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, TryRecvError};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 
 use lumen_render::composition::{ScreenRef, ScreenTarget};
 use lumen_render::{
-    Composition, CompositionTransition, PendingSurface, RenderError, RenderStats, Screen,
-    SurfaceFactory, SurfaceRenderer, VideoFrame,
+    AssetKind, Composition, CompositionTransition, OffscreenOutput, PendingSurface, RenderError,
+    RenderStats, Screen, SurfaceFactory, SurfaceRenderer, VideoFrame,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -170,6 +170,8 @@ pub fn open_audience_window(app: &AppHandle, display_index: usize) -> Result<Out
         .map_err(|error| error.to_string())?;
 
     let _ = window.set_cursor_visible(false);
+    #[cfg(target_os = "macos")]
+    cover_menu_bar(&window);
     window.show().map_err(|error| error.to_string())?;
     window.set_focus().ok();
 
@@ -181,7 +183,92 @@ pub fn open_audience_window(app: &AppHandle, display_index: usize) -> Result<Out
     })
 }
 
-enum OutputCommand {
+/// `NSScreenSaverWindowLevel` (`kCGScreenSaverWindowLevel`). Audience windows sit above the
+/// menu bar (`NSMainMenuWindowLevel`, 24), status items (25) and the Dock (20), so they cover the
+/// whole display without a native fullscreen Space. `always_on_top` alone is
+/// `NSFloatingWindowLevel` (3), which the menu bar draws over.
+pub const OUTPUT_WINDOW_LEVEL: isize = 1000;
+/// `NSMainMenuWindowLevel`, the level the output must stay above.
+pub const MAIN_MENU_WINDOW_LEVEL: isize = 24;
+
+/// `NSWindowCollectionBehavior` for audience windows: on every Space (`CanJoinAllSpaces`, 1),
+/// unaffected by Mission Control (`Stationary`, 16), skipped by window cycling (`IgnoresCycle`,
+/// 64) and allowed next to another app's fullscreen window (`FullScreenAuxiliary`, 256).
+pub const OUTPUT_COLLECTION_BEHAVIOR: usize = 1 | 16 | 64 | 256;
+
+/// Raises a borderless audience window above the menu bar and Dock of its display. Must run on
+/// the main thread. The operator's display keeps its menu bar: nothing app-wide changes.
+#[cfg(target_os = "macos")]
+fn cover_menu_bar(window: &tauri::Window) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let Ok(pointer) = window.ns_window() else {
+        return;
+    };
+    if pointer.is_null() {
+        return;
+    }
+    // SAFETY: `ns_window` returns the live `NSWindow` of this Tauri window, and this runs on
+    // the main thread (`open_audience_window` is only called there).
+    let ns_window = unsafe { &*pointer.cast::<AnyObject>() };
+    unsafe {
+        let _: () = msg_send![ns_window, setLevel: OUTPUT_WINDOW_LEVEL];
+        let _: () = msg_send![ns_window, setCollectionBehavior: OUTPUT_COLLECTION_BEHAVIOR];
+        let _: () = msg_send![ns_window, setHidesOnDeactivate: false];
+    }
+}
+
+/// What an output render thread draws into: the window surface, or an offscreen texture in
+/// tests. Both run the same compositor and frame path.
+pub trait OutputTarget {
+    fn set_composition(
+        &mut self,
+        composition: &Composition,
+        screen: &Screen,
+        transition: CompositionTransition,
+    ) -> Result<(), RenderError>;
+    fn update_video(&mut self, asset_id: &str, frame: &VideoFrame) -> Result<(), RenderError>;
+    fn resize(&mut self, width: u32, height: u32);
+    fn render_frame(&mut self) -> Result<(), RenderError>;
+    fn stats(&self) -> RenderStats;
+}
+
+macro_rules! output_target {
+    ($renderer:ty) => {
+        impl OutputTarget for $renderer {
+            fn set_composition(
+                &mut self,
+                composition: &Composition,
+                screen: &Screen,
+                transition: CompositionTransition,
+            ) -> Result<(), RenderError> {
+                <$renderer>::set_composition(self, composition, screen, transition)
+            }
+            fn update_video(
+                &mut self,
+                asset_id: &str,
+                frame: &VideoFrame,
+            ) -> Result<(), RenderError> {
+                <$renderer>::update_video(self, asset_id, frame)
+            }
+            fn resize(&mut self, width: u32, height: u32) {
+                <$renderer>::resize(self, width, height)
+            }
+            fn render_frame(&mut self) -> Result<(), RenderError> {
+                <$renderer>::render_frame(self)
+            }
+            fn stats(&self) -> RenderStats {
+                <$renderer>::stats(self)
+            }
+        }
+    };
+}
+
+output_target!(SurfaceRenderer);
+output_target!(OffscreenOutput);
+
+pub enum OutputCommand {
     Composition {
         composition: Box<Composition>,
         screen: Box<Screen>,
@@ -193,6 +280,137 @@ enum OutputCommand {
     },
     Resize(u32, u32),
     Stop,
+}
+
+/// Everything that arrived between two frames. Compositions apply in order; only the newest
+/// frame of each video is uploaded, so a slow frame never builds a backlog of video uploads.
+#[derive(Default)]
+pub struct CommandBatch {
+    pub compositions: Vec<(Box<Composition>, Box<Screen>, CompositionTransition)>,
+    /// Newest frame per asset, in the order assets first arrived.
+    pub frames: Vec<(String, VideoFrame)>,
+    pub resize: Option<(u32, u32)>,
+    pub stop: bool,
+}
+
+/// Drains every pending command without blocking.
+pub fn drain_commands(receiver: &Receiver<OutputCommand>) -> CommandBatch {
+    let mut batch = CommandBatch::default();
+    loop {
+        match receiver.try_recv() {
+            Ok(OutputCommand::Composition {
+                composition,
+                screen,
+                transition,
+            }) => batch.compositions.push((composition, screen, transition)),
+            Ok(OutputCommand::VideoFrame { asset_id, frame }) => {
+                match batch.frames.iter_mut().find(|(id, _)| *id == asset_id) {
+                    Some(entry) => entry.1 = frame,
+                    None => batch.frames.push((asset_id, frame)),
+                }
+            }
+            Ok(OutputCommand::Resize(width, height)) => batch.resize = Some((width, height)),
+            Ok(OutputCommand::Stop) | Err(TryRecvError::Disconnected) => {
+                batch.stop = true;
+                return batch;
+            }
+            Err(TryRecvError::Empty) => return batch,
+        }
+    }
+}
+
+/// The per-output render loop: apply what arrived, draw one frame, wait for the next frame
+/// slot. Always draws once per iteration, so a stream of video frames cannot starve it.
+/// `recover` runs after `SurfaceLost` / `SurfaceOutdated` and returns false to stop the loop.
+pub fn run_output_loop<T: OutputTarget>(
+    target: &mut T,
+    receiver: &Receiver<OutputCommand>,
+    stats: &Mutex<RenderStats>,
+    frame_interval: Duration,
+    mut recover: impl FnMut(&mut T) -> bool,
+) {
+    loop {
+        let started = Instant::now();
+        let batch = drain_commands(receiver);
+        if batch.stop {
+            return;
+        }
+        for (composition, screen, transition) in batch.compositions {
+            if let Err(error) = target.set_composition(&composition, &screen, transition) {
+                eprintln!("lumen-output: composition failed: {error}");
+            }
+        }
+        for (asset_id, frame) in batch.frames {
+            if let Err(error) = target.update_video(&asset_id, &frame) {
+                eprintln!("lumen-output: video frame for {asset_id} failed: {error}");
+            }
+        }
+        if let Some((width, height)) = batch.resize {
+            target.resize(width, height);
+        }
+
+        match target.render_frame() {
+            Ok(()) => {
+                *stats
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = target.stats();
+            }
+            Err(RenderError::SurfaceLost | RenderError::SurfaceOutdated) => {
+                if !recover(target) {
+                    return;
+                }
+            }
+            Err(RenderError::SurfaceTimeout | RenderError::SurfaceOccluded) => {}
+            Err(error) => {
+                eprintln!("lumen-output: render loop stopped: {error}");
+                return;
+            }
+        }
+
+        let elapsed = started.elapsed();
+        if elapsed < frame_interval {
+            thread::sleep(frame_interval.saturating_sub(elapsed));
+        }
+    }
+}
+
+/// The newest decoded frame of every video, so an output opened while a video is paused, held
+/// on its last frame or preloaded still shows it. Frames are reference counted; no copies.
+#[derive(Default)]
+pub struct LatestFrames {
+    frames: HashMap<String, VideoFrame>,
+}
+
+impl LatestFrames {
+    pub fn store(&mut self, asset_id: &str, frame: &VideoFrame) {
+        self.frames.insert(asset_id.to_string(), frame.clone());
+    }
+
+    /// Drops frames of videos the composition no longer uses.
+    pub fn retain_composition(&mut self, composition: &Composition) {
+        let keep: HashSet<&str> = composition
+            .assets
+            .iter()
+            .filter(|asset| asset.kind == AssetKind::Video)
+            .map(|asset| asset.id.as_str())
+            .collect();
+        self.frames.retain(|asset_id, _| keep.contains(asset_id.as_str()));
+    }
+
+    pub fn snapshot(&self) -> Vec<(String, VideoFrame)> {
+        self.frames
+            .iter()
+            .map(|(asset_id, frame)| (asset_id.clone(), frame.clone()))
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
 }
 
 #[derive(Clone)]
@@ -306,69 +524,28 @@ fn spawn_renderer(
                     return;
                 }
             };
-
-            loop {
-                match receiver.try_recv() {
-                    Ok(OutputCommand::Composition {
-                        composition,
-                        screen,
-                        transition,
-                    }) => {
-                        if let Err(error) =
-                            renderer.set_composition(&composition, &screen, transition)
-                        {
-                            eprintln!("lumen-output: composition failed: {error}");
-                        }
-                        continue;
-                    }
-                    Ok(OutputCommand::VideoFrame { asset_id, frame }) => {
-                        if let Err(error) = renderer.update_video(&asset_id, &frame) {
-                            eprintln!("lumen-output: video frame failed: {error}");
-                        }
-                        continue;
-                    }
-                    Ok(OutputCommand::Resize(width, height)) => {
-                        renderer.resize(width, height);
-                        continue;
-                    }
-                    Ok(OutputCommand::Stop) | Err(TryRecvError::Disconnected) => return,
-                    Err(TryRecvError::Empty) => {}
-                }
-
-                let started = Instant::now();
-                match renderer.render_frame() {
-                    Ok(()) => {
-                        let snapshot = renderer.stats();
-                        *thread_stats
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot;
-                    }
-                    Err(RenderError::SurfaceLost | RenderError::SurfaceOutdated) => {
-                        thread::sleep(Duration::from_millis(100));
-                        match recreate_surface_on_main(&app, &factory) {
-                            Ok(pending) => {
-                                if let Err(error) = renderer.replace_surface(pending) {
-                                    eprintln!("lumen-output: surface recreation failed: {error}");
-                                    return;
-                                }
-                            }
+            run_output_loop(
+                &mut renderer,
+                &receiver,
+                &thread_stats,
+                FRAME_INTERVAL,
+                |renderer| {
+                    thread::sleep(Duration::from_millis(100));
+                    match recreate_surface_on_main(&app, &factory) {
+                        Ok(pending) => match renderer.replace_surface(pending) {
+                            Ok(()) => true,
                             Err(error) => {
-                                eprintln!("lumen-output: surface recovery failed: {error}");
+                                eprintln!("lumen-output: surface recreation failed: {error}");
+                                false
                             }
+                        },
+                        Err(error) => {
+                            eprintln!("lumen-output: surface recovery failed: {error}");
+                            true
                         }
                     }
-                    Err(RenderError::SurfaceTimeout | RenderError::SurfaceOccluded) => {}
-                    Err(error) => {
-                        eprintln!("lumen-output: render loop stopped: {error}");
-                        return;
-                    }
-                }
-
-                let elapsed = started.elapsed();
-                if elapsed < FRAME_INTERVAL {
-                    thread::sleep(FRAME_INTERVAL.saturating_sub(elapsed));
-                }
-            }
+                },
+            );
         })
         .map_err(|error| error.to_string())?;
 
@@ -397,6 +574,8 @@ struct ManagedOutput {
 struct OutputManagerInner {
     app: AppHandle,
     outputs: Mutex<HashMap<String, ManagedOutput>>,
+    /// Locked after `outputs` whenever both are held.
+    frames: Mutex<LatestFrames>,
     polling: AtomicBool,
     main_thread: ThreadId,
 }
@@ -414,6 +593,7 @@ impl OutputManager {
             inner: Arc::new(OutputManagerInner {
                 app,
                 outputs: Mutex::new(HashMap::new()),
+                frames: Mutex::new(LatestFrames::default()),
                 polling: AtomicBool::new(false),
                 main_thread: thread::current().id(),
             }),
@@ -423,6 +603,13 @@ impl OutputManager {
     fn outputs(&self) -> MutexGuard<'_, HashMap<String, ManagedOutput>> {
         self.inner
             .outputs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn frames(&self) -> MutexGuard<'_, LatestFrames> {
+        self.inner
+            .frames
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -500,7 +687,13 @@ impl OutputManager {
             _ => {}
         });
 
-        self.outputs().insert(
+        // A new output starts with the newest frame of every video: a paused, held or preloaded
+        // video sends no further frames. Both locks are held so no frame slips in between.
+        let mut outputs = self.outputs();
+        for (asset_id, frame) in self.frames().snapshot() {
+            renderer.video_frame(asset_id, frame);
+        }
+        outputs.insert(
             output.label.clone(),
             ManagedOutput {
                 display_index,
@@ -570,6 +763,7 @@ impl OutputManager {
         screens: &[Screen],
         transition: &CompositionTransition,
     ) -> Vec<ScreenOutputStatus> {
+        self.frames().retain_composition(composition);
         let displays = list_displays(&self.inner.app).unwrap_or_default();
         screens
             .iter()
@@ -623,7 +817,8 @@ impl OutputManager {
     }
 
     /// Sends one frame to an output, or to every output. Frames are reference
-    /// counted, so fanning out to several outputs does not copy pixels.
+    /// counted, so fanning out to several outputs does not copy pixels. Frames for every
+    /// output are also kept for outputs opened later.
     pub fn update_video(
         &self,
         label: Option<&str>,
@@ -639,9 +834,7 @@ impl OutputManager {
                 output.renderer.video_frame(asset_id, frame);
             }
             None => {
-                if outputs.is_empty() {
-                    return Err("no audience output is open".into());
-                }
+                self.frames().store(&asset_id, &frame);
                 for output in outputs.values() {
                     output.renderer.video_frame(asset_id.clone(), frame.clone());
                 }
@@ -723,6 +916,318 @@ impl OutputManagerInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lumen_render::PreviewRenderer;
+
+    fn frame(value: u8) -> VideoFrame {
+        VideoFrame::rgba(2, 2, vec![value; 16])
+    }
+
+    fn first_byte(frame: &VideoFrame) -> u8 {
+        match &frame.pixels {
+            lumen_render::VideoPixels::Rgba(bytes) => bytes[0],
+            _ => panic!("expected rgba"),
+        }
+    }
+
+    fn video_composition() -> Composition {
+        serde_json::from_value(serde_json::json!({
+            "schemaVersion": 2, "revision": 1, "canvas": { "width": 1920, "height": 1080 },
+            "sources": [
+                { "kind": "video", "id": "bg", "asset": { "assetId": "prores", "hash": "h" }, "loop": true },
+                { "kind": "video", "id": "fx", "asset": { "assetId": "h264", "hash": "h" } }
+            ],
+            "layers": [
+                { "id": "background", "sourceId": "bg", "transform": {}, "fit": "cover" },
+                { "id": "inset", "sourceId": "fx",
+                  "transform": { "x": 0.55, "y": 0.1, "w": 0.4, "h": 0.4 }, "fit": "cover" }
+            ],
+            "master": {},
+            "assets": [
+                { "id": "prores", "hash": "h", "kind": "video", "localPath": "/media/a.mov", "intrinsic": { "width": 320, "height": 180 } },
+                { "id": "h264", "hash": "h", "kind": "video", "localPath": "/media/b.mp4", "intrinsic": { "width": 320, "height": 180 } }
+            ]
+        }))
+        .expect("composition")
+    }
+
+    #[test]
+    fn drains_commands_and_keeps_the_newest_frame_per_video() {
+        let (sender, receiver) = mpsc::channel();
+        let composition = video_composition();
+        let screen = Screen::canvas(composition.canvas);
+        sender
+            .send(OutputCommand::VideoFrame {
+                asset_id: "a".into(),
+                frame: frame(1),
+            })
+            .unwrap();
+        sender
+            .send(OutputCommand::Composition {
+                composition: Box::new(composition.clone()),
+                screen: Box::new(screen.clone()),
+                transition: CompositionTransition::default(),
+            })
+            .unwrap();
+        sender
+            .send(OutputCommand::VideoFrame {
+                asset_id: "b".into(),
+                frame: frame(2),
+            })
+            .unwrap();
+        sender
+            .send(OutputCommand::VideoFrame {
+                asset_id: "a".into(),
+                frame: frame(3),
+            })
+            .unwrap();
+        sender.send(OutputCommand::Resize(640, 360)).unwrap();
+        sender.send(OutputCommand::Resize(1280, 720)).unwrap();
+        let batch = drain_commands(&receiver);
+        assert!(!batch.stop);
+        assert_eq!(batch.compositions.len(), 1);
+        assert_eq!(batch.resize, Some((1280, 720)));
+        let frames: Vec<(&str, u8)> = batch
+            .frames
+            .iter()
+            .map(|(id, frame)| (id.as_str(), first_byte(frame)))
+            .collect();
+        assert_eq!(frames, vec![("a", 3), ("b", 2)]);
+
+        assert!(drain_commands(&receiver).frames.is_empty());
+        sender.send(OutputCommand::Stop).unwrap();
+        assert!(drain_commands(&receiver).stop);
+        drop(sender);
+        assert!(drain_commands(&receiver).stop);
+    }
+
+    #[test]
+    fn latest_frames_replay_and_follow_the_composition() {
+        let mut frames = LatestFrames::default();
+        frames.store("prores", &frame(1));
+        frames.store("prores", &frame(2));
+        frames.store("gone", &frame(3));
+        assert_eq!(frames.len(), 2);
+        frames.retain_composition(&video_composition());
+        let snapshot = frames.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].0, "prores");
+        assert_eq!(first_byte(&snapshot[0].1), 2);
+    }
+
+    /// Real footage through the output path: ffmpeg decodes `LUMEN_TEST_VIDEO` (for example
+    /// a ProRes 422 HQ `.mov`) on a decoder thread, frames stream into the output loop, and the
+    /// output's last frame matches the preview of the same decoded frame.
+    /// `LUMEN_TEST_VIDEO=/path/clip.mov cargo test --release -p lumen-output -- --ignored`.
+    #[test]
+    #[ignore]
+    fn gpu_output_loop_renders_decoded_footage() {
+        let Ok(path) = std::env::var("LUMEN_TEST_VIDEO") else {
+            eprintln!("LUMEN_TEST_VIDEO not set; skipping");
+            return;
+        };
+        let config = lumen_media::DecoderConfig::from_env().expect("ffmpeg");
+        let mut request =
+            lumen_media::DecodeRequest::new(std::path::PathBuf::from(&path), 640, 360);
+        request.loop_playback = true;
+        let mut composition = video_composition();
+        composition.layers.truncate(1);
+        let (width, height) = (480u32, 270u32);
+        let mut screen = Screen::canvas(composition.canvas);
+        screen.layout.background = Some("#ff0000".into());
+
+        let (sender, receiver) = mpsc::channel();
+        let stats = Arc::new(Mutex::new(RenderStats::default()));
+        let thread_stats = Arc::clone(&stats);
+        let render = thread::spawn(move || {
+            let mut output = OffscreenOutput::new(width, height).expect("output");
+            run_output_loop(&mut output, &receiver, &thread_stats, FRAME_INTERVAL, |_| false);
+            output
+        });
+        sender
+            .send(OutputCommand::Composition {
+                composition: Box::new(composition.clone()),
+                screen: Box::new(screen.clone()),
+                transition: CompositionTransition::default(),
+            })
+            .unwrap();
+        let mut decoder = lumen_media::FfmpegVideo::open(&request, &config).expect("decoder");
+        let started = Instant::now();
+        let mut last = None;
+        let mut decoded = 0;
+        while decoded < 45 {
+            let rgba = decoder.read_frame().expect("frame").expect("not at end");
+            let frame = VideoFrame::rgba(decoder.width(), decoder.height(), rgba);
+            sender
+                .send(OutputCommand::VideoFrame {
+                    asset_id: "prores".into(),
+                    frame: frame.clone(),
+                })
+                .unwrap();
+            last = Some(frame);
+            decoded += 1;
+        }
+        let elapsed = started.elapsed();
+        thread::sleep(Duration::from_millis(200));
+        sender.send(OutputCommand::Stop).unwrap();
+        let mut output = render.join().expect("render thread");
+        let bgra = output.read_bgra().expect("readback");
+
+        let mut preview = PreviewRenderer::new().expect("preview");
+        preview
+            .update_video("prores", last.as_ref().expect("a frame"))
+            .expect("video");
+        let expected = preview
+            .render_composition(&composition, Some(&screen), width, height)
+            .expect("preview");
+        let mut worst = 0u8;
+        let mut red = 0usize;
+        for (rgba, bgra) in expected
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(bgra.as_chunks::<4>().0)
+        {
+            for (a, b) in [(rgba[0], bgra[2]), (rgba[1], bgra[1]), (rgba[2], bgra[0])] {
+                worst = worst.max(a.abs_diff(b));
+            }
+            if bgra[2] == 255 && bgra[1] == 0 && bgra[0] == 0 {
+                red += 1;
+            }
+        }
+        let stats = *stats.lock().unwrap();
+        eprintln!(
+            "decoded footage: {decoded} frames in {:.0} ms, output drew {} frames (avg {:.2} ms), \
+             worst difference vs preview {worst}, pure-red pixels {red}",
+            elapsed.as_secs_f64() * 1000.0,
+            stats.frame,
+            stats.average_frame_ms
+        );
+        assert!(worst <= 2, "output and preview differ by {worst}");
+        assert!(red < (width * height / 100) as usize, "the layout background shows through");
+    }
+
+    #[test]
+    fn output_windows_sit_above_the_menu_bar() {
+        assert!(OUTPUT_WINDOW_LEVEL > MAIN_MENU_WINDOW_LEVEL + 1);
+        // CanJoinAllSpaces and Stationary, never the fullscreen-primary bit (128).
+        assert_eq!(OUTPUT_COLLECTION_BEHAVIOR & 1, 1);
+        assert_eq!(OUTPUT_COLLECTION_BEHAVIOR & 16, 16);
+        assert_eq!(OUTPUT_COLLECTION_BEHAVIOR & 128, 0);
+    }
+
+    /// Two-tone test frame: left half `left`, right half `right`.
+    fn split_frame(width: u32, height: u32, left: [u8; 4], right: [u8; 4]) -> VideoFrame {
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+        for _ in 0..height {
+            for x in 0..width {
+                rgba.extend_from_slice(if x < width / 2 { &left } else { &right });
+            }
+        }
+        VideoFrame::rgba(width, height, rgba)
+    }
+
+    /// Runs the real output render loop on its own thread and device into an offscreen BGRA
+    /// sRGB target, with video frames fanned out the way `OutputManager` does it (one frame
+    /// held before the output opens and replayed from `LatestFrames`, the rest streamed), and
+    /// compares the result with the preview renderer.
+    /// `cargo test --release -p lumen-output -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn gpu_output_loop_renders_video_like_the_preview() {
+        let composition = video_composition();
+        let (width, height) = (480u32, 270u32);
+        let prores = split_frame(320, 180, [200, 30, 40, 255], [30, 60, 220, 255]);
+        let h264 = split_frame(320, 180, [20, 200, 60, 255], [240, 220, 30, 255]);
+
+        for screen in [Screen::canvas(composition.canvas), {
+            let mut mapped = Screen::canvas(composition.canvas);
+            mapped.id = "red-background".into();
+            mapped.layout.background = Some("#ff0000".into());
+            mapped
+        }] {
+            let mut preview = PreviewRenderer::new().expect("preview");
+            preview.update_video("prores", &prores).expect("video");
+            preview.update_video("h264", &h264).expect("video");
+            let expected = preview
+                .render_composition(&composition, Some(&screen), width, height)
+                .expect("preview");
+
+            // The ProRes frame arrived before the output opened (paused or held video).
+            let mut latest = LatestFrames::default();
+            latest.store("prores", &prores);
+
+            let (sender, receiver) = mpsc::channel();
+            let stats = Arc::new(Mutex::new(RenderStats::default()));
+            let thread_stats = Arc::clone(&stats);
+            let render = thread::spawn(move || {
+                let mut output = OffscreenOutput::new(width, height).expect("output");
+                run_output_loop(
+                    &mut output,
+                    &receiver,
+                    &thread_stats,
+                    FRAME_INTERVAL,
+                    |_| false,
+                );
+                output
+            });
+            for (asset_id, frame) in latest.snapshot() {
+                sender
+                    .send(OutputCommand::VideoFrame { asset_id, frame })
+                    .unwrap();
+            }
+            sender
+                .send(OutputCommand::Composition {
+                    composition: Box::new(composition.clone()),
+                    screen: Box::new(screen.clone()),
+                    transition: CompositionTransition::default(),
+                })
+                .unwrap();
+            // A playing H.264 clip streams frames faster than the loop draws.
+            for _ in 0..30 {
+                sender
+                    .send(OutputCommand::VideoFrame {
+                        asset_id: "h264".into(),
+                        frame: h264.clone(),
+                    })
+                    .unwrap();
+            }
+            thread::sleep(Duration::from_millis(300));
+            sender.send(OutputCommand::Stop).unwrap();
+            let mut output = render.join().expect("render thread");
+            assert!(stats.lock().unwrap().frame > 0, "the loop drew frames");
+            let bgra = output.read_bgra().expect("readback");
+
+            let mut worst = 0u8;
+            for (rgba, bgra) in expected
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(bgra.as_chunks::<4>().0)
+            {
+                for (a, b) in [(rgba[0], bgra[2]), (rgba[1], bgra[1]), (rgba[2], bgra[0])] {
+                    worst = worst.max(a.abs_diff(b));
+                }
+            }
+            let at = |x: u32, y: u32| {
+                let offset = ((y * width + x) * 4) as usize;
+                [bgra[offset + 2], bgra[offset + 1], bgra[offset]]
+            };
+            eprintln!(
+                "output loop vs preview ({}): worst channel difference {worst}, background {:?}, inset {:?}",
+                screen.id,
+                at(60, 240),
+                at(330, 60)
+            );
+            assert!(worst <= 2, "output and preview differ by {worst}");
+            // The video, not the layout background, fills the frame.
+            let background = at(60, 240);
+            assert!(background[0] > 150 && background[1] < 90, "{background:?}");
+            let inset = at(330, 60);
+            assert!(inset[1] > 150 && inset[0] < 90, "{inset:?}");
+        }
+    }
 
     fn display(index: usize, primary: bool) -> DisplayInfo {
         DisplayInfo {

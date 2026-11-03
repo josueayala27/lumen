@@ -16,7 +16,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
-use lumen_media::decoder::{DecodeRequest, DecoderConfig, FfmpegVideo, MAX_DECODE_EDGE};
+use lumen_media::decoder::{
+    video_poster, DecodeRequest, DecoderConfig, FfmpegVideo, MAX_DECODE_EDGE,
+};
 use lumen_media::hap::{self, HapFrame, HapTextureFormat};
 use lumen_media::mov::MovVideoTrack;
 use lumen_media::probe::probe_file;
@@ -27,7 +29,7 @@ use lumen_media::util::{
     sha256_file, MediaKind, MAX_IMPORT_BYTES,
 };
 use lumen_media::{FileProbe, MediaBackend};
-use lumen_output::OutputManager;
+use lumen_output::{OutputManager, ScreenOutputStatus};
 use lumen_render::composition::Source as SourceV2;
 use lumen_render::mapping::layer_matches;
 use lumen_render::{AssetKind, AssetState, Composition, Screen, VideoFrame, VideoPixels};
@@ -153,6 +155,11 @@ fn import_blocking(app: &AppHandle, source: &str) -> Result<ImportedMedia, Strin
             .unwrap_or("media"),
     );
 
+    if kind == MediaKind::Video {
+        // The media grid and clip pickers show the poster; a failure only means no thumbnail.
+        let _ = cached_poster(&root, &destination, info.duration_ms, POSTER_EDGE);
+    }
+
     Ok(ImportedMedia {
         kind,
         name,
@@ -256,13 +263,56 @@ pub fn composition_video_sources(
     sources
 }
 
+/// Decoder demand caller for one native output window.
+pub fn output_owner(label: &str) -> String {
+    format!("{OWNER_OUTPUT}:{label}")
+}
+
+/// Decoder demand of each output an `apply_composition` call drove: the videos its screens
+/// draw, keyed by [`output_owner`]. Outputs the call did not touch keep their demand, so
+/// sending one screen (a test pattern, a transition group) never stops another output's videos.
+pub fn output_demand(
+    composition: &Composition,
+    screens: &[Screen],
+    statuses: &[ScreenOutputStatus],
+) -> Vec<(String, Vec<VideoSource>)> {
+    let mut labels: Vec<&str> = Vec::new();
+    let mut grouped: HashMap<&str, Vec<Screen>> = HashMap::new();
+    for status in statuses {
+        let Some(label) = status.label.as_deref() else {
+            continue;
+        };
+        let Some(screen) = screens.iter().find(|screen| screen.id == status.screen_id) else {
+            continue;
+        };
+        if !grouped.contains_key(label) {
+            labels.push(label);
+        }
+        grouped.entry(label).or_default().push(screen.clone());
+    }
+    labels
+        .into_iter()
+        .map(|label| {
+            let screens = grouped.remove(label).unwrap_or_default();
+            // A label whose screens are all disabled is black: it wants nothing.
+            let sources = if screens.iter().any(|screen| screen.enabled) {
+                composition_video_sources(composition, &screens)
+            } else {
+                Vec::new()
+            };
+            (output_owner(label), sources)
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Backend {
     Ffmpeg,
     Hap,
 }
 
-/// Callers that want videos decoded. A video plays while any caller wants it.
+/// Callers that want videos decoded. A video plays while any caller wants it. Each native
+/// output is its own caller (`output:<label>`, see [`output_owner`]).
 pub const OWNER_OUTPUT: &str = "output";
 pub const OWNER_PREVIEW: &str = "preview";
 /// Next cue: decoders start paused on their first frame so the cut is instant.
@@ -289,7 +339,7 @@ impl Demand {
         let mut order: Vec<String> = Vec::new();
         let mut merged: HashMap<String, (VideoSource, bool)> = HashMap::new();
         let mut owners: Vec<(&String, &Vec<VideoSource>)> = self.owners.iter().collect();
-        // Active callers first so their settings win over preload.
+        // Active callers first so their settings win over preload; ties by name keep it stable.
         owners.sort_by_key(|(owner, _)| (owner.as_str() == OWNER_PRELOAD, owner.as_str()));
         for (owner, sources) in owners {
             let active = owner.as_str() != OWNER_PRELOAD;
@@ -345,19 +395,37 @@ impl VideoPlaybackManager {
         Self::default()
     }
 
+    /// The ffmpeg decoder. A missing decoder is looked up again on the next call, so
+    /// installing ffmpeg (or setting `LUMEN_FFMPEG`) does not need a restart.
     fn decoder_config(&self) -> Result<DecoderConfig, String> {
         let mut guard = self
             .config
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if guard.is_none() {
-            let resolved = DecoderConfig::from_env().map_err(|error| error.to_string());
-            if let Err(error) = &resolved {
+        if let Some(Ok(config)) = guard.as_ref() {
+            return Ok(config.clone());
+        }
+        let resolved = DecoderConfig::from_env().map_err(|error| error.to_string());
+        if let Err(error) = &resolved {
+            if guard.is_none() {
                 eprintln!("lumen-media: video playback unavailable: {error}");
             }
-            *guard = Some(resolved);
         }
-        guard.as_ref().expect("decoder config was resolved").clone()
+        *guard = Some(resolved.clone());
+        resolved
+    }
+
+    /// Sets the decoder demand of every output an `apply_composition` call drove.
+    pub fn sync_outputs(
+        &self,
+        app: &AppHandle,
+        composition: &Composition,
+        screens: &[Screen],
+        statuses: &[ScreenOutputStatus],
+    ) {
+        for (owner, sources) in output_demand(composition, screens, statuses) {
+            self.sync_sources(app, &owner, sources);
+        }
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, PlaybackState> {
@@ -600,13 +668,15 @@ fn run_decoder(
     }
 }
 
-/// Sends one frame to the preview and every output. The frame is shared, not copied.
+/// Sends one frame to every output, then the preview. The frame is shared, not copied.
+/// Outputs go first: the preview lock is held while a preview renders, and the audience must
+/// not wait for it.
 fn push_frame(app: &AppHandle, asset_id: &str, frame: VideoFrame) {
+    if let Some(outputs) = app.try_state::<OutputManager>() {
+        let _ = outputs.update_video(None, asset_id.to_string(), frame.clone());
+    }
     if let Some(preview) = app.try_state::<crate::PreviewState>() {
         let _ = preview.push_video(asset_id, &frame);
-    }
-    if let Some(outputs) = app.try_state::<OutputManager>() {
-        let _ = outputs.update_video(None, asset_id.to_string(), frame);
     }
 }
 
@@ -792,7 +862,40 @@ pub fn list_media_files(app: AppHandle) -> Result<Vec<ManagedFile>, String> {
     Ok(files)
 }
 
-/// PNG data URL for an image asset. Video posters need a decoder backend.
+/// Longest edge of the poster frame cached for each video.
+const POSTER_EDGE: u32 = 640;
+
+/// Where the poster of a managed video is cached: `media/posters/<file stem>.png`. The
+/// folder is not a direct child file, so the bin reconcile skips it.
+fn poster_path(root: &Path, video: &Path) -> Option<PathBuf> {
+    let stem = video.file_stem()?.to_str()?;
+    Some(root.join("posters").join(format!("{stem}.png")))
+}
+
+/// The cached PNG poster of a managed video, decoded with ffmpeg the first time.
+fn cached_poster(
+    root: &Path,
+    video: &Path,
+    duration_ms: Option<u64>,
+    max_edge: u32,
+) -> Result<Vec<u8>, String> {
+    let path = poster_path(root, video).ok_or("video has no file name")?;
+    if let Ok(bytes) = fs::read(&path) {
+        if !bytes.is_empty() {
+            return Ok(bytes);
+        }
+    }
+    let config = DecoderConfig::from_env().map_err(|error| error.to_string())?;
+    let bytes =
+        video_poster(video, duration_ms, max_edge, &config).map_err(|error| error.to_string())?;
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(&path, &bytes);
+    Ok(bytes)
+}
+
+/// PNG data URL for an image asset, or the poster frame of a video (`None` without ffmpeg).
 #[tauri::command]
 pub async fn media_thumbnail(
     app: AppHandle,
@@ -808,11 +911,23 @@ pub async fn media_thumbnail(
         let header = read_header(&path, 64)?;
         let mime =
             detect_mime(&label, &header).ok_or_else(|| "unsupported media type".to_string())?;
-        if !mime.starts_with("image/") {
+        let edge = max_edge.unwrap_or(DEFAULT_THUMBNAIL_EDGE);
+        let bytes = if mime.starts_with("image/") {
+            thumbnail_file(&label, edge).map_err(|error| error.to_string())?
+        } else if mime.starts_with("video/") {
+            let duration = probe_file(&label).ok().and_then(|info| info.duration_ms);
+            let root = media_root(&app)?;
+            match cached_poster(&root, &path, duration, POSTER_EDGE) {
+                Ok(poster) if edge >= POSTER_EDGE => poster,
+                Ok(poster) => {
+                    lumen_media::thumbnail::thumbnail_bytes(&poster, edge)
+                        .map_err(|error| error.to_string())?
+                }
+                Err(_) => return Ok(None),
+            }
+        } else {
             return Ok(None);
-        }
-        let bytes = thumbnail_file(&label, max_edge.unwrap_or(DEFAULT_THUMBNAIL_EDGE))
-            .map_err(|error| error.to_string())?;
+        };
         let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
         Ok(Some(format!("data:image/png;base64,{encoded}")))
     })
@@ -880,6 +995,103 @@ mod tests {
         assert_eq!(filtered.len(), 1);
         screen.enabled = false;
         assert!(composition_video_sources(&composition, &[screen]).is_empty());
+    }
+
+    #[test]
+    fn output_demand_is_per_output_and_only_for_driven_outputs() {
+        let composition: Composition = serde_json::from_value(serde_json::json!({
+            "schemaVersion": 2, "revision": 1, "canvas": { "width": 1920, "height": 1080 },
+            "sources": [
+                { "kind": "video", "id": "bg", "asset": { "assetId": "prores", "hash": "h" } },
+                { "kind": "video", "id": "fx", "asset": { "assetId": "h264", "hash": "h" } }
+            ],
+            "layers": [
+                { "id": "l1", "sourceId": "bg", "transform": {}, "tags": ["visuals"] },
+                { "id": "l2", "sourceId": "fx", "transform": {}, "tags": ["wall"] }
+            ],
+            "master": {},
+            "assets": [
+                { "id": "prores", "hash": "h", "kind": "video", "localPath": "/media/a.mov", "intrinsic": { "width": 1920, "height": 1080 } },
+                { "id": "h264", "hash": "h", "kind": "video", "localPath": "/media/b.mp4", "intrinsic": { "width": 1920, "height": 1080 } }
+            ]
+        }))
+        .expect("composition");
+        let screen = |id: &str, tags: &[&str]| {
+            let mut screen = Screen::canvas(composition.canvas);
+            screen.id = id.to_string();
+            screen.layout.layers = lumen_render::composition::LayerFilter::Only {
+                ids: vec![],
+                tags: tags.iter().map(|tag| tag.to_string()).collect(),
+            };
+            screen
+        };
+        let status = |id: &str, label: Option<&str>| ScreenOutputStatus {
+            screen_id: id.to_string(),
+            label: label.map(String::from),
+            error: None,
+        };
+        let main = screen("main", &["visuals"]);
+        let wall = screen("wall", &["visuals", "wall"]);
+        let mut off = screen("off", &["wall"]);
+        off.enabled = false;
+        let virtual_screen = screen("ndi", &["wall"]);
+        let screens = vec![main, wall, off, virtual_screen];
+        let demand = output_demand(
+            &composition,
+            &screens,
+            &[
+                status("main", Some("audience-1")),
+                status("wall", Some("audience-2")),
+                status("off", Some("audience-3")),
+                status("ndi", None),
+            ],
+        );
+        let ids = |sources: &[VideoSource]| -> Vec<String> {
+            sources.iter().map(|source| source.asset_id.clone()).collect()
+        };
+        assert_eq!(demand.len(), 3);
+        assert_eq!(demand[0].0, "output:audience-1");
+        assert_eq!(ids(&demand[0].1), vec!["prores"]);
+        assert_eq!(demand[1].0, "output:audience-2");
+        assert_eq!(ids(&demand[1].1), vec!["prores", "h264"]);
+        // A disabled screen's output is black: it releases its videos.
+        assert_eq!(demand[2].0, "output:audience-3");
+        assert!(demand[2].1.is_empty());
+
+        // A call with one screen (a test pattern push) only touches that output's demand.
+        let single = output_demand(
+            &composition,
+            &screens[1..2],
+            &[status("wall", Some("audience-2"))],
+        );
+        assert_eq!(single.len(), 1);
+        assert_eq!(single[0].0, "output:audience-2");
+
+        // Two outputs that want the same video share one decoder through the merged demand.
+        let mut merged = Demand::default();
+        for (owner, sources) in demand {
+            merged.set(&owner, sources);
+        }
+        merged.set(&output_owner("audience-2"), vec![source("h264", 0)]);
+        let wanted: Vec<String> = merged
+            .wanted()
+            .into_iter()
+            .map(|(source, active)| {
+                assert!(active);
+                source.asset_id
+            })
+            .collect();
+        assert_eq!(wanted.len(), 2);
+        assert!(wanted.contains(&"prores".to_string()));
+    }
+
+    #[test]
+    fn posters_cache_next_to_the_media() {
+        let root = Path::new("/data/media");
+        assert_eq!(
+            poster_path(root, Path::new("/data/media/abc.mov")),
+            Some(PathBuf::from("/data/media/posters/abc.png"))
+        );
     }
 
     #[test]

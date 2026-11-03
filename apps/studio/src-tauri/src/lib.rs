@@ -43,7 +43,14 @@ fn open_output(
 }
 
 #[tauri::command]
-fn close_output(outputs: State<'_, OutputManager>, label: String) -> Result<(), String> {
+fn close_output(
+    app: tauri::AppHandle,
+    outputs: State<'_, OutputManager>,
+    label: String,
+) -> Result<(), String> {
+    if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
+        playback.release(&app, &media::output_owner(&label));
+    }
     outputs.close(&label)
 }
 
@@ -182,7 +189,8 @@ fn preview_render_composition(
 }
 
 /// Drives one native output per enabled display screen with the composition. Opens missing
-/// outputs and decodes the composition's videos under the `output` caller's demand.
+/// outputs and decodes the videos each driven output draws, under that output's own decoder
+/// demand (`output:<label>`), so a call with only some screens leaves the others playing.
 #[tauri::command]
 fn apply_composition(
     app: tauri::AppHandle,
@@ -194,7 +202,7 @@ fn apply_composition(
     let statuses =
         outputs.apply_composition(&composition, &screens, &transition.unwrap_or_default());
     if let Some(playback) = app.try_state::<media::VideoPlaybackManager>() {
-        playback.sync_composition(&app, media::OWNER_OUTPUT, &composition, &screens);
+        playback.sync_outputs(&app, &composition, &screens, &statuses);
     }
     statuses
 }
