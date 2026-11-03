@@ -61,6 +61,7 @@ export function useComposePreview(options: ComposePreviewOptions) {
   let running = false
   let queued = false
   let disposed = false
+  const resolvedComposition = shallowRef<Composition | null>(null)
 
   async function renderOnce(): Promise<void> {
     const show = options.show.value
@@ -68,6 +69,7 @@ export function useComposePreview(options: ComposePreviewOptions) {
     const resolved = composeCanvasComposition(show, composition, options.media.value, presentation, (value) =>
       live.composition(value, { media: options.media.value, presentation }),
     )
+    resolvedComposition.value = resolved
     const size = previewSize(composition.canvas, options.dragging.value ? DRAG_PREVIEW_WIDTH : REST_PREVIEW_WIDTH)
     const decoded = await previewRenderComposition(resolved, null, size.width, size.height)
     if (disposed) return
@@ -104,6 +106,11 @@ export function useComposePreview(options: ComposePreviewOptions) {
   watch([() => options.show.value.composition, options.media, options.dragging, live.version], () => void render(), {
     immediate: true,
   })
+  // Playing video only changes frames, not the composition: keep rendering.
+  useVideoRefresh(
+    () => available && !options.dragging.value && compositionHasVideo(resolvedComposition.value),
+    render,
+  )
   onBeforeUnmount(() => {
     disposed = true
   })

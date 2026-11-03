@@ -90,6 +90,18 @@ export function useScreenPreview(options: ScreenPreviewOptions) {
     schedule,
     { immediate: true },
   )
+  // Playing video only changes frames, not the composition: keep rendering.
+  let refreshing = false
+  useVideoRefresh(
+    () => native && compositionHasVideo(composition.value),
+    () => {
+      if (refreshing) return
+      refreshing = true
+      void render().finally(() => {
+        refreshing = false
+      })
+    },
+  )
   onBeforeUnmount(() => clearTimeout(timer))
 
   return { native, composition, schematic, frame, error, compose, render }

@@ -4,6 +4,7 @@ import { Icon } from '#components'
 import type { Composition, Screen } from '@lumen/schema'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { isTauriRuntime, previewRenderComposition, type DecodedCompositionPreview } from '~/control/render'
+import { compositionHasVideo, useVideoRefresh, VIDEO_REFRESH_MS } from '~/control/videoRefresh'
 import { schematicFrame } from './schematic'
 
 /**
@@ -84,6 +85,12 @@ async function render(): Promise<void> {
 // Screens are often rebuilt per render (mode applied); compare them by value.
 const screenKey = computed(() => (props.screen ? JSON.stringify(props.screen) : ''))
 watch(() => [props.composition, screenKey.value] as const, () => void render(), { immediate: true })
+// Playing video only changes frames, not the composition: keep rendering.
+useVideoRefresh(
+  () => native && compositionHasVideo(props.composition),
+  render,
+  Math.max(VIDEO_REFRESH_MS, props.throttleMs),
+)
 
 watch(frame, async (value) => {
   await nextTick()
