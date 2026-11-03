@@ -289,3 +289,10 @@ The runtime keeps the last 5,000 envelopes and results in memory, shown in a **C
 - **Live-only versus saved parameter changes.** D1 rule: bus parameter changes are live-only until `show.save`. Alternative: per-path policy (opacity live-only, effect parameters saved). Decide before D1.3.
 - **Multiple operators.** D1 has one authority and last-write-wins. Locking parts of the show to a client (for example a lighting desk owning layer opacity) belongs to E3.
 - **Rust authority.** When render nodes arrive (E3), the authority may need to move out of the webview into Rust so a headless node can run the show. Keeping `applyCommand` pure and data-only keeps that move possible.
+
+## Planned extensions
+
+Designed in later docs, not built yet:
+
+- **Commands:** `preflight.*`, `debug.setHud`, `stats.mark`, `timeline.setClock` (doc 16); `prop.*`, `message.*`, `timer.set`, `timer.create`, `overlay.clearAll` (doc 17); `record.*` (doc 19); `sync.*` with `Source.kind: 'sync'` (doc 21).
+- **State and API:** `health`, `props`, `messages` and `recordings` in `StateEvent`; `/health`, `/preflight`, `/stats` routes and a `stats` WebSocket topic (doc 16); a `timeSync` WebSocket message and OSC `/lumen/sync/*` (doc 21).

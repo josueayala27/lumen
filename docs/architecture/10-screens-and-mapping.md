@@ -102,3 +102,10 @@ Mapping {
 - TypeScript: layout layer filtering, region maths, text preset resolution.
 - Rust unit tests: corner-pin and mesh maths, edge-blend ramp, region crop, layer filter, grouping, text presets. No GPU tests in CI.
 - Ignored GPU tests (`cargo test --release -p lumen-render -- --ignored`): blend modes, masks, mattes, region crop, corner pin, blackout, test patterns, grouped screens, crossfade, and preview against output pixels.
+
+## Planned extensions
+
+Designed in later docs, not built yet:
+
+- **Layouts:** `layout.layers.exclude` (live only) and `layout.stage.show: 'overlays'` (doc 17).
+- **Targets:** NDI, Syphon, Spout, virtual camera, DeckLink (doc 13); recording sinks on any screen (doc 19).

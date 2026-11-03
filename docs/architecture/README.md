@@ -19,6 +19,12 @@ Read these before changing a subsystem. The approved implementation plan is `~/.
 | 13 | [Virtual outputs](13-virtual-outputs.md) | NDI, Syphon, Spout, virtual camera and DeckLink screens for OBS and other software |
 | 14 | [Local network](14-local-network.md) | Remote, stage, lyrics and viewer pages served by the desktop; Bonjour discovery; QR pairing |
 | 15 | [Backup and export](15-backup-and-export.md) | `.lumen` bundles, import with conflicts, automatic local backups, library check |
+| 16 | [Preflight and monitoring](16-preflight-and-monitoring.md) | Checks before going live, keep-awake, performance monitor and stats |
+| 17 | [Props and messages](17-props-and-messages.md) | Overlay templates, lower thirds, countdowns, clocks, tickers, QR, audience messages |
+| 18 | [Live inputs](18-live-inputs.md) | Cameras, capture cards, NDI, Syphon/Spout and screen capture as sources; IMAG |
+| 19 | [Program recording](19-program-recording.md) | Record any screen to ProRes or H.264 with timecode and markers |
+| 20 | [Show templates](20-show-templates.md) | Starting shows per market, New show wizard, save as template |
+| 21 | [Stems integration](21-stems-integration.md) | Lumen follows Stems: timecode, songs and sections, setlists, tempo |
 
 ## Invariants
 

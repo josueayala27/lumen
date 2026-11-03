@@ -165,3 +165,11 @@ The studio renders everything through the compositor (`app/control/render.ts` `p
 Known gaps: video `rate`, `reverse` and `outMs` are not applied by the compositor (`video_transport` drives them); stage layouts are read by the Vue stage window, not by Rust.
 
 Render contract v1 (`Scene`) is removed. Stored documents never held v1 scenes; old show documents load through `migrateShowV1` (`packages/core/src/show.ts`).
+
+## Planned extensions
+
+Designed in later docs, not built yet:
+
+- **Slide elements:** `crawl` for tickers, a `qr` element and a slide `transition` (doc 17).
+- **Input sources:** `camera`, `ndi`, `syphon`, `spout`, `capture` with crop, colour matrix and no-signal handling (doc 18).
+- **Schedule source** for timed props (doc 17).

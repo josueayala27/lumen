@@ -224,7 +224,13 @@ The first public release is a desktop app with **no cloud**: no account, no sync
 | Command bus and local API | D1 (doc 12) | Designed |
 | Local remotes | E3a (doc 14) | Designed |
 | Backup and export | `.lumen` bundles, backups, library check (doc 15) | Designed |
-| Show-running gaps | Keep-awake power assertion, saved MIDI bindings, stage window during a held slide, preflight check | Open |
+| Show-running gaps | Preflight check and keep-awake (doc 16, steps 16.1–16.4), saved MIDI bindings, stage window during a held slide | Designed |
+| Performance monitor | Stats, overlay, diagnostics export (doc 16, steps 16.5–16.8) | Designed |
+| Props and messages | Overlay templates, lower thirds, countdowns, tickers, audience messages (doc 17) | Designed |
+| Live inputs (macOS) | Cameras, capture cards, NDI and Syphon in, screen capture (doc 18, steps 18.1–18.4) | Designed |
+| Program recording (macOS) | ProRes and H.264 recording with timecode (doc 19, steps 19.1–19.5) | Designed |
+| Show templates | Built-in templates, New show wizard, save as template (doc 20) | Designed |
+| Stems integration | Timecode, song and section sync, shared setlist (doc 21, steps 21.1–21.5; tempo 21.6 needs C2) | Designed |
 | Content | E2 subset: song arrangements, PPTX/PDF import | Open |
 | Release | Signed and notarized macOS build, updater from GitHub Releases (never during a show), crash recovery, 3-hour soak, offline licence keys | Open |
 

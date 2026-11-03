@@ -108,3 +108,10 @@ Independent of bundles:
 | 15.2 Import | Validation, conflicts, rollback | Importing the same bundle twice offers keep both and keeps references right |
 | 15.3 Backups | Scheduler, retention, restore | A backup restores a deleted song |
 | 15.4 Library check | Validation and fixes | The check finds a deleted media file and offers relink |
+
+## Planned extensions
+
+Designed in later docs, not built yet:
+
+- **Templates:** bundle `kind: 'template'` with a `template` manifest block and `documents/templates/` (doc 20).
+- **Show data:** `ShowDoc.preflight.ignored` (doc 16) and `settings/sync-links.json` (doc 21).
