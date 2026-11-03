@@ -161,7 +161,7 @@ Served by `lumen-control` with `axum` on a dedicated Tokio runtime, outside the 
 ### Settings
 
 - Off by default. Settings > Remote control turns it on, picks the port (default **7710**) and the network interface (default: every LAN interface; loopback only as an option).
-- Clients get a **token**. The operator creates a named token in Settings, sees it once, and can revoke it. Tokens are stored hashed in the app's settings store. Each token has a role: `control` (commands and state) or `view` (state only).
+- Clients get a **token**. The operator creates a named token in Settings, sees it once, and can revoke it. Tokens are stored hashed in the app's settings store. Each token has a role: `control` (commands and state), `stage` (state and stage data, for stage and lyrics pages, doc 14) or `view` (state only).
 
 ### HTTP
 

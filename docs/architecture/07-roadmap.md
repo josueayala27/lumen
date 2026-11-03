@@ -180,6 +180,15 @@ Exit: a 60-cue show runs from one GO button with fades and auto-follows.
 
 Exit: a set list of songs with arrangements runs while visuals play under the lyrics.
 
+### E3a Local remotes (v1)
+
+Design: `14-local-network.md`.
+
+- Remote, stage, lyrics and viewer web pages served by the desktop app on the LAN.
+- QR pairing with roles; Bonjour discovery.
+
+Exit: a phone runs a rundown and a tablet shows lyrics in sync, with no internet.
+
 ### E3 Network Link and remotes
 
 - Several machines: one controller, render nodes following state and clock; failover.
@@ -202,6 +211,26 @@ Exit: a show with backing tracks, stingers and video stays in sync across a 30-m
 - **Release:** soak tests, GPU matrix, signed installers, updater channels, telemetry, security and licence review.
 
 Exit: signed macOS and Windows builds run a full show offline; cloud sync and packs work on top.
+
+## v1 local release
+
+The first public release is a desktop app with **no cloud**: no account, no sync, no internet needed. Everything below works on one Mac (Windows follows) and a local network.
+
+| Area | Milestones | Status |
+|---|---|---|
+| Visual engine, compositor, UI | A1, A2, A3 | Done |
+| Screens and mapping | B1–B3 remaining items: mapping handles on the output, edge blend from split | Mostly done |
+| Virtual outputs | B4.1–B4.3 (framework, Syphon, NDI) | Designed (doc 13) |
+| Command bus and local API | D1 (doc 12) | Designed |
+| Local remotes | E3a (doc 14) | Designed |
+| Backup and export | `.lumen` bundles, backups, library check (doc 15) | Designed |
+| Show-running gaps | Keep-awake power assertion, saved MIDI bindings, stage window during a held slide, preflight check | Open |
+| Content | E2 subset: song arrangements, PPTX/PDF import | Open |
+| Release | Signed and notarized macOS build, updater from GitHub Releases (never during a show), crash recovery, 3-hour soak, offline licence keys | Open |
+
+Out of v1: cloud sync and accounts (doc 04), the Durable Object relay (doc 03), packs, DeckLink and the virtual camera (they need signed builds and hardware), the audio engine (Wave F).
+
+Exit: a signed build runs a full show offline on four outputs (two displays, NDI, Syphon), driven from the desktop, a phone remote and Companion, and the show moves to a second Mac with one `.lumen` file.
 
 ## Sequencing rules
 

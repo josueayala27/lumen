@@ -17,6 +17,8 @@ Read these before changing a subsystem. The approved implementation plan is `~/.
 | 11 | [Studio UI](11-ui.md) | Workspaces, layouts of Show, Compose and Screens, route changes |
 | 12 | [Command bus and API](12-command-bus.md) | One command type for UI, keyboard, MIDI, timeline, OSC, HTTP/WebSocket, Companion |
 | 13 | [Virtual outputs](13-virtual-outputs.md) | NDI, Syphon, Spout, virtual camera and DeckLink screens for OBS and other software |
+| 14 | [Local network](14-local-network.md) | Remote, stage, lyrics and viewer pages served by the desktop; Bonjour discovery; QR pairing |
+| 15 | [Backup and export](15-backup-and-export.md) | `.lumen` bundles, import with conflicts, automatic local backups, library check |
 
 ## Invariants
 
@@ -24,7 +26,8 @@ Read these before changing a subsystem. The approved implementation plan is `~/.
 2. Live output works with no network.
 3. `Composition` plus `Screen[]` is the only renderer contract; Rust never calls the API.
 8. Content never knows which screen shows it; layouts and mapping live on the screen.
-4. SQLite is authoritative during a service; cloud sync is background.
+4. SQLite is authoritative; cloud sync, when it arrives, is background only.
+9. v1 is local only: no account, no cloud, no internet needed. Remotes connect over the LAN (doc 14); backups are local files (doc 15).
 5. One writer per document in MVP; conflicts are surfaced, never merged silently.
 6. Revisions order sync, not wall-clock timestamps.
 7. Builder design tokens are copied, not approximated.

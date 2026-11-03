@@ -33,7 +33,9 @@ Keyboard: Space/→ next, ← previous, Enter take, B black, C clear, L logo, F 
 
 ## Realtime
 
-The Durable Object relays `{hello, snapshot, command, ack}` with a sequence number and last-snapshot replay. Commands from remote controllers reach the desktop, which applies the reducer and broadcasts a new snapshot. If the DO or network is unavailable, live output continues unchanged.
+**v1 (local):** remotes connect directly to the desktop app over the LAN with the WebSocket API (`12-command-bus.md`, `14-local-network.md`). No Durable Object is used.
+
+**After v1 (optional cloud relay):** the Durable Object relays `{hello, snapshot, command, ack}` with a sequence number and last-snapshot replay. Commands from remote controllers reach the desktop, which applies the reducer and broadcasts a new snapshot. If the DO or network is unavailable, live output continues unchanged.
 
 ## Place in the v2 model
 

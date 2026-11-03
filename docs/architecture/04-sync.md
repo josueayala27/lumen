@@ -1,5 +1,7 @@
 # 04 — Sync
 
+> **Post-v1.** Cloud sync is not part of the v1 desktop release, which is local only. v1 moves shows between machines with `.lumen` bundles and protects the library with local backups (`15-backup-and-export.md`).
+
 MVP is single-writer per document. Do not promise conflict-free multi-device editing; that needs Yjs.
 
 ## Pull

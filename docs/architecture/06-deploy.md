@@ -1,5 +1,7 @@
 # 06 — Deploy
 
+> **Post-v1.** Cloud deployment is not part of the v1 desktop release, which is local only. v1 moves shows between machines with `.lumen` bundles and protects the library with local backups (`15-backup-and-export.md`).
+
 ## Cloudflare resources
 
 | Resource | Staging | Production |
