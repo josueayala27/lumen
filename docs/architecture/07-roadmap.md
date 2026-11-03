@@ -104,6 +104,15 @@ Exit: one song shows big lyrics on side screens, a strip on the LED wall and cur
 
 Exit: two projectors blend into one seamless image on a curved surface; a third maps a logo onto an object.
 
+### B4 Virtual outputs
+
+Design: `13-virtual-outputs.md`.
+
+- Screens that send to other software: NDI, Syphon (macOS), Spout (Windows), virtual camera, DeckLink SDI with fill and key.
+- Own frame clock per target, GPU colour conversion, alpha for overlays, receiver count and tally.
+
+Exit: OBS on a second machine shows Lumen's lyrics with alpha over a camera via NDI at 1080p60, and OBS on the same Mac shows the program via Syphon.
+
 ## Wave C — Live visuals
 
 ### C1 Clip grid
