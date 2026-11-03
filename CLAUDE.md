@@ -38,7 +38,7 @@ cd apps/studio/src-tauri && cargo check && cargo test -p lumen-output -p lumen-r
 
 Lumen is a live visuals system: media, lyrics and slides on many screens, per-screen layouts and mapping, live visual layers and effects, sync with lighting, timecode and music (ProPresenter + Resolume + Millumin + QLab). Not church-only; market integrations are packs. See `docs/architecture/07-roadmap.md`.
 
-Presenter core, songs and timeline (T1–T6) are code complete; desktop acceptance is open. **A1 Video engine** is done (open: native VideoToolbox/Media Foundation decode, NotchLC, real-footage budget). Next: **A2 Compositor and render contract v2** (`Composition` + `Screen[]`), then **A3 Studio UI rewrite** (Show, Timeline, Compose, Screens, Content). Do not add church-specific wording or defaults to the core.
+Presenter core, songs and timeline (T1–T6) are code complete. **A1 Video engine**, **A2 Compositor and render contract v2** (v1 removed) and **A3 Studio UI rewrite** (Show, Timeline, Compose, Screens, Content) are done and pass a desktop show run on native outputs. Open in Wave A: native VideoToolbox/Media Foundation decode, NotchLC, real-footage budget. Next: **D1 Command bus and API** (`docs/architecture/12-command-bus.md`). Do not add church-specific wording or defaults to the core.
 
 ## graphify
 
