@@ -1,5 +1,6 @@
 import type { Composition, PresentationDoc, Screen, ShowDoc } from '@lumen/schema'
 import { computed, ref, shallowRef, watch } from 'vue'
+import { onPlaylistSaved } from '~/data/playlists'
 import { getPresentation } from '~/data/presentations'
 import { outputRevision, type LiveCompositionTransform } from '~/live/liveContent'
 import { saveLiveSession } from '~/live/liveSessionStore'
@@ -17,6 +18,7 @@ import {
 import {
   canvasScreen,
   cueAt,
+  cueOf,
   nextCue,
   programComposition,
   releaseContentLayer,
@@ -52,7 +54,11 @@ function createShowLive() {
 
   const state = session.state
   const mode = computed(() => state.value.mode)
-  const programCue = computed(() => cueAt(session.items.value, state.value.itemIndex, state.value.slideIndex))
+  // A held slide (another rundown was picked, or its item was removed) stays on air until take.
+  const programCue = computed(() => {
+    const held = session.held.value
+    return held ? cueOf(held.item, held.slideIndex) : cueAt(session.items.value, state.value.itemIndex, state.value.slideIndex)
+  })
   const previewCue = computed(() =>
     cueAt(session.items.value, state.value.previewItemIndex, state.value.previewSlideIndex),
   )
@@ -106,14 +112,19 @@ function createShowLive() {
   }
 
   /**
-   * Loads a rundown or a presentation into the session. Without ids the
-   * current session stays; the first load opens the latest rundown and
-   * restores the last position after a crash.
+   * Loads a rundown or a presentation into the session. Without ids (or with
+   * the loaded ones) the current session stays and reloads its items; the
+   * first load opens the latest rundown and restores the last position after
+   * a crash. Picking another rundown keeps program on air until take.
    */
   async function loadSession(options: LiveLoadOptions = {}): Promise<void> {
     const key = `${options.playlistId ?? ''}|${options.presentationId ?? ''}`
     const explicit = Boolean(options.playlistId || options.presentationId)
-    if (sessionLoaded.value && (!explicit || key === sessionKey)) return
+    if (sessionLoaded.value && (!explicit || key === sessionKey)) {
+      // Entering Show again: pick up rundown edits made meanwhile, keep what is on air.
+      await session.refresh()
+      return
+    }
     await session.load(options)
     sessionKey = explicit ? key : `${session.playlist.value?.id ?? ''}|${session.presentation.value?.id ?? ''}`
     sessionLoaded.value = true
@@ -124,6 +135,11 @@ function createShowLive() {
       state: state.value,
     })
   }
+
+  // A rundown saved on `/rundowns` reloads here without moving what is on air.
+  onPlaylistSaved((id) => {
+    if (sessionLoaded.value && session.playlist.value?.id === id) void session.refresh()
+  })
 
   function context(revision = outputRevision()): ComposeContext {
     return { media: session.media.value, presentation, theme: session.theme.value, revision }

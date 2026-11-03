@@ -49,8 +49,13 @@ export interface ShowFrame {
 
 export function cueAt(items: readonly LiveItem[], itemIndex: number, slideIndex: number): RundownCue | null {
   const item = items[itemIndex]
-  const slide = item?.slides[slideIndex]
-  if (!item || !slide) return null
+  return item ? cueOf(item, slideIndex) : null
+}
+
+/** A slide of one item as a cue; also used for a held slide no longer in the rundown. */
+export function cueOf(item: LiveItem, slideIndex: number): RundownCue | null {
+  const slide = item.slides[slideIndex]
+  if (!slide) return null
   return {
     key: `${item.id}:${slideIndex}`,
     itemId: item.id,

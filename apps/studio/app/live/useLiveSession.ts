@@ -10,13 +10,19 @@ import {
 import { getPlaylist, listPlaylists, type PlaylistRecord } from '~/data/playlists'
 import { getTheme } from '~/data/themes'
 import {
+  appliesAfterRelease,
   buildLiveItems,
   clampLiveState,
   liveContext,
   newLiveState,
   nextLiveSlide,
   presentationLiveItem,
+  programSlide,
+  releasesHold,
+  reloadLiveSession,
   resolveLiveSlide,
+  switchLiveSession,
+  type HeldProgram,
   type LiveItem,
 } from './liveSession'
 import { loadLiveSession, saveLiveSession } from './liveSessionStore'
@@ -37,11 +43,15 @@ export function useLiveSession() {
   const error = ref('')
   const theme = ref<Theme | null>(null)
   const media = ref<MediaAsset[]>([])
+  /**
+   * The slide kept on air after another rundown was picked, or after a reload
+   * removed the item on air. Program shows it until take or an advance.
+   */
+  const held = ref<HeldProgram | null>(null)
+  let loaded = false
 
   const context = computed(() => liveContext(items.value))
-  const current = computed(() =>
-    resolveLiveSlide(items.value, state.value.itemIndex, state.value.slideIndex),
-  )
+  const current = computed(() => programSlide(items.value, state.value, held.value))
   const preview = computed(() =>
     resolveLiveSlide(items.value, state.value.previewItemIndex, state.value.previewSlideIndex),
   )
@@ -94,7 +104,12 @@ export function useLiveSession() {
   }
 
   function dispatch(command: LiveCommand): LiveState {
-    state.value = liveReducer(state.value, command, context.value)
+    if (held.value && releasesHold(command)) {
+      held.value = null
+      if (appliesAfterRelease(command)) state.value = liveReducer(state.value, command, context.value)
+    } else {
+      state.value = liveReducer(state.value, command, context.value)
+    }
     persist()
     return state.value
   }
@@ -136,7 +151,7 @@ export function useLiveSession() {
     await restore(null, record)
   }
 
-  async function loadPlaylistRecord(record: PlaylistRecord): Promise<void> {
+  async function playlistItems(record: PlaylistRecord): Promise<LiveItem[]> {
     const docs = new Map<string, PresentationRecord | null>()
     await Promise.all(
       record.doc.items.map(async (item) => {
@@ -145,11 +160,65 @@ export function useLiveSession() {
         }
       }),
     )
-    reset(buildLiveItems(record.doc, (id) => docs.get(id)?.doc ?? null), record, null)
+    return buildLiveItems(record.doc, (id) => docs.get(id)?.doc ?? null)
+  }
+
+  async function loadPlaylistRecord(record: PlaylistRecord): Promise<void> {
+    reset(await playlistItems(record), record, null)
     await restore(record, null)
   }
 
+  /**
+   * Loads a rundown or presentation. Once something is loaded, a load is a
+   * switch: the new items go to the rundown panel and preview while the slide
+   * on air, the output mode and the timers stay (`switchLiveSession`).
+   */
   async function load(options: LiveLoadOptions = {}): Promise<void> {
+    const previous = loaded ? { items: items.value, state: state.value, held: held.value } : null
+    await loadItems(options)
+    loaded = true
+    if (!previous) return
+    const switched = switchLiveSession(previous, state.value)
+    state.value = switched.state
+    held.value = switched.held
+    persist()
+  }
+
+  /**
+   * Reloads the current rundown (or presentation) after it was edited
+   * elsewhere. Program and preview follow their items; the slide on air stays
+   * on air even when its item was removed (`reloadLiveSession`).
+   */
+  async function refresh(): Promise<void> {
+    if (!loaded) return
+    const playlistId = playlist.value?.id
+    const presentationId = presentation.value?.id
+    if (!playlistId && !presentationId) return
+    try {
+      let next: LiveItem[]
+      if (playlistId) {
+        const record = await getPlaylist(playlistId)
+        if (!record || playlist.value?.id !== playlistId) return
+        next = await playlistItems(record)
+        playlist.value = record
+      } else {
+        const record = await getPresentation(presentationId!)
+        if (!record || presentation.value?.id !== presentationId) return
+        next = [presentationLiveItem(record.doc, `item_${record.id}`)]
+        presentation.value = record
+      }
+      await loadMedia()
+      const reloaded = reloadLiveSession({ items: items.value, state: state.value, held: held.value }, next)
+      items.value = next
+      state.value = reloaded.state
+      held.value = reloaded.held
+      persist()
+    } catch (reason) {
+      error.value = reason instanceof Error ? reason.message : String(reason)
+    }
+  }
+
+  async function loadItems(options: LiveLoadOptions = {}): Promise<void> {
     loading.value = true
     error.value = ''
     try {
@@ -244,6 +313,7 @@ export function useLiveSession() {
   return {
     state,
     items,
+    held,
     playlist,
     presentation,
     loading,
@@ -258,6 +328,7 @@ export function useLiveSession() {
     nextSlide,
     slideCount,
     load,
+    refresh,
     dispatch,
     next,
     prev,

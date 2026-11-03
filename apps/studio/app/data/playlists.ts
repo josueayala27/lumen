@@ -144,7 +144,28 @@ export async function getPlaylist(id: string): Promise<PlaylistRecord | null> {
   return row ? fromRow(row) : null
 }
 
+type PlaylistListener = (id: string) => void
+const playlistListeners = new Set<PlaylistListener>()
+
+/**
+ * Calls `listener` with the playlist id after every save in this window, so
+ * a running show picks up rundown edits. Returns the unsubscribe function.
+ */
+export function onPlaylistSaved(listener: PlaylistListener): () => void {
+  playlistListeners.add(listener)
+  return () => playlistListeners.delete(listener)
+}
+
+function notifyPlaylistSaved(id: string): void {
+  for (const listener of playlistListeners) listener(id)
+}
+
 export async function savePlaylist(record: PlaylistRecord): Promise<void> {
+  await writePlaylist(record)
+  notifyPlaylistSaved(record.id)
+}
+
+async function writePlaylist(record: PlaylistRecord): Promise<void> {
   const doc = playlistDocSchema.parse(record.doc)
   const db = await getDatabase()
   if (!db) {
