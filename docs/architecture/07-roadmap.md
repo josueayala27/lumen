@@ -133,6 +133,8 @@ Exit: an APC-style controller launches clips and controls effects with lit pads.
 
 ### D1 Command bus and API
 
+Design: `12-command-bus.md`.
+
 - One command type for every input and output; UI, cues, timeline and remotes dispatch through it.
 - Local HTTP and WebSocket API; OSC in and out; Bitfocus Companion module and Stream Deck.
 

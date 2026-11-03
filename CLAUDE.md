@@ -6,7 +6,7 @@
 - `docs/architecture/02-render-contract.md` and `packages/schema/src/composition.ts` (with `slide.ts` and `screen.ts`) before any renderer change.
 - `docs/architecture/10-screens-and-mapping.md` before any screen, layout or mapping change.
 - `docs/architecture/11-ui.md` before any workspace, route or navigation change.
-- `packages/core/src/live.ts` before any live-control change.
+- `packages/core/src/live.ts` and `docs/architecture/12-command-bus.md` before any live-control, remote or API change.
 - `docs/architecture/08-show-control.md` before any MIDI or timecode change.
 - `docs/architecture/09-local-editor.md` before any library, song or editor change.
 

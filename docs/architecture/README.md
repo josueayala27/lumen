@@ -15,6 +15,7 @@ Read these before changing a subsystem. The approved implementation plan is `~/.
 | 09 | [Local editor](09-local-editor.md) | SQLite library, songs, lyrics split, editor routes |
 | 10 | [Screens and mapping](10-screens-and-mapping.md) | Screens, per-screen layouts, corner pin, mesh, edge blend |
 | 11 | [Studio UI](11-ui.md) | Workspaces, layouts of Show, Compose and Screens, route changes |
+| 12 | [Command bus and API](12-command-bus.md) | One command type for UI, keyboard, MIDI, timeline, OSC, HTTP/WebSocket, Companion |
 
 ## Invariants
 
